@@ -95,7 +95,8 @@ app.get('/{*path}', (req, res) => {
   res.sendFile(join(distPath, 'index.html'));
 });
 
-const PORT = process.env.PORT || 3001;
+const isProduction = process.env.NODE_ENV === 'production' || process.argv.includes('--production');
+const PORT = process.env.PORT || (isProduction ? 5000 : 3001);
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
 });
