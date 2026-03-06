@@ -470,6 +470,7 @@ function splitByScope(items) {
 }
 
 function mergeGlobals(scenarioData, globals) {
+  if (!globals) return scenarioData;
   const hasAnyGlobals = Object.values(globals).some(arr => arr && arr.length > 0);
   if (!hasAnyGlobals) return scenarioData;
   const merged = { ...scenarioData };
@@ -495,16 +496,24 @@ export default function Portal(){
   useEffect(()=>{
     Promise.all([api.getScenarios(), api.getGlobals()]).then(([rows, g])=>{
       const map={};
-      rows.forEach(r=>{ map[r.name]={...r.data,_savedAt:r.updated_at}; });
+      if (Array.isArray(rows)) rows.forEach(r=>{ map[r.name]={...r.data,_savedAt:r.updated_at}; });
       setScenarios(map);
-      const loadedGlobals = {
-        assets: g.assets||[], hires: g.hires||[],
-        overhead: g.overhead||[], oneTime: g.oneTime||[]
-      };
-      setGlobals(loadedGlobals);
-      setA(prev => mergeGlobals(prev, loadedGlobals));
+      if (g && typeof g === 'object') {
+        const loadedGlobals = {
+          assets: g.assets||[], hires: g.hires||[],
+          overhead: g.overhead||[], oneTime: g.oneTime||[]
+        };
+        const hasAny = Object.values(loadedGlobals).some(arr => arr.length > 0);
+        if (hasAny) {
+          setGlobals(loadedGlobals);
+          setA(prev => mergeGlobals(prev, loadedGlobals));
+        }
+      }
       setDbReady(true);
-    }).catch(()=>setDbReady(true));
+    }).catch(err=>{
+      console.error('Failed to load from database:', err);
+      setDbReady(true);
+    });
   },[]);
 
   const persistGlobals = useCallback(async (newA) => {
@@ -539,6 +548,9 @@ export default function Portal(){
     const s=scenarios[name]; if(!s) return;
     const {_savedAt,...rest}=s;
     const base = {...DEFAULT,...rest};
+    for (const type of ["assets","hires","overhead","oneTime"]) {
+      if (!base[type] || base[type].length === 0) base[type] = DEFAULT[type];
+    }
     setA(mergeGlobals(base, globals));
     setScenName(name); setShowScen(false);
   },[scenarios,globals]);
