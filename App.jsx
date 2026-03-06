@@ -188,6 +188,9 @@ function run(a){
   const totLPCalled=monthly.reduce((s,x)=>s+x.lpCall,0);
   const totGPCalled=monthly.reduce((s,x)=>s+x.gpCall,0);
   const totSaleProc=assetR.reduce((s,x)=>s+x.saleNet,0);
+  const totExitVal=assetR.reduce((s,x)=>s+x.exitVal,0);
+  const totDebtRepaid=assetR.reduce((s,x)=>s+x.lb,0);
+  const totSellingCosts=assetR.reduce((s,x)=>s+x.exitVal*saleCosts,0);
   const totOpCF=monthly.reduce((s,x)=>s+Math.max(0,x.netOpCF),0);
   const totAMFee=monthly.reduce((s,x)=>s+x.amFeeM,0);
   const totPMFee=monthly.reduce((s,x)=>s+x.pmFeeM,0);
@@ -321,7 +324,8 @@ function run(a){
     gpROC,gpPromote,gpFundTotal,
     totEqDep,totLPIn,totLPCalled,totGPCalled,totGPIn,
     totGAShortfall,lpActualCapital,gpActualCapital,
-    totSaleProc,totOpCF,pool,totAMFee,totPMFee,totFees,totGA,
+    totSaleProc,totExitVal,totDebtRepaid,totSellingCosts,
+    totOpCF,pool,totAMFee,totPMFee,totFees,totGA,
     gpEntity,gpCumData,gpNetTotal,gpBreakeven,
     promPP,drawsPP,rocPP,coInvPP,totalPP,netPP,
     partnerMonthly,partnerCum,
@@ -1105,9 +1109,29 @@ function TabFundCF({m,a}){
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:18}}>
         <KPI label="Total LP Called"   value={f.$(m.totLPCalled)} sub="Investment period"/>
         <KPI label="Total Op CF"       value={f.$(m.totOpCF)}     sub="Net of DS + PM fees"/>
-        <KPI label="Sale Proceeds"     value={f.$(m.totSaleProc)} sub="All 8 exits" gold/>
+        <KPI label="Net Sale Proceeds" value={f.$(m.totSaleProc)} sub="After debt & costs" gold/>
         <KPI label="Total Pool"        value={f.$(m.pool)}        sub="Available for distribution"/>
       </div>
+
+      <Card style={{marginBottom:16}}>
+        <CT c="Disposition Proceeds Breakdown"/>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:0,fontSize:11}}>
+          {[
+            {label:"Gross Sale Value",   val:m.totExitVal,      color:C.white,   sign:""},
+            {label:"Debt Repaid to Bank", val:m.totDebtRepaid,   color:C.red,     sign:"\u2212"},
+            {label:"Selling Costs",       val:m.totSellingCosts, color:"#E8A87C", sign:"\u2212"},
+            {label:"Net to Equity",       val:m.totSaleProc,     color:C.gold,    sign:"="},
+          ].map(({label,val,color,sign})=>(
+            <div key={label} style={{padding:"10px 14px",borderRight:`1px solid ${C.border}`}}>
+              <div style={{fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".06em",
+                marginBottom:4,fontWeight:600}}>{label}</div>
+              <div style={{fontSize:16,fontWeight:700,color,fontFamily:"'DM Mono',monospace"}}>
+                {sign}{f.$(val)}
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
 
       <div style={{display:"flex",gap:4,marginBottom:14}}>
         {[["charts","Charts"],["quarterly","Quarterly"],["monthly","Monthly Detail"]].map(([v,l])=>(
