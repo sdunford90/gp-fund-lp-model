@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   ReferenceLine, Cell, AreaChart, Area, ComposedChart } from "recharts";
 
@@ -486,6 +486,51 @@ function mergeGlobals(scenarioData, globals) {
   return merged;
 }
 
+function GlobalAddModal({type, onConfirm, onClose}){
+  const labels={assets:"Asset",hires:"Hire",overhead:"Overhead Item",oneTime:"One-Time Expense"};
+  const nameLabel={assets:"Asset Name",hires:"Role / Title",overhead:"Line Item Name",oneTime:"Expense Description"};
+  const [name,setName]=useState("");
+  const inputRef=useRef(null);
+  useEffect(()=>{if(inputRef.current)inputRef.current.focus();},[]);
+  if(!type) return null;
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",
+      background:"rgba(0,0,0,.6)",backdropFilter:"blur(4px)"}}
+      onClick={onClose}
+      onKeyDown={e=>{if(e.key==="Escape")onClose();}}>
+      <div style={{background:C.card,border:`1px solid ${C.gold}`,borderRadius:8,padding:"28px 32px",
+        minWidth:340,maxWidth:420,boxShadow:"0 12px 40px rgba(0,0,0,.5)"}}
+        onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:11,color:C.gold,fontWeight:700,textTransform:"uppercase",
+          letterSpacing:".1em",marginBottom:4}}>Add Global {labels[type]}</div>
+        <div style={{fontSize:10,color:C.goldDim,marginBottom:16}}>
+          Global items are shared across all scenarios.
+        </div>
+        <label style={{fontSize:10,color:C.whDim,textTransform:"uppercase",letterSpacing:".06em",
+          fontWeight:600,marginBottom:4,display:"block"}}>{nameLabel[type]}</label>
+        <input ref={inputRef} value={name} onChange={e=>setName(e.target.value)}
+          placeholder={`Enter ${(nameLabel[type]||"name").toLowerCase()}...`}
+          onKeyDown={e=>{if(e.key==="Enter"&&name.trim()){e.preventDefault();onConfirm(name.trim());}}}
+          style={{width:"100%",background:"rgba(255,255,255,.06)",border:`1px solid rgba(201,168,76,.3)`,
+            borderRadius:4,padding:"10px 12px",color:C.white,fontSize:13,outline:"none",
+            fontFamily:"'DM Sans',sans-serif",boxSizing:"border-box",marginBottom:18}}/>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+          <button onClick={onClose}
+            style={{padding:"7px 18px",background:"transparent",border:`1px solid rgba(255,255,255,.15)`,
+              color:C.whDim,borderRadius:4,fontSize:11,cursor:"pointer"}}>Cancel</button>
+          <button onClick={()=>{if(name.trim())onConfirm(name.trim());}}
+            disabled={!name.trim()}
+            style={{padding:"7px 18px",background:name.trim()?C.gold:"rgba(201,168,76,.3)",
+              border:"none",color:C.navy,borderRadius:4,fontSize:11,fontWeight:700,
+              cursor:name.trim()?"pointer":"not-allowed",letterSpacing:".04em"}}>
+            Add &amp; Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Portal(){
   const [tab,setTab]=useState("Overview");
   const [a,setA]=useState(DEFAULT);
@@ -496,6 +541,7 @@ export default function Portal(){
   const [editingName,setEditingName]=useState(false);
   const [saving,setSaving]=useState(false);
   const [dbReady,setDbReady]=useState(false);
+  const [globalModal,setGlobalModal]=useState(null);
 
   useEffect(()=>{
     Promise.all([api.getScenarios(), api.getGlobals()]).then(([rows, g])=>{
@@ -574,31 +620,58 @@ export default function Portal(){
   const set=useCallback((k,v)=>setA(p=>({...p,[k]:v})),[]);
 
   const setAsset=useCallback((i,k,v)=>setA(p=>({...p,assets:p.assets.map((x,j)=>j===i?{...x,[k]:v}:x)})),[]);
-  const addAsset=useCallback((scope="scenario")=>setA(p=>({...p,assets:[...p.assets,{
-    name:"Asset "+(p.assets.length+1),price:12000000,cap:.075,growth:.05,
+  const addAsset=useCallback((scope="scenario",name)=>setA(p=>({...p,assets:[...p.assets,{
+    name:name||"Asset "+(p.assets.length+1),price:12000000,cap:.075,growth:.05,
     startMonth:Math.min(36,(p.assets.length+1)*3+3),scope}]})),[]);
   const removeAsset=useCallback((i)=>setA(p=>({...p,assets:p.assets.filter((_,j)=>j!==i)})),[]);
 
   const setHire=useCallback((i,k,v)=>setA(p=>({...p,hires:p.hires.map((x,j)=>j===i?{...x,[k]:v}:x)})),[]);
-  const addHire=useCallback((scope="scenario")=>setA(p=>({...p,hires:[...p.hires,{role:"New Hire",salary:75000,start:12,alloc:1.00,scope}]})),[]);
+  const addHire=useCallback((scope="scenario",name)=>setA(p=>({...p,hires:[...p.hires,{role:name||"New Hire",salary:75000,start:12,alloc:1.00,scope}]})),[]);
   const removeHire=useCallback((i)=>setA(p=>({...p,hires:p.hires.filter((_,j)=>j!==i)})),[]);
 
   const setOhead=useCallback((i,k,v)=>setA(p=>({...p,overhead:p.overhead.map((x,j)=>j===i?{...x,[k]:v}:x)})),[]);
-  const addOhead=useCallback((scope="scenario")=>setA(p=>({...p,overhead:[...p.overhead,
-    {label:"New Line Item",annual:10000,start:1,rampMo:3,growth:.02,ramps:false,scope}]})),[]);
+  const addOhead=useCallback((scope="scenario",name)=>setA(p=>({...p,overhead:[...p.overhead,
+    {label:name||"New Line Item",annual:10000,start:1,rampMo:3,growth:.02,ramps:false,scope}]})),[]);
   const removeOhead=useCallback((i)=>setA(p=>({...p,overhead:p.overhead.filter((_,j)=>j!==i)})),[]);
 
   const setPartnerSal=useCallback((i,k,v)=>setA(p=>({...p,partnerSalaries:p.partnerSalaries.map((x,j)=>j===i?{...x,[k]:v}:x)})),[]);
 
   const setOneTime=useCallback((i,k,v)=>setA(p=>({...p,oneTime:p.oneTime.map((x,j)=>j===i?{...x,[k]:v}:x)})),[]);
-  const addOneTime=useCallback((scope="scenario")=>setA(p=>({...p,oneTime:[...p.oneTime,
-    {label:"New Expense",amount:5000,month:1,category:"Other",scope}]})),[]);
+  const addOneTime=useCallback((scope="scenario",name)=>setA(p=>({...p,oneTime:[...p.oneTime,
+    {label:name||"New Expense",amount:5000,month:1,category:"Other",scope}]})),[]);
   const removeOneTime=useCallback((i)=>setA(p=>({...p,oneTime:p.oneTime.filter((_,j)=>j!==i)})),[]);
+
+  const pendingGlobalSaveRef=useRef(false);
+  const addGlobalWithModal=useCallback((type)=>{
+    setGlobalModal(type);
+  },[]);
+
+  const confirmGlobalAdd=useCallback((name)=>{
+    const type=globalModal;
+    setA(prev=>{
+      const updated={...prev};
+      if(type==="assets") updated.assets=[...prev.assets,{name,price:12000000,cap:.075,growth:.05,startMonth:Math.min(36,(prev.assets.length+1)*3+3),scope:"global"}];
+      else if(type==="hires") updated.hires=[...prev.hires,{role:name,salary:75000,start:12,alloc:1.00,scope:"global"}];
+      else if(type==="overhead") updated.overhead=[...prev.overhead,{label:name,annual:10000,start:1,rampMo:3,growth:.02,ramps:false,scope:"global"}];
+      else if(type==="oneTime") updated.oneTime=[...prev.oneTime,{label:name,amount:5000,month:1,category:"Other",scope:"global"}];
+      pendingGlobalSaveRef.current=true;
+      return updated;
+    });
+    setGlobalModal(null);
+  },[globalModal]);
+
+  useEffect(()=>{
+    if(pendingGlobalSaveRef.current){
+      pendingGlobalSaveRef.current=false;
+      persistGlobals(a);
+    }
+  },[a,persistGlobals]);
 
   const m=useMemo(()=>{try{return run(a);}catch(e){console.error(e);return null;}},[a]);
 
   return(
     <div style={{minHeight:"100vh",background:C.dark,fontFamily:"'DM Sans',sans-serif",color:C.white}}>
+      {globalModal && <GlobalAddModal type={globalModal} onConfirm={confirmGlobalAdd} onClose={()=>setGlobalModal(null)}/>}
       {/* NAV */}
       <div style={{background:"rgba(13,27,42,.97)",backdropFilter:"blur(12px)",
         borderBottom:`1px solid rgba(201,168,76,.2)`,padding:"0 24px",
@@ -807,10 +880,10 @@ export default function Portal(){
         {/* MAIN CONTENT */}
         <div style={{flex:1,padding:"24px 28px",overflowY:"auto",minHeight:"calc(100vh - 52px)"}}>
           {m&&tab==="Overview"    && <TabOverview    m={m} a={a}/>}
-          {m&&tab==="Assets"      && <TabAssets      m={m} a={a} setAsset={setAsset} addAsset={addAsset} removeAsset={removeAsset}/>}
+          {m&&tab==="Assets"      && <TabAssets      m={m} a={a} setAsset={setAsset} addAsset={addAsset} removeAsset={removeAsset} addGlobalWithModal={addGlobalWithModal}/>}
           {m&&tab==="Waterfall"   && <TabWaterfall   m={m} a={a}/>}
           {m&&tab==="Fund CF"     && <TabFundCF      m={m} a={a}/>}
-          {m&&tab==="G&A Model"   && <TabGA          m={m} a={a} setHire={setHire} addHire={addHire} removeHire={removeHire} setOhead={setOhead} addOhead={addOhead} removeOhead={removeOhead} setPartnerSal={setPartnerSal} setOneTime={setOneTime} addOneTime={addOneTime} removeOneTime={removeOneTime}/>}
+          {m&&tab==="G&A Model"   && <TabGA          m={m} a={a} setHire={setHire} addHire={addHire} removeHire={removeHire} setOhead={setOhead} addOhead={addOhead} removeOhead={removeOhead} setPartnerSal={setPartnerSal} setOneTime={setOneTime} addOneTime={addOneTime} removeOneTime={removeOneTime} addGlobalWithModal={addGlobalWithModal}/>}
           {m&&tab==="GP Partners" && <TabGPPartners  m={m} a={a}/>}
           {m&&tab==="Sensitivity" && <TabSensitivity m={m} a={a}/>}
         </div>
@@ -896,7 +969,7 @@ function TabOverview({m,a}){
 // ═══════════════════════════════════════════════════════════════════════════════
 // ASSETS
 // ═══════════════════════════════════════════════════════════════════════════════
-function TabAssets({m,a,setAsset,addAsset,removeAsset}){
+function TabAssets({m,a,setAsset,addAsset,removeAsset,addGlobalWithModal}){
   return(
     <div>
       <PHdr title="Asset Assumptions" sub="Adjust per-asset parameters — returns update live"/>
@@ -958,7 +1031,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
           background:"rgba(201,168,76,.07)",border:`1px dashed rgba(201,168,76,.3)`,
           color:C.goldDim,borderRadius:5,fontSize:11,fontWeight:600,cursor:"pointer",
           letterSpacing:".05em"}}>+ Add Scenario Asset</button>
-        <button onClick={()=>addAsset("global")} style={{
+        <button onClick={()=>addGlobalWithModal("assets")} style={{
           flex:1,padding:"10px",
           background:"rgba(201,168,76,.15)",border:`1px dashed rgba(201,168,76,.5)`,
           color:C.gold,borderRadius:5,fontSize:11,fontWeight:600,cursor:"pointer",
@@ -1363,7 +1436,7 @@ function TabFundCF({m,a}){
 // ═══════════════════════════════════════════════════════════════════════════════
 // G&A MODEL
 // ═══════════════════════════════════════════════════════════════════════════════
-function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,setPartnerSal,setOneTime,addOneTime,removeOneTime}){
+function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,setPartnerSal,setOneTime,addOneTime,removeOneTime,addGlobalWithModal}){
   const feeCoverage=m.totFees/m.totGA;
   const [gaView, setGaView] = useState("chart"); // chart | gantt | monthly
 
@@ -1699,7 +1772,7 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
             color:"#5DADE2",borderRadius:5,fontSize:10,fontWeight:600,cursor:"pointer"}}>
             + Add Scenario Hire
           </button>
-          <button onClick={()=>addHire("global")} style={{
+          <button onClick={()=>addGlobalWithModal("hires")} style={{
             flex:1,padding:"9px",
             background:"rgba(201,168,76,.1)",border:`1px dashed rgba(201,168,76,.4)`,
             color:C.gold,borderRadius:5,fontSize:10,fontWeight:600,cursor:"pointer"}}>
@@ -1732,7 +1805,9 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
                   background:idx%2===0?"transparent":"rgba(255,255,255,.015)"}}>
                   <td style={{padding:"7px 8px",color:C.white}}>
                     <div style={{display:"flex",alignItems:"center",gap:6}}>
-                      {h.role}
+                      <input value={h.role} onChange={e=>setHire(idx,"role",e.target.value)}
+                        style={{background:"transparent",border:"none",borderBottom:`1px solid rgba(255,255,255,.15)`,
+                          color:C.white,fontSize:11,fontWeight:600,outline:"none",width:110,padding:"1px 0"}}/>
                       <button onClick={()=>setHire(idx,"scope",h.scope==="global"?"scenario":"global")}
                         title={h.scope==="global"?"Global: change applies to all scenarios":"Scenario: change only affects current scenario"}
                         style={{padding:"1px 5px",borderRadius:3,fontSize:7,fontWeight:700,cursor:"pointer",
@@ -1774,7 +1849,7 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
             color:"#5DADE2",borderRadius:5,fontSize:10,fontWeight:600,cursor:"pointer"}}>
             + Add Scenario Hire
           </button>
-          <button onClick={()=>addHire("global")} style={{
+          <button onClick={()=>addGlobalWithModal("hires")} style={{
             flex:1,padding:"9px",
             background:"rgba(201,168,76,.1)",border:`1px dashed rgba(201,168,76,.4)`,
             color:C.gold,borderRadius:5,fontSize:10,fontWeight:600,cursor:"pointer"}}>
@@ -1813,7 +1888,11 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
               return(
                 <tr key={idx} style={{borderBottom:"1px solid rgba(255,255,255,.04)",
                   background:idx%2===0?"transparent":"rgba(255,255,255,.015)"}}>
-                  <td style={{padding:"6px 8px",color:C.white}}>{o.label}</td>
+                  <td style={{padding:"6px 8px",color:C.white}}>
+                    <input value={o.label} onChange={e=>setOhead(idx,"label",e.target.value)}
+                      style={{background:"transparent",border:"none",borderBottom:`1px solid rgba(255,255,255,.15)`,
+                        color:C.white,fontSize:11,fontWeight:600,outline:"none",width:120,padding:"1px 0"}}/>
+                  </td>
                   <td style={{padding:"6px 8px"}}>
                     <div style={{display:"flex",alignItems:"center",gap:5,justifyContent:"center"}}>
                       <MiniSlider value={o.annual} min={2000} max={200000} step={1000} onChange={v=>setOhead(idx,"annual",v)} color={C.gold} width={70}/>
@@ -1870,7 +1949,7 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
           color:C.goldDim,borderRadius:5,fontSize:10,fontWeight:600,cursor:"pointer"}}>
           + Add Scenario Overhead
         </button>
-        <button onClick={()=>addOhead("global")} style={{
+        <button onClick={()=>addGlobalWithModal("overhead")} style={{
           flex:1,padding:"9px",
           background:"rgba(201,168,76,.15)",border:`1px dashed rgba(201,168,76,.5)`,
           color:C.gold,borderRadius:5,fontSize:10,fontWeight:600,cursor:"pointer"}}>
@@ -1887,7 +1966,7 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
               background:"rgba(255,255,255,.08)",color:C.whDim,border:"none",borderRadius:3,
               padding:"4px 10px",fontSize:9,fontWeight:700,letterSpacing:".08em",
               textTransform:"uppercase",cursor:"pointer"}}>+ Scen.</button>
-            <button onClick={()=>addOneTime("global")} style={{
+            <button onClick={()=>addGlobalWithModal("oneTime")} style={{
               background:C.gold,color:C.navy,border:"none",borderRadius:3,
               padding:"4px 10px",fontSize:9,fontWeight:700,letterSpacing:".08em",
               textTransform:"uppercase",cursor:"pointer"}}>+ Global</button>
