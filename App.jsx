@@ -1014,18 +1014,18 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset,addGlobalWithModal}){
                 {k:"price",     l:"Price",       min:5e6, max:50e6,step:5e5, d:v=>`$${(v/1e6).toFixed(1)}M`},
                 {k:"cap",       l:"Going-In Cap",min:.05, max:.12, step:.005,d:v=>`${(v*100).toFixed(1)}%`},
                 {k:"growth",    l:"NOI Growth",  min:.02, max:.12, step:.005,d:v=>`${(v*100).toFixed(1)}%`},
-                {k:"noiMargin", l:"NOI Margin",  min:.40, max:.85, step:.01, d:v=>`${(v*100).toFixed(0)}%`},
+                {k:"noiMargin", l:"NOI Margin",  min:.40, max:.85, step:.01, fb:.525, d:v=>`${(v*100).toFixed(0)}%`},
                 {k:"startMonth",l:"Close Month", min:3,   max:36,  step:3,   d:v=>`M${v}`},
               ].map(fi=>(
                 <div key={fi.k}>
                   <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
                     <span style={{fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".06em"}}>{fi.l}</span>
-                    <span style={{fontSize:10,color:C.gold}}>{fi.d(asset[fi.k])}</span>
+                    <span style={{fontSize:10,color:C.gold}}>{fi.d(asset[fi.k]!=null?asset[fi.k]:(fi.fb!=null?fi.fb:0))}</span>
                   </div>
-                  <input type="range" min={fi.min} max={fi.max} step={fi.step} value={asset[fi.k]}
+                  <input type="range" min={fi.min} max={fi.max} step={fi.step} value={asset[fi.k]!=null?asset[fi.k]:(fi.fb!=null?fi.fb:fi.min)}
                     onChange={e=>setAsset(idx,fi.k,Number(e.target.value))}
                     style={{width:"100%",accentColor:C.gold,cursor:"pointer",
-                      background:`linear-gradient(to right, ${C.gold} ${Math.min(100,Math.max(0,((asset[fi.k]-fi.min)/(fi.max-fi.min))*100))}%, rgba(255,255,255,0.07) 0%)`}}/>
+                      background:`linear-gradient(to right, ${C.gold} ${Math.min(100,Math.max(0,(((asset[fi.k]!=null?asset[fi.k]:(fi.fb!=null?fi.fb:fi.min))-fi.min)/(fi.max-fi.min))*100))}%, rgba(255,255,255,0.07) 0%)`}}/>
                 </div>
               ))}
             </div>
