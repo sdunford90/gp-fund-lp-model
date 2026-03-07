@@ -2439,7 +2439,7 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
           <thead>
             <tr style={{borderBottom:`1px solid ${C.border}`}}>
-              {["Role","Annual Salary","Start Month","7-Yr Total (w/ benefits)"].map(h=>(
+              {["Role","Annual Salary","Start Month","7-Yr Total (w/ benefits)",""].map(h=>(
                 <th key={h} style={{padding:"5px 8px",color:C.goldDim,fontSize:9,textTransform:"uppercase",
                   letterSpacing:".06em",textAlign:h==="Role"?"left":"center"}}>{h}</th>
               ))}
@@ -2502,7 +2502,7 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
           <thead>
             <tr style={{borderBottom:`1px solid ${C.border}`}}>
-              {["Role","Annual Salary","Hire Month","G&A Alloc","7-Yr Cost"].map(h=>(
+              {["Role","Annual Salary","Hire Month","G&A Alloc","7-Yr Cost",""].map(h=>(
                 <th key={h} style={{padding:"5px 8px",color:C.goldDim,fontSize:9,textTransform:"uppercase",
                   letterSpacing:".06em",textAlign:h==="Role"?"left":"center"}}>{h}</th>
               ))}
@@ -2666,22 +2666,21 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
             })}
           </tbody>
         </table>
+        <div style={{display:"flex",gap:6,marginTop:8}}>
+          <button onClick={()=>addOhead("scenario")} style={{
+            flex:1,padding:"9px",
+            background:"rgba(201,168,76,.06)",border:`1px dashed rgba(201,168,76,.25)`,
+            color:C.goldDim,borderRadius:5,fontSize:10,fontWeight:600,cursor:"pointer"}}>
+            + Add Scenario Overhead
+          </button>
+          <button onClick={()=>addGlobalWithModal("overhead")} style={{
+            flex:1,padding:"9px",
+            background:"rgba(201,168,76,.15)",border:`1px dashed rgba(201,168,76,.5)`,
+            color:C.gold,borderRadius:5,fontSize:10,fontWeight:600,cursor:"pointer"}}>
+            + Add Global Overhead
+          </button>
+        </div>
       </Card>
-
-      <div style={{display:"flex",gap:6,marginBottom:16}}>
-        <button onClick={()=>addOhead("scenario")} style={{
-          flex:1,padding:"9px",
-          background:"rgba(201,168,76,.06)",border:`1px dashed rgba(201,168,76,.25)`,
-          color:C.goldDim,borderRadius:5,fontSize:10,fontWeight:600,cursor:"pointer"}}>
-          + Add Scenario Overhead
-        </button>
-        <button onClick={()=>addGlobalWithModal("overhead")} style={{
-          flex:1,padding:"9px",
-          background:"rgba(201,168,76,.15)",border:`1px dashed rgba(201,168,76,.5)`,
-          color:C.gold,borderRadius:5,fontSize:10,fontWeight:600,cursor:"pointer"}}>
-          + Add Global Overhead
-        </button>
-      </div>
 
       {/* ONE-TIME EXPENSES */}
       <Card>
@@ -2765,10 +2764,10 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
             {(a.oneTime||[]).length>0&&(
               <tr style={{borderTop:`1px solid ${C.border}`,background:"rgba(201,168,76,.05)"}}>
                 <td style={{padding:"7px 8px",color:C.gold,fontWeight:700,fontSize:11}}>Total One-Time</td>
-                <td colSpan={3} style={{padding:"7px 8px",color:C.gold,fontWeight:700,textAlign:"center"}}>
+                <td style={{padding:"7px 8px",color:C.gold,fontWeight:700,textAlign:"center"}}>
                   {f.$((a.oneTime||[]).reduce((s,e)=>s+e.amount,0))}
                 </td>
-                <td/>
+                <td colSpan={4}/>
               </tr>
             )}
           </tbody>
