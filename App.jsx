@@ -482,7 +482,7 @@ const PHdr=({title,sub})=>(
 );
 
 const Card=({children,style={}})=>(
-  <div style={{background:C.whFaint,border:`1px solid ${C.border}`,borderRadius:6,padding:"15px 18px",...style}}>{children}</div>
+  <div style={{background:C.whFaint,border:`1px solid ${C.border}`,borderRadius:6,padding:"15px 18px",overflow:"hidden",...style}}>{children}</div>
 );
 
 const CT=({c})=>(
@@ -2499,12 +2499,13 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
       {/* STAFF TABLE */}
       <Card style={{marginBottom:16}}>
         <CT c="Staff Headcount — Hire Timing &amp; Salaries"/>
-        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+        <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,minWidth:580}}>
           <thead>
             <tr style={{borderBottom:`1px solid ${C.border}`}}>
               {["Role","Annual Salary","Hire Month","G&A Alloc","7-Yr Cost",""].map(h=>(
-                <th key={h} style={{padding:"5px 8px",color:C.goldDim,fontSize:9,textTransform:"uppercase",
-                  letterSpacing:".06em",textAlign:h==="Role"?"left":"center"}}>{h}</th>
+                <th key={h} style={{padding:"5px 6px",color:C.goldDim,fontSize:9,textTransform:"uppercase",
+                  letterSpacing:".06em",textAlign:h==="Role"?"left":"center",whiteSpace:"nowrap"}}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -2519,11 +2520,11 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
               return(
                 <tr key={idx} style={{borderBottom:"1px solid rgba(255,255,255,.04)",
                   background:idx%2===0?"transparent":"rgba(255,255,255,.015)"}}>
-                  <td style={{padding:"7px 8px",color:C.white}}>
-                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <td style={{padding:"6px 6px",color:C.white}}>
+                    <div style={{display:"flex",alignItems:"center",gap:5}}>
                       <input value={h.role} onChange={e=>setHire(idx,"role",e.target.value)}
                         style={{background:"transparent",border:"none",borderBottom:`1px solid rgba(255,255,255,.15)`,
-                          color:C.white,fontSize:11,fontWeight:600,outline:"none",width:110,padding:"1px 0"}}/>
+                          color:C.white,fontSize:10,fontWeight:600,outline:"none",width:95,padding:"1px 0"}}/>
                       <button onClick={()=>setHire(idx,"scope",h.scope==="global"?"scenario":"global")}
                         title={h.scope==="global"?"Global: change applies to all scenarios":"Scenario: change only affects current scenario"}
                         style={{padding:"1px 5px",borderRadius:3,fontSize:7,fontWeight:700,cursor:"pointer",
@@ -2534,21 +2535,21 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
                       </button>
                     </div>
                   </td>
-                  <td style={{padding:"7px 8px"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:6,justifyContent:"center"}}>
-                      <MiniSlider value={h.salary} min={40000} max={250000} step={5000} onChange={v=>setHire(idx,"salary",v)} color={C.gold} width={75}/>
-                      <span style={{color:C.gold,minWidth:56,fontSize:11}}>{f.$(h.salary)}</span>
+                  <td style={{padding:"6px 5px"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
+                      <MiniSlider value={h.salary} min={40000} max={250000} step={5000} onChange={v=>setHire(idx,"salary",v)} color={C.gold} width={60}/>
+                      <span style={{color:C.gold,minWidth:48,fontSize:10}}>{f.$(h.salary)}</span>
                     </div>
                   </td>
-                  <td style={{padding:"7px 8px"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:6,justifyContent:"center"}}>
-                      <MiniSlider value={h.start} min={1} max={84} step={1} onChange={v=>setHire(idx,"start",v)} color={C.blue} width={65}/>
-                      <span style={{color:"#5DADE2",minWidth:26,fontSize:11}}>M{h.start}</span>
+                  <td style={{padding:"6px 5px"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
+                      <MiniSlider value={h.start} min={1} max={84} step={1} onChange={v=>setHire(idx,"start",v)} color={C.blue} width={50}/>
+                      <span style={{color:"#5DADE2",minWidth:24,fontSize:10}}>M{h.start}</span>
                     </div>
                   </td>
-                  <td style={{padding:"7px 8px",color:C.whDim,textAlign:"center"}}>{f.p(h.alloc)}</td>
-                  <td style={{padding:"7px 8px",color:C.gold,textAlign:"center",fontWeight:600}}>{f.$(total7)}</td>
-                  <td style={{padding:"7px 8px",textAlign:"center"}}>
+                  <td style={{padding:"6px 5px",color:C.whDim,textAlign:"center",fontSize:10}}>{f.p(h.alloc)}</td>
+                  <td style={{padding:"6px 5px",color:C.gold,textAlign:"center",fontWeight:600,fontSize:10}}>{f.$(total7)}</td>
+                  <td style={{padding:"6px 5px",textAlign:"center"}}>
                     <button onClick={()=>removeHire(idx)}
                       style={{background:"rgba(192,57,43,.15)",border:`1px solid rgba(192,57,43,.3)`,
                         color:C.red,borderRadius:3,padding:"2px 7px",fontSize:9,cursor:"pointer"}}>✕</button>
@@ -2558,6 +2559,7 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
             })}
           </tbody>
         </table>
+        </div>
         <div style={{display:"flex",gap:6,marginTop:8}}>
           <button onClick={()=>addHire("scenario")} style={{
             flex:1,padding:"9px",
@@ -2580,12 +2582,13 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
         <div style={{fontSize:10,color:C.goldDim,marginBottom:10}}>
           End = month when expense stops (dash = runs to fund end). Ramp = months to reach full run-rate from start.
         </div>
-        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+        <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,minWidth:700}}>
           <thead>
             <tr style={{borderBottom:`1px solid ${C.border}`}}>
-              {["Line Item","Full Annual $","Start","End","Ramp Period","Growth/Yr","Scope","7-Yr Total",""].map(h=>(
-                <th key={h} style={{padding:"5px 8px",color:C.goldDim,fontSize:9,textTransform:"uppercase",
-                  letterSpacing:".06em",textAlign:h==="Line Item"?"left":"center"}}>{h}</th>
+              {["Line Item","Annual $","Start","End","Ramp","Growth","Scope","7-Yr Total",""].map(h=>(
+                <th key={h} style={{padding:"5px 6px",color:C.goldDim,fontSize:9,textTransform:"uppercase",
+                  letterSpacing:".06em",textAlign:h==="Line Item"?"left":"center",whiteSpace:"nowrap"}}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -2606,66 +2609,65 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
               return(
                 <tr key={idx} style={{borderBottom:"1px solid rgba(255,255,255,.04)",
                   background:idx%2===0?"transparent":"rgba(255,255,255,.015)"}}>
-                  <td style={{padding:"6px 8px",color:C.white}}>
+                  <td style={{padding:"6px 6px",color:C.white}}>
                     <input value={o.label} onChange={e=>setOhead(idx,"label",e.target.value)}
                       style={{background:"transparent",border:"none",borderBottom:`1px solid rgba(255,255,255,.15)`,
-                        color:C.white,fontSize:11,fontWeight:600,outline:"none",width:120,padding:"1px 0"}}/>
+                        color:C.white,fontSize:10,fontWeight:600,outline:"none",width:100,padding:"1px 0"}}/>
                   </td>
-                  <td style={{padding:"6px 8px"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:5,justifyContent:"center"}}>
-                      <MiniSlider value={o.annual} min={2000} max={200000} step={1000} onChange={v=>setOhead(idx,"annual",v)} color={C.gold} width={70}/>
-                      <span style={{color:C.gold,minWidth:52,fontSize:11}}>{f.$(o.annual)}</span>
+                  <td style={{padding:"6px 5px"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
+                      <MiniSlider value={o.annual} min={2000} max={200000} step={1000} onChange={v=>setOhead(idx,"annual",v)} color={C.gold} width={55}/>
+                      <span style={{color:C.gold,minWidth:44,fontSize:10}}>{f.$(o.annual)}</span>
                     </div>
                   </td>
-                  <td style={{padding:"6px 8px"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
-                      <MiniSlider value={o.start} min={1} max={36} step={1} onChange={v=>setOhead(idx,"start",v)} color={C.blue} width={50}/>
-                      <span style={{color:"#5DADE2",minWidth:24,fontSize:11}}>M{o.start}</span>
+                  <td style={{padding:"6px 4px"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:3,justifyContent:"center"}}>
+                      <MiniSlider value={o.start} min={1} max={36} step={1} onChange={v=>setOhead(idx,"start",v)} color={C.blue} width={40}/>
+                      <span style={{color:"#5DADE2",minWidth:22,fontSize:10}}>M{o.start}</span>
                     </div>
                   </td>
-                  <td style={{padding:"6px 8px"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
-                      <MiniSlider value={o.end||0} min={0} max={84} step={1} onChange={v=>setOhead(idx,"end",v)} color={o.end&&o.end>0?"#E67E22":C.whDim} width={50}/>
-                      <span style={{color:o.end&&o.end>0?"#E67E22":C.whDim,minWidth:30,fontSize:11}}>
+                  <td style={{padding:"6px 4px"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:3,justifyContent:"center"}}>
+                      <MiniSlider value={o.end||0} min={0} max={84} step={1} onChange={v=>setOhead(idx,"end",v)} color={o.end&&o.end>0?"#E67E22":C.whDim} width={40}/>
+                      <span style={{color:o.end&&o.end>0?"#E67E22":C.whDim,minWidth:24,fontSize:10}}>
                         {o.end&&o.end>0?`M${o.end}`:"—"}
                       </span>
                     </div>
                   </td>
-                  <td style={{padding:"6px 8px"}}>
+                  <td style={{padding:"6px 4px"}}>
                     {!o.ramps&&(
-                      <div style={{display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
-                        <MiniSlider value={o.rampMo||1} min={1} max={24} step={1} onChange={v=>setOhead(idx,"rampMo",v)} color={"#A569BD"} width={50}/>
-                        <span style={{color:"#A569BD",minWidth:40,fontSize:10}}>{o.rampMo||1} mo</span>
-                        <span style={{color:C.goldDim,fontSize:9}}>({(mo1pct*100).toFixed(0)}% M1)</span>
+                      <div style={{display:"flex",alignItems:"center",gap:3,justifyContent:"center"}}>
+                        <MiniSlider value={o.rampMo||1} min={1} max={24} step={1} onChange={v=>setOhead(idx,"rampMo",v)} color={"#A569BD"} width={40}/>
+                        <span style={{color:"#A569BD",minWidth:30,fontSize:9}}>{o.rampMo||1}mo</span>
                       </div>
                     )}
-                    {o.ramps&&<span style={{color:C.goldDim,fontSize:10,display:"block",textAlign:"center"}}>w/ deals</span>}
+                    {o.ramps&&<span style={{color:C.goldDim,fontSize:9,display:"block",textAlign:"center"}}>w/ deals</span>}
                   </td>
-                  <td style={{padding:"6px 8px",color:C.whDim,textAlign:"center",fontSize:10}}>
-                    {o.ramps?"deal-linked":`${(o.growth*100).toFixed(0)}%/yr`}
+                  <td style={{padding:"6px 4px",color:C.whDim,textAlign:"center",fontSize:9,whiteSpace:"nowrap"}}>
+                    {o.ramps?"deals":`${(o.growth*100).toFixed(0)}%`}
                   </td>
-                  <td style={{padding:"6px 8px",textAlign:"center"}}>
+                  <td style={{padding:"6px 4px",textAlign:"center"}}>
                     <button onClick={()=>setOhead(idx,"scope",o.scope==="global"?"scenario":"global")}
                       title={o.scope==="global"?"Global: change applies to all scenarios":"Scenario: change only affects current scenario"}
-                      style={{padding:"2px 7px",borderRadius:3,fontSize:8,fontWeight:700,cursor:"pointer",
-                        letterSpacing:".06em",textTransform:"uppercase",
+                      style={{padding:"2px 5px",borderRadius:3,fontSize:7,fontWeight:700,cursor:"pointer",
                         background:o.scope==="global"?"rgba(201,168,76,.2)":"rgba(255,255,255,.06)",
                         color:o.scope==="global"?C.gold:C.whDim,
                         border:`1px solid ${o.scope==="global"?"rgba(201,168,76,.4)":"rgba(255,255,255,.1)"}`}}>
-                      {o.scope==="global"?"Global":"Scen."}
+                      {o.scope==="global"?"G":"S"}
                     </button>
                   </td>
-                  <td style={{padding:"6px 8px",color:C.gold,textAlign:"center",fontWeight:600}}>{f.$(total7)}</td>
-                  <td style={{padding:"6px 8px",textAlign:"center"}}>
+                  <td style={{padding:"6px 4px",color:C.gold,textAlign:"center",fontWeight:600,fontSize:10}}>{f.$(total7)}</td>
+                  <td style={{padding:"6px 4px",textAlign:"center"}}>
                     <button onClick={()=>removeOhead(idx)}
                       style={{background:"rgba(192,57,43,.15)",border:`1px solid rgba(192,57,43,.3)`,
-                        color:C.red,borderRadius:3,padding:"2px 7px",fontSize:9,cursor:"pointer"}}>✕</button>
+                        color:C.red,borderRadius:3,padding:"2px 6px",fontSize:9,cursor:"pointer"}}>✕</button>
                   </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+        </div>
         <div style={{display:"flex",gap:6,marginTop:8}}>
           <button onClick={()=>addOhead("scenario")} style={{
             flex:1,padding:"9px",
