@@ -1479,7 +1479,7 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
       <PHdr title="G&A Model" sub="Hire timing, salaries, overhead, and fee coverage — monthly detail"/>
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:18}}>
         <KPI label="Total G&A (7yr)"       value={f.$(m.totGA)}             sub="All-in incl. partner salaries"/>
-        <KPI label="Partner Salaries (7yr)" value={f.$(m.totPartnerSal)}    sub="Base comp, excl. promote"/>
+        <KPI label="Partner Salaries (7yr)" value={f.$(m.totPartnerSal)}    sub={`Base + ${(a.benefitsRate*100).toFixed(0)}% benefits, excl. promote`}/>
         <KPI label="Total Fee Income"       value={f.$(m.totFees)}          sub="AM + PM fees received by GP"/>
         <KPI label="Fee Coverage"           value={f.p(feeCoverage)}        sub="Fees ÷ total G&A" gold/>
         <KPI label="Net G&A Burden"         value={f.$(m.totGA-m.totFees)}  sub="After fee offset"/>
