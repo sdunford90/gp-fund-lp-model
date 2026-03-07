@@ -38,18 +38,18 @@ const DEF_HIRES = [
 ];
 
 const DEF_OVERHEAD = [
-  // label, annual (full run-rate $), start month, rampMonths (months to reach full rate), growth/yr, ramps w/ deals
-  {label:"Legal & Compliance",    annual:55000, start:1,  rampMo:6,  growth:.02, ramps:false, scope:"global"},
-  {label:"Audit & Tax",           annual:42000, start:1,  rampMo:12, growth:.02, ramps:false, scope:"global"},
-  {label:"D&O / EPLI Insurance",  annual:32000, start:1,  rampMo:3,  growth:.02, ramps:false, scope:"global"},
-  {label:"Accounting Software",   annual:18000, start:1,  rampMo:3,  growth:.00, ramps:false, scope:"global"},
-  {label:"Travel — Acquisitions", scope:"scenario", annual:45000, start:1,  rampMo:6,  growth:.02, ramps:false},
-  {label:"Travel — Operations",  scope:"scenario", annual:28000, start:6,  rampMo:12, growth:.02, ramps:false},
-  {label:"Technology / Data Room", scope:"scenario",annual:15000, start:1,  rampMo:6,  growth:.00, ramps:false},
-  {label:"Office / Utilities",  scope:"scenario",  annual:18000, start:3,  rampMo:6,  growth:.02, ramps:false},
-  {label:"Marketing / Comms",  scope:"scenario",   annual:12000, start:6,  rampMo:9,  growth:.01, ramps:false},
-  {label:"Contingency",  scope:"scenario",         annual:12000, start:1,  rampMo:1,  growth:.02, ramps:false},
-  {label:"ASAP Platform",  scope:"scenario",       annual:3000,  start:6,  rampMo:1,  growth:.00, ramps:true },
+  // label, annual $, start, end (0=fund end), rampMo, growth/yr, ramps w/ deals
+  {label:"Legal & Compliance",    annual:55000, start:1,  end:0, rampMo:6,  growth:.02, ramps:false, scope:"global"},
+  {label:"Audit & Tax",           annual:42000, start:1,  end:0, rampMo:12, growth:.02, ramps:false, scope:"global"},
+  {label:"D&O / EPLI Insurance",  annual:32000, start:1,  end:0, rampMo:3,  growth:.02, ramps:false, scope:"global"},
+  {label:"Accounting Software",   annual:18000, start:1,  end:0, rampMo:3,  growth:.00, ramps:false, scope:"global"},
+  {label:"Travel — Acquisitions", scope:"scenario", annual:45000, start:1, end:24, rampMo:6,  growth:.02, ramps:false},
+  {label:"Travel — Operations",  scope:"scenario", annual:28000, start:6,  end:0, rampMo:12, growth:.02, ramps:false},
+  {label:"Technology / Data Room", scope:"scenario",annual:15000, start:1,  end:0, rampMo:6,  growth:.00, ramps:false},
+  {label:"Office / Utilities",  scope:"scenario",  annual:18000, start:3,  end:0, rampMo:6,  growth:.02, ramps:false},
+  {label:"Marketing / Comms",  scope:"scenario",   annual:12000, start:6,  end:0, rampMo:9,  growth:.01, ramps:false},
+  {label:"Contingency",  scope:"scenario",         annual:12000, start:1,  end:0, rampMo:1,  growth:.02, ramps:false},
+  {label:"ASAP Platform",  scope:"scenario",       annual:3000,  start:6,  end:0, rampMo:1,  growth:.00, ramps:true },
 ];
 
 // One-time / irregular expenses: hit in a specific month, no recurrence
@@ -124,6 +124,7 @@ function run(a){
     let fix=0;
     overhead.forEach(o=>{
       if(mo<o.start) return;
+      if(o.end&&o.end>0&&mo>o.end) return;
       let base=o.annual;
       if(o.ramps){
         const props=assets.filter(x=>x.startMonth<=mo).length;
@@ -631,7 +632,7 @@ export default function Portal(){
 
   const setOhead=useCallback((i,k,v)=>setA(p=>({...p,overhead:p.overhead.map((x,j)=>j===i?{...x,[k]:v}:x)})),[]);
   const addOhead=useCallback((scope="scenario",name)=>setA(p=>({...p,overhead:[...p.overhead,
-    {label:name||"New Line Item",annual:10000,start:1,rampMo:3,growth:.02,ramps:false,scope}]})),[]);
+    {label:name||"New Line Item",annual:10000,start:1,end:0,rampMo:3,growth:.02,ramps:false,scope}]})),[]);
   const removeOhead=useCallback((i)=>setA(p=>({...p,overhead:p.overhead.filter((_,j)=>j!==i)})),[]);
 
   const setPartnerSal=useCallback((i,k,v)=>setA(p=>({...p,partnerSalaries:p.partnerSalaries.map((x,j)=>j===i?{...x,[k]:v}:x)})),[]);
@@ -652,7 +653,7 @@ export default function Portal(){
       const updated={...prev};
       if(type==="assets") updated.assets=[...prev.assets,{name,price:12000000,cap:.075,growth:.05,startMonth:Math.min(36,(prev.assets.length+1)*3+3),scope:"global"}];
       else if(type==="hires") updated.hires=[...prev.hires,{role:name,salary:75000,start:12,alloc:1.00,scope:"global"}];
-      else if(type==="overhead") updated.overhead=[...prev.overhead,{label:name,annual:10000,start:1,rampMo:3,growth:.02,ramps:false,scope:"global"}];
+      else if(type==="overhead") updated.overhead=[...prev.overhead,{label:name,annual:10000,start:1,end:0,rampMo:3,growth:.02,ramps:false,scope:"global"}];
       else if(type==="oneTime") updated.oneTime=[...prev.oneTime,{label:name,amount:5000,month:1,category:"Other",scope:"global"}];
       pendingGlobalSaveRef.current=true;
       return updated;
@@ -1860,14 +1861,14 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
 
       {/* OVERHEAD TABLE */}
       <Card style={{marginBottom:16}}>
-        <CT c="Recurring Overhead — Budget, Start Month &amp; Ramp-Up Period"/>
+        <CT c="Recurring Overhead — Budget, Start/End &amp; Ramp-Up Period"/>
         <div style={{fontSize:10,color:C.goldDim,marginBottom:10}}>
-          Ramp = months to reach full annual run-rate from start (linear scale). Year 1 expenses build gradually, not full-rate on day 1.
+          End = month when expense stops (dash = runs to fund end). Ramp = months to reach full run-rate from start.
         </div>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
           <thead>
             <tr style={{borderBottom:`1px solid ${C.border}`}}>
-              {["Line Item","Full Annual $","Start","Ramp Period","Growth/Yr","Scope","7-Yr Total",""].map(h=>(
+              {["Line Item","Full Annual $","Start","End","Ramp Period","Growth/Yr","Scope","7-Yr Total",""].map(h=>(
                 <th key={h} style={{padding:"5px 8px",color:C.goldDim,fontSize:9,textTransform:"uppercase",
                   letterSpacing:".06em",textAlign:h==="Line Item"?"left":"center"}}>{h}</th>
               ))}
@@ -1876,11 +1877,13 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
           <tbody>
             {a.overhead.map((o,idx)=>{
               const total7=Array.from({length:84},(_,i)=>{
-                if(i+1<o.start) return 0;
+                const mo=i+1;
+                if(mo<o.start) return 0;
+                if(o.end&&o.end>0&&mo>o.end) return 0;
                 const yr=Math.floor(i/12);
                 let base=o.annual;
-                if(o.ramps){const props=a.assets.filter(x=>x.startMonth<=i+1).length;base=props*250*12;}
-                const ramp=o.rampMo&&o.rampMo>1?Math.min(1,(i+1-o.start+1)/o.rampMo):1;
+                if(o.ramps){const props=a.assets.filter(x=>x.startMonth<=mo).length;base=props*250*12;}
+                const ramp=o.rampMo&&o.rampMo>1?Math.min(1,(mo-o.start+1)/o.rampMo):1;
                 return(base*Math.pow(1+o.growth,yr)/12)*ramp;
               }).reduce((s,v)=>s+v,0);
               // Show what month 1 actually costs vs full run-rate
@@ -1903,6 +1906,14 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
                     <div style={{display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
                       <MiniSlider value={o.start} min={1} max={36} step={1} onChange={v=>setOhead(idx,"start",v)} color={C.blue} width={50}/>
                       <span style={{color:"#5DADE2",minWidth:24,fontSize:11}}>M{o.start}</span>
+                    </div>
+                  </td>
+                  <td style={{padding:"6px 8px"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
+                      <MiniSlider value={o.end||0} min={0} max={84} step={1} onChange={v=>setOhead(idx,"end",v)} color={o.end&&o.end>0?"#E67E22":C.whDim} width={50}/>
+                      <span style={{color:o.end&&o.end>0?"#E67E22":C.whDim,minWidth:30,fontSize:11}}>
+                        {o.end&&o.end>0?`M${o.end}`:"—"}
+                      </span>
                     </div>
                   </td>
                   <td style={{padding:"6px 8px"}}>

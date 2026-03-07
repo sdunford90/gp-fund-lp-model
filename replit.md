@@ -8,7 +8,7 @@ A financial modeling React application for General Partners (GPs) and Limited Pa
 - **Asset Modeling**: 8-asset portfolio with individual asset performance tracking (global/scenario scope)
 - **Waterfall Distribution**: Preferred returns, catch-up, and promote calculations
 - **Fund Cash Flow**: Multi-year fund cash flow analysis with disposition proceeds breakdown (gross sale, debt repaid, selling costs, net to equity)
-- **G&A Model**: Personnel hiring plan, salaries, and operational overhead (global/scenario scope)
+- **G&A Model**: Personnel hiring plan, salaries, and operational overhead with optional end month (global/scenario scope)
 - **GP Partners**: Per-partner economics and co-investment tracking
 - **Sensitivity Analysis**: Scenario planning with parameter sweeps
 - **Scenarios**: Save/load scenarios to PostgreSQL database
