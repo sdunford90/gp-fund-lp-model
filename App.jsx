@@ -548,6 +548,7 @@ export default function Portal(){
   const [saving,setSaving]=useState(false);
   const [dbReady,setDbReady]=useState(false);
   const [globalModal,setGlobalModal]=useState(null);
+  const [presenting,setPresenting]=useState(false);
 
   useEffect(()=>{
     Promise.all([api.getScenarios(), api.getGlobals()]).then(([rows, g])=>{
@@ -746,7 +747,11 @@ export default function Portal(){
         }
         <button onClick={saveScenario} disabled={saving} style={{background:saving?"rgba(201,168,76,0.5)":C.gold,color:C.navy,border:"none",
           borderRadius:3,padding:"3px 10px",fontSize:9,fontWeight:800,letterSpacing:".07em",
-          textTransform:"uppercase",cursor:saving?"wait":"pointer",flexShrink:0}}>{saving?"Saving…":"Save"}</button>
+          textTransform:"uppercase",cursor:saving?"wait":"pointer",flexShrink:0}}>{saving?"Saving...":"Save"}</button>
+        <button onClick={()=>setPresenting(true)} style={{background:"transparent",
+          color:C.gold,border:`1px solid ${C.gold}`,borderRadius:3,
+          padding:"3px 10px",fontSize:9,fontWeight:800,letterSpacing:".07em",
+          textTransform:"uppercase",cursor:"pointer",flexShrink:0}}>Presentation</button>
         <div style={{position:"relative"}}>
           <button onClick={()=>setShowScen(v=>!v)} style={{background:"transparent",
             color:C.goldDim,border:`1px solid rgba(201,168,76,.25)`,borderRadius:3,
@@ -808,7 +813,8 @@ export default function Portal(){
         )}
       </div>
 
-      <div style={{display:"flex"}}>
+      {presenting&&m&&<PresentationView m={m} a={a} scenName={scenName} onClose={()=>setPresenting(false)}/>}
+      {!presenting&&<div style={{display:"flex"}}>
         {/* SIDEBAR */}
         <div style={{width:262,flexShrink:0,background:"rgba(31,56,100,.1)",
           borderRight:`1px solid ${C.border}`,padding:"18px 14px",
@@ -893,7 +899,472 @@ export default function Portal(){
           {m&&tab==="GP Partners" && <TabGPPartners  m={m} a={a}/>}
           {m&&tab==="Sensitivity" && <TabSensitivity m={m} a={a}/>}
         </div>
+      </div>}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRESENTATION VIEW
+// ═══════════════════════════════════════════════════════════════════════════════
+function PresentationView({m,a,scenName,onClose}){
+  const today=new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});
+  const tiers=[
+    {tier:"Tier 1",label:"Return of Capital",lp:m.lpROC,gp:m.gpROC,color:"#2980B9"},
+    {tier:"Tier 2",label:`Preferred Return (${f.p(a.prefReturn)} ${a.compoundPref?"compound":"simple"})`,lp:m.lpPref,gp:0,color:C.mid},
+    {tier:"Tier 3",label:`Promote (${f.p(1-a.carry)} LP / ${f.p(a.carry)} GP${a.catchUp?" + catch-up":""})`,lp:m.lpResid,gp:m.gpPromote,color:C.gold},
+  ];
+
+  const Slide=({children,title,sub})=>(
+    <div className="pres-slide" style={{padding:"48px 56px",minHeight:"100vh",
+      background:C.dark,borderBottom:`3px solid ${C.gold}`,position:"relative"}}>
+      {title&&<div style={{fontSize:28,fontWeight:700,color:C.white,
+        fontFamily:"'Playfair Display',serif",marginBottom:sub?4:20}}>{title}</div>}
+      {sub&&<div style={{fontSize:13,color:C.goldDim,marginBottom:24}}>{sub}</div>}
+      {children}
+      <div style={{position:"absolute",bottom:16,right:56,fontSize:8,color:"rgba(201,168,76,.3)",
+        letterSpacing:".1em",textTransform:"uppercase"}}>CONFIDENTIAL — {scenName}</div>
+    </div>
+  );
+
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:1000,background:C.dark,overflowY:"auto"}}
+      className="pres-container">
+      {/* Print styles */}
+      <style>{`
+        @media print {
+          body { background: #0D1B2A !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .pres-no-print { display: none !important; }
+          .pres-slide { page-break-after: always; min-height: auto !important; padding: 32px 40px !important; }
+          .pres-slide:last-child { page-break-after: avoid; }
+          .pres-container { position: static !important; overflow: visible !important; }
+          @page { size: landscape; margin: 0.3in; }
+        }
+      `}</style>
+
+      {/* Top bar — hidden in print */}
+      <div className="pres-no-print" style={{position:"sticky",top:0,zIndex:10,
+        background:"rgba(13,27,42,.97)",backdropFilter:"blur(12px)",
+        borderBottom:`1px solid ${C.gold}`,padding:"0 24px",
+        display:"flex",alignItems:"center",justifyContent:"space-between",height:48}}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <div style={{width:28,height:28,background:C.gold,borderRadius:3,
+            display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <span style={{fontSize:10,fontWeight:900,color:C.navy,fontFamily:"'Playfair Display',serif"}}>F1</span>
+          </div>
+          <div>
+            <span style={{fontSize:13,fontWeight:800,color:C.white}}>GP Fund I</span>
+            <span style={{fontSize:10,color:C.gold,marginLeft:8,letterSpacing:".08em",textTransform:"uppercase"}}>Presentation Mode</span>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>window.print()} style={{background:C.gold,color:C.navy,border:"none",
+            borderRadius:3,padding:"5px 16px",fontSize:10,fontWeight:800,letterSpacing:".07em",
+            textTransform:"uppercase",cursor:"pointer"}}>Print / PDF</button>
+          <button onClick={onClose} style={{background:"transparent",color:C.goldDim,
+            border:`1px solid rgba(201,168,76,.3)`,borderRadius:3,padding:"5px 16px",
+            fontSize:10,fontWeight:700,letterSpacing:".07em",textTransform:"uppercase",cursor:"pointer"}}>
+            Exit</button>
+        </div>
       </div>
+
+      {/* SLIDE 1: Cover */}
+      <Slide>
+        <div style={{display:"flex",flexDirection:"column",justifyContent:"center",
+          alignItems:"center",minHeight:"calc(100vh - 160px)",textAlign:"center"}}>
+          <div style={{width:64,height:64,background:C.gold,borderRadius:8,
+            display:"flex",alignItems:"center",justifyContent:"center",marginBottom:28}}>
+            <span style={{fontSize:24,fontWeight:900,color:C.navy,fontFamily:"'Playfair Display',serif"}}>F1</span>
+          </div>
+          <div style={{fontSize:42,fontWeight:700,color:C.white,fontFamily:"'Playfair Display',serif",
+            marginBottom:8}}>GP Fund I</div>
+          <div style={{fontSize:16,color:C.gold,letterSpacing:".15em",textTransform:"uppercase",
+            marginBottom:32}}>Investment Summary</div>
+          <div style={{height:1,width:120,background:C.gold,marginBottom:32}}/>
+          <div style={{fontSize:14,color:C.whDim,marginBottom:6}}>Scenario: <span style={{color:C.white,fontWeight:700}}>{scenName}</span></div>
+          <div style={{fontSize:12,color:C.goldDim}}>{today}</div>
+          <div style={{marginTop:40,display:"flex",gap:20,flexWrap:"wrap",justifyContent:"center"}}>
+            <div style={{textAlign:"center"}}>
+              <div style={{fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".1em"}}>Assets</div>
+              <div style={{fontSize:22,color:C.white,fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{a.assets.length}</div>
+            </div>
+            <div style={{textAlign:"center"}}>
+              <div style={{fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".1em"}}>Equity Deployed</div>
+              <div style={{fontSize:22,color:C.white,fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(m.totEqDep)}</div>
+            </div>
+            <div style={{textAlign:"center"}}>
+              <div style={{fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".1em"}}>Hold Period</div>
+              <div style={{fontSize:22,color:C.white,fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{a.fundTerm} Years</div>
+            </div>
+            <div style={{textAlign:"center"}}>
+              <div style={{fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".1em"}}>LP Net IRR</div>
+              <div style={{fontSize:22,color:C.gold,fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.p(m.lpIRR)}</div>
+            </div>
+          </div>
+        </div>
+      </Slide>
+
+      {/* SLIDE 2: Key Terms */}
+      <Slide title="Key Fund Terms">
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24,marginTop:12}}>
+          <Card>
+            <CT c="Structure"/>
+            <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
+              <tbody>
+                {[
+                  ["Fund Term",`${a.fundTerm} years`],
+                  ["LTV (Debt %)",f.p(a.debtPct)],
+                  ["Interest Rate",f.p(a.interestRate)],
+                  ["Amortization",`${a.amortYears} years`],
+                  ["Exit Cap Rate",f.p(a.exitCapRate)],
+                  ["Sale Costs",f.p(a.saleCosts)],
+                ].map(([k,v],i)=>(
+                  <tr key={i} style={{borderBottom:`1px solid ${C.border}`}}>
+                    <td style={{padding:"8px 0",color:C.whDim}}>{k}</td>
+                    <td style={{padding:"8px 0",color:C.white,fontWeight:600,textAlign:"right"}}>{v}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+          <Card>
+            <CT c="Fees & Carry"/>
+            <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
+              <tbody>
+                {[
+                  ["Asset Management Fee",`${f.p(a.amFee)} of invested capital`],
+                  ["Property Management Fee",`${f.p(a.pmFee)} of gross NOI`],
+                  ["Carried Interest",f.p(a.carry)],
+                  ["Preferred Return",`${f.p(a.prefReturn)} (${a.compoundPref?"compound":"simple"})`],
+                  ["GP Catch-Up",a.catchUp?"Yes — full catch-up":"None"],
+                  ["GP Co-Investment",f.p(a.gpPct)],
+                ].map(([k,v],i)=>(
+                  <tr key={i} style={{borderBottom:`1px solid ${C.border}`}}>
+                    <td style={{padding:"8px 0",color:C.whDim}}>{k}</td>
+                    <td style={{padding:"8px 0",color:C.white,fontWeight:600,textAlign:"right"}}>{v}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        </div>
+      </Slide>
+
+      {/* SLIDE 3: LP Return Summary */}
+      <Slide title="LP Return Summary"
+        sub={`${a.assets.length}-asset portfolio | ${f.$(m.totEqDep)} equity deployed | ${a.fundTerm}-year hold`}>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:24}}>
+          <KPI label="LP Net IRR"   value={f.p(m.lpIRR)}   sub="Net of fees + promote" gold/>
+          <KPI label="LP MOIC"      value={f.x(m.lpMOIC)}  sub="Multiple on invested capital"/>
+          <KPI label="LP Equity In" value={f.$(m.totLPIn)} sub={`${f.p(1-a.gpPct)} of total equity`}/>
+          <KPI label="Pref Hurdle"  value={f.p(a.prefReturn)} sub={`Annual preferred return (${a.compoundPref?"compound":"simple"})`}/>
+          <KPI label="LP Proceeds"  value={f.$(m.lpTotal)} sub="Total at fund exit"/>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+          <Card>
+            <CT c="Portfolio NOI Growth"/>
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={m.noiChart}>
+                <defs><linearGradient id="pn1" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={C.gold} stopOpacity={.3}/>
+                  <stop offset="95%" stopColor={C.gold} stopOpacity={0}/>
+                </linearGradient></defs>
+                <XAxis dataKey="year" tick={{fill:C.whDim,fontSize:10}} axisLine={false} tickLine={false}/>
+                <YAxis tickFormatter={v=>`$${(v/1e6).toFixed(0)}M`} tick={{fill:C.whDim,fontSize:10}} axisLine={false} tickLine={false} width={44}/>
+                <Tooltip content={<TT/>}/>
+                <Area type="monotone" dataKey="noi" stroke={C.gold} strokeWidth={2} fill="url(#pn1)" name="NOI"/>
+              </AreaChart>
+            </ResponsiveContainer>
+          </Card>
+          <Card>
+            <CT c="Asset-Level IRRs"/>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={m.assetR.map(r=>({name:r.name,irr:r.irr}))}>
+                <XAxis dataKey="name" tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false}/>
+                <YAxis tickFormatter={v=>`${(v*100).toFixed(0)}%`} tick={{fill:C.whDim,fontSize:10}} axisLine={false} tickLine={false} width={32}/>
+                <Tooltip content={<TT/>} formatter={v=>`${(v*100).toFixed(1)}%`}/>
+                <ReferenceLine y={a.prefReturn} stroke={C.gold} strokeDasharray="4 4"/>
+                <Bar dataKey="irr" name="IRR" radius={[2,2,0,0]}>
+                  {m.assetR.map((e,i)=><Cell key={i} fill={e.irr>=a.prefReturn?C.green:C.red}/>)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </Card>
+        </div>
+      </Slide>
+
+      {/* SLIDE 4: Asset Detail */}
+      <Slide title="Asset Summary"
+        sub={`${a.assets.length} assets | ${f.$(a.assets.reduce((s,x)=>s+x.price,0))} portfolio value | ${f.p(a.debtPct)} LTV`}>
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+            <thead>
+              <tr style={{borderBottom:`1px solid ${C.border}`}}>
+                {["Asset","Price","Going-In Cap","NOI Growth","Close Month","Equity","IRR","MOIC","Exit Value","Sale Net"].map(h=>(
+                  <th key={h} style={{padding:"9px 10px",color:C.goldDim,fontSize:9,textTransform:"uppercase",
+                    letterSpacing:".06em",textAlign:h==="Asset"?"left":"right"}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {m.assetR.map((r,i)=>(
+                <tr key={i} style={{borderBottom:"1px solid rgba(255,255,255,.04)",
+                  background:i%2===0?"transparent":"rgba(255,255,255,.02)"}}>
+                  <td style={{padding:"9px 10px",color:C.white,fontWeight:600}}>{r.name}</td>
+                  <td style={{padding:"9px 10px",color:C.whDim,textAlign:"right"}}>{f.$(r.price)}</td>
+                  <td style={{padding:"9px 10px",color:C.whDim,textAlign:"right"}}>{f.p(r.cap)}</td>
+                  <td style={{padding:"9px 10px",color:C.whDim,textAlign:"right"}}>{f.p(r.growth)}</td>
+                  <td style={{padding:"9px 10px",color:"#5DADE2",textAlign:"right"}}>M{r.startMonth}</td>
+                  <td style={{padding:"9px 10px",color:C.whDim,textAlign:"right"}}>{f.$(r.eq)}</td>
+                  <td style={{padding:"9px 10px",color:r.irr>=a.prefReturn?C.green:C.red,textAlign:"right",fontWeight:700}}>{f.p(r.irr)}</td>
+                  <td style={{padding:"9px 10px",color:C.gold,textAlign:"right",fontWeight:600}}>{f.x(r.moic)}</td>
+                  <td style={{padding:"9px 10px",color:C.whDim,textAlign:"right"}}>{f.$(r.exitVal)}</td>
+                  <td style={{padding:"9px 10px",color:C.green,textAlign:"right"}}>{f.$(r.saleNet)}</td>
+                </tr>
+              ))}
+              <tr style={{borderTop:`2px solid ${C.border}`,background:"rgba(201,168,76,.06)"}}>
+                <td style={{padding:"9px 10px",color:C.gold,fontWeight:700}}>TOTAL</td>
+                <td style={{padding:"9px 10px",color:C.gold,textAlign:"right",fontWeight:700}}>{f.$(a.assets.reduce((s,x)=>s+x.price,0))}</td>
+                <td style={{padding:"9px 10px",color:C.goldDim,textAlign:"right"}}>{f.p(a.assets.reduce((s,x)=>s+x.cap*x.price,0)/a.assets.reduce((s,x)=>s+x.price,0))}</td>
+                <td colSpan={2}/>
+                <td style={{padding:"9px 10px",color:C.gold,textAlign:"right",fontWeight:700}}>{f.$(m.totEqDep)}</td>
+                <td style={{padding:"9px 10px",color:C.green,textAlign:"right",fontWeight:700}}>{f.p(m.lpIRR)}</td>
+                <td style={{padding:"9px 10px",color:C.gold,textAlign:"right",fontWeight:700}}>{f.x(m.lpMOIC)}</td>
+                <td/>
+                <td style={{padding:"9px 10px",color:C.green,textAlign:"right",fontWeight:700}}>{f.$(m.totSaleProc)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:18}}>
+          <KPI label="Wtd Avg Cap" value={f.p(a.assets.reduce((s,x)=>s+x.cap*x.price,0)/a.assets.reduce((s,x)=>s+x.price,0))}/>
+          <KPI label="Portfolio Value" value={f.$(a.assets.reduce((s,x)=>s+x.price,0))}/>
+          <KPI label="Total Equity" value={f.$(m.totEqDep)}/>
+          <KPI label="Total Debt" value={f.$(a.assets.reduce((s,x)=>s+x.price*a.debtPct,0))}/>
+        </div>
+      </Slide>
+
+      {/* SLIDE 5: Distribution Waterfall */}
+      <Slide title="Distribution Waterfall"
+        sub={`3-tier | ${f.$(m.pool)} total pool | ${f.$(m.totSaleProc)} sale proceeds + ${f.$(m.totOpCF)} op CF`}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1.4fr",gap:24}}>
+          <div>
+            {tiers.map(row=>(
+              <div key={row.tier} style={{background:C.whFaint,border:`1px solid ${C.border}`,
+                borderRadius:5,padding:"13px 15px",marginBottom:10}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:9}}>
+                  <div style={{width:3,height:28,background:row.color,borderRadius:2}}/>
+                  <div>
+                    <div style={{fontSize:9,color:C.gold,textTransform:"uppercase",letterSpacing:".1em"}}>{row.tier}</div>
+                    <div style={{fontSize:12,color:C.white,fontWeight:600}}>{row.label}</div>
+                  </div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <div style={{background:"rgba(41,128,185,.12)",borderRadius:3,padding:"7px 10px"}}>
+                    <div style={{fontSize:9,color:"rgba(41,128,185,.7)",textTransform:"uppercase"}}>LP</div>
+                    <div style={{fontSize:16,color:"#5DADE2",fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(row.lp)}</div>
+                  </div>
+                  <div style={{background:"rgba(201,168,76,.08)",borderRadius:3,padding:"7px 10px"}}>
+                    <div style={{fontSize:9,color:C.goldDim,textTransform:"uppercase"}}>GP</div>
+                    <div style={{fontSize:16,color:C.gold,fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(row.gp)}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+            <div style={{background:C.navy,border:`1px solid ${C.gold}`,borderRadius:5,padding:"13px 15px"}}>
+              <div style={{fontSize:9,color:C.gold,textTransform:"uppercase",letterSpacing:".1em",marginBottom:7}}>Totals</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                <div>
+                  <div style={{fontSize:9,color:"rgba(93,173,226,.7)",textTransform:"uppercase"}}>LP Total</div>
+                  <div style={{fontSize:19,color:"#5DADE2",fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(m.lpTotal)}</div>
+                  <div style={{fontSize:10,color:C.whDim}}>MOIC: {f.x(m.lpMOIC)}</div>
+                </div>
+                <div>
+                  <div style={{fontSize:9,color:C.goldDim,textTransform:"uppercase"}}>GP Total</div>
+                  <div style={{fontSize:19,color:C.gold,fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(m.gpFundTotal)}</div>
+                  <div style={{fontSize:10,color:C.whDim}}>{f.$(m.gpPromote)} promote</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <Card>
+            <CT c="Proceeds by Recipient"/>
+            <ResponsiveContainer width="100%" height={340}>
+              <BarChart data={m.waterfall} margin={{top:10,right:10,bottom:10,left:10}}>
+                <XAxis dataKey="name" tick={{fill:C.whDim,fontSize:10}} axisLine={false} tickLine={false}/>
+                <YAxis tickFormatter={v=>`$${(v/1e6).toFixed(0)}M`} tick={{fill:C.whDim,fontSize:10}} axisLine={false} tickLine={false} width={44}/>
+                <Tooltip content={<TT/>}/>
+                <Bar dataKey="value" name="Amount" radius={[3,3,0,0]}>
+                  {m.waterfall.map((e,i)=><Cell key={i} fill={e.fill}/>)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </Card>
+        </div>
+      </Slide>
+
+      {/* SLIDE 6: Fund Cash Flow */}
+      <Slide title="Fund Cash Flow"
+        sub="LP capital calls, operating cash flow, and deployment timeline">
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:20}}>
+          <KPI label="Total LP Called"   value={f.$(m.totLPCalled)} sub="Investment period"/>
+          <KPI label="Total Op CF"       value={f.$(m.totOpCF)}     sub="Net of DS + PM fees"/>
+          <KPI label="Sale Proceeds"     value={f.$(m.totSaleProc)} sub={`All ${a.assets.length} exits`} gold/>
+          <KPI label="Total Pool"        value={f.$(m.pool)}        sub="Available for distribution"/>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
+          <Card>
+            <CT c="Annual Capital Calls & Net Operating CF"/>
+            <ResponsiveContainer width="100%" height={210}>
+              <ComposedChart data={m.fundCFAnnual}>
+                <XAxis dataKey="year" tick={{fill:C.whDim,fontSize:10}} axisLine={false} tickLine={false}/>
+                <YAxis tickFormatter={v=>`$${(v/1e6).toFixed(0)}M`} tick={{fill:C.whDim,fontSize:10}} axisLine={false} tickLine={false} width={44}/>
+                <Tooltip content={<TT/>}/>
+                <ReferenceLine y={0} stroke="rgba(255,255,255,.2)"/>
+                <Bar dataKey="lpCalls" name="LP Capital Calls" fill={C.red} radius={[2,2,0,0]}/>
+                <Bar dataKey="opCF"    name="Net Op CF"         fill={C.green} radius={[2,2,0,0]}/>
+              </ComposedChart>
+            </ResponsiveContainer>
+          </Card>
+          <Card>
+            <CT c="LP Capital Deployment"/>
+            <ResponsiveContainer width="100%" height={210}>
+              <AreaChart data={m.deplCurve.slice(0,30)}>
+                <defs><linearGradient id="pd1" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={C.blue} stopOpacity={.35}/>
+                  <stop offset="95%" stopColor={C.blue} stopOpacity={0}/>
+                </linearGradient></defs>
+                <XAxis dataKey="mo" tickFormatter={v=>`M${v}`} tick={{fill:C.whDim,fontSize:10}} axisLine={false} tickLine={false}/>
+                <YAxis tickFormatter={v=>`$${(v/1e6).toFixed(0)}M`} tick={{fill:C.whDim,fontSize:10}} axisLine={false} tickLine={false} width={44}/>
+                <Tooltip content={<TT/>}/>
+                <Area type="stepAfter" dataKey="lp" stroke={C.blue} strokeWidth={2} fill="url(#pd1)" name="LP Called"/>
+              </AreaChart>
+            </ResponsiveContainer>
+          </Card>
+        </div>
+      </Slide>
+
+      {/* SLIDE 7: G&A Summary */}
+      <Slide title="GP Operating Model"
+        sub="Fee income, G&A burden, and coverage analysis">
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:20}}>
+          <KPI label="Total G&A (7yr)"       value={f.$(m.totGA)}              sub="All-in incl. partner salaries"/>
+          <KPI label="Total Fee Income"       value={f.$(m.totFees)}           sub="AM + PM fees"/>
+          <KPI label="Fee Coverage"           value={f.p(m.totFees/m.totGA)}   sub="Fees / total G&A" gold/>
+          <KPI label="G&A Shortfall"          value={f.$(m.totGAShortfall)}    sub="LP funds the gap"/>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+          <Card>
+            <CT c="Monthly G&A by Category"/>
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={m.gaMonthly.map(x=>({
+                mo:x.mo,
+                partnerSal:Math.round(x.partnerSalCost||0),
+                staff:Math.round(x.personnel-(x.partnerSalCost||0)),
+                overhead:Math.round(x.fix),
+              }))}>
+                <defs>
+                  <linearGradient id="pgp2" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={C.gold} stopOpacity={.35}/><stop offset="95%" stopColor={C.gold} stopOpacity={0}/>
+                  </linearGradient>
+                  <linearGradient id="pgs2" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={C.blue} stopOpacity={.4}/><stop offset="95%" stopColor={C.blue} stopOpacity={0}/>
+                  </linearGradient>
+                  <linearGradient id="pgo2" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={C.mid} stopOpacity={.4}/><stop offset="95%" stopColor={C.mid} stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="mo" tickFormatter={v=>v%12===0?`M${v}`:""} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false}/>
+                <YAxis tickFormatter={v=>`$${(v/1000).toFixed(0)}K`} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false} width={44}/>
+                <Tooltip content={<TT/>}/>
+                <Area stackId="1" type="monotone" dataKey="overhead"   stroke={C.mid}  strokeWidth={1} fill="url(#pgo2)" name="Overhead"/>
+                <Area stackId="1" type="monotone" dataKey="staff"      stroke={C.blue} strokeWidth={1} fill="url(#pgs2)" name="Staff G&A"/>
+                <Area stackId="1" type="monotone" dataKey="partnerSal" stroke={C.gold} strokeWidth={1.5} fill="url(#pgp2)" name="Partner Salaries"/>
+              </AreaChart>
+            </ResponsiveContainer>
+          </Card>
+          <Card>
+            <CT c="Fee Income vs G&A — Monthly Net"/>
+            <ResponsiveContainer width="100%" height={200}>
+              <ComposedChart data={m.gpEntity.map(x=>({
+                mo:x.mo,fees:Math.round(x.fees),ga:Math.round(-x.ga),net:Math.round(x.fees+x.ga)
+              }))}>
+                <XAxis dataKey="mo" tickFormatter={v=>v%12===0?`M${v}`:""} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false}/>
+                <YAxis tickFormatter={v=>`$${(v/1000).toFixed(0)}K`} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false} width={44}/>
+                <Tooltip content={<TT/>}/>
+                <ReferenceLine y={0} stroke="rgba(255,255,255,.2)"/>
+                <Bar dataKey="fees" name="Fee Income" fill={C.green} radius={[1,1,0,0]}/>
+                <Bar dataKey="ga"   name="G&A Spend"  fill={C.red}   radius={[1,1,0,0]}/>
+                <Line type="monotone" dataKey="net" name="Net" stroke={C.gold} strokeWidth={2} dot={false}/>
+              </ComposedChart>
+            </ResponsiveContainer>
+          </Card>
+        </div>
+      </Slide>
+
+      {/* SLIDE 8: Sensitivity */}
+      <Slide title="Sensitivity Analysis"
+        sub="LP IRR across key assumption combinations — current assumptions highlighted">
+        {(()=>{
+          const exitCaps=[.065,.070,.075,.080,.085,.090];
+          const noiGrowths=[.03,.05,.07,.09];
+          return(
+            <Card>
+              <CT c="LP IRR Matrix — Exit Cap Rate x NOI Growth"/>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead>
+                    <tr style={{borderBottom:`1px solid ${C.border}`}}>
+                      <th style={{padding:"9px 14px",color:C.goldDim,fontSize:10,
+                        textTransform:"uppercase",letterSpacing:".07em",textAlign:"left"}}>
+                        Exit Cap / NOI Growth
+                      </th>
+                      {noiGrowths.map(g=>(
+                        <th key={g} style={{padding:"9px 16px",color:C.gold,fontSize:11,textAlign:"center"}}>
+                          {(g*100).toFixed(0)}%
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {exitCaps.map(ec=>(
+                      <tr key={ec} style={{borderBottom:"1px solid rgba(255,255,255,.04)"}}>
+                        <td style={{padding:"10px 14px",fontSize:12,
+                          color:Math.abs(ec-a.exitCapRate)<.001?C.gold:C.whDim,
+                          fontWeight:Math.abs(ec-a.exitCapRate)<.001?700:400}}>
+                          {(ec*100).toFixed(1)}% {Math.abs(ec-a.exitCapRate)<.001&&"  current"}
+                        </td>
+                        {noiGrowths.map(g=>{
+                          const r2=run({...a,exitCapRate:ec,assets:a.assets.map(x=>({...x,growth:g}))});
+                          const v=r2.lpIRR;
+                          const isCur=Math.abs(ec-a.exitCapRate)<.001&&Math.abs(g-a.assets[0].growth)<.001;
+                          const bg=v>.18?"rgba(30,132,73,.25)":v>.14?"rgba(201,168,76,.12)":"rgba(192,57,43,.2)";
+                          const clr=v>.18?C.green:v>.14?C.white:C.red;
+                          return(
+                            <td key={g} style={{padding:"10px 16px",textAlign:"center",fontSize:13,
+                              background:isCur?"rgba(201,168,76,.22)":bg,color:clr,fontWeight:isCur?700:500,
+                              border:isCur?`1px solid ${C.gold}`:"none"}}>
+                              {f.p(v)}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{display:"flex",gap:14,marginTop:12,fontSize:11}}>
+                {[["rgba(30,132,73,.3)","> 18%"],["rgba(201,168,76,.15)","14-18%"],["rgba(192,57,43,.25)","< 14%"]].map(([bg,l])=>(
+                  <div key={l} style={{display:"flex",alignItems:"center",gap:5}}>
+                    <div style={{width:14,height:14,background:bg,borderRadius:2}}/>
+                    <span style={{color:C.whDim}}>{l}</span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          );
+        })()}
+      </Slide>
     </div>
   );
 }
