@@ -14,14 +14,14 @@ const C = {
 
 // ── DEFAULT STATE ─────────────────────────────────────────────────────────────
 const DEF_ASSETS = [
-  {name:"Asset 1",price:15000000,cap:.070,growth:.07,startMonth:6, scope:"global"},
-  {name:"Asset 2",price:12000000,cap:.070,growth:.07,startMonth:9, scope:"global"},
-  {name:"Asset 3",price:18000000,cap:.075,growth:.06,startMonth:12,scope:"global"},
-  {name:"Asset 4",price:20000000,cap:.080,growth:.05,startMonth:15,scope:"global"},
-  {name:"Asset 5",price:16000000,cap:.082,growth:.05,startMonth:18,scope:"global"},
-  {name:"Asset 6",price:14000000,cap:.081,growth:.05,startMonth:21,scope:"global"},
-  {name:"Asset 7",price:14000000,cap:.075,growth:.05,startMonth:24,scope:"global"},
-  {name:"Asset 8",price:12000000,cap:.078,growth:.05,startMonth:27,scope:"global"},
+  {name:"Asset 1",price:15000000,cap:.070,growth:.07,startMonth:6, noiMargin:.65, scope:"global"},
+  {name:"Asset 2",price:12000000,cap:.070,growth:.07,startMonth:9, noiMargin:.65, scope:"global"},
+  {name:"Asset 3",price:18000000,cap:.075,growth:.06,startMonth:12,noiMargin:.65, scope:"global"},
+  {name:"Asset 4",price:20000000,cap:.080,growth:.05,startMonth:15,noiMargin:.65, scope:"global"},
+  {name:"Asset 5",price:16000000,cap:.082,growth:.05,startMonth:18,noiMargin:.65, scope:"global"},
+  {name:"Asset 6",price:14000000,cap:.081,growth:.05,startMonth:21,noiMargin:.65, scope:"global"},
+  {name:"Asset 7",price:14000000,cap:.075,growth:.05,startMonth:24,noiMargin:.65, scope:"global"},
+  {name:"Asset 8",price:12000000,cap:.078,growth:.05,startMonth:27,noiMargin:.65, scope:"global"},
 ];
 
 const DEF_HIRES = [
@@ -146,11 +146,13 @@ function run(a){
   const assetR=assets.map(asset=>{
     const eq=asset.price*(1-debtPct),debt=asset.price*debtPct;
     const annDS=pmt(interestRate,amortYears,debt);
+    const margin=asset.noiMargin||.65;
     const noi=Array.from({length:fundTerm+1},(_,y)=>
       y===0?0:asset.price*asset.cap*Math.pow(1+asset.growth,y-1));
+    const egi=noi.map(n=>margin>0?n/margin:n);
     const ecf=noi.map((n,y)=>{
       if(y===0)return -eq;
-      return n-annDS-n*pmFee;
+      return n-annDS-egi[y]*pmFee;
     });
     const exitNOI=noi[fundTerm];
     const exitVal=exitNOI/exitCapRate;
@@ -168,16 +170,19 @@ function run(a){
 
   const monthly=Array.from({length:MO},(_,i)=>{
     const mo=i+1;
-    let noi=0,invEq=0,ds=0;
+    let noi=0,egi=0,invEq=0,ds=0;
     assets.forEach(x=>{
       if(mo<x.startMonth)return;
       const yrs=(mo-x.startMonth)/12;
-      noi+=x.price*x.cap*Math.pow(1+x.growth,yrs)/12;
+      const moNoi=x.price*x.cap*Math.pow(1+x.growth,yrs)/12;
+      const margin=x.noiMargin||.65;
+      noi+=moNoi;
+      egi+=margin>0?moNoi/margin:moNoi;
       invEq+=x.price*(1-debtPct);
       ds+=Math.abs(pmt(interestRate,amortYears,x.price*debtPct))/12;
     });
     const amFeeM=invEq*amFee/12;
-    const pmFeeM=noi*pmFee;
+    const pmFeeM=egi*pmFee;
     const netOpCF=noi-ds-pmFeeM-amFeeM;  // AM fee is fund expense, flows to GP entity separately
     const lpCall=assets.reduce((s,x)=>x.startMonth===mo?s+x.price*(1-debtPct)*(1-gpPct):s,0);
     const gpCall=assets.reduce((s,x)=>x.startMonth===mo?s+x.price*(1-debtPct)*gpPct:s,0);
@@ -623,7 +628,7 @@ export default function Portal(){
   const setAsset=useCallback((i,k,v)=>setA(p=>({...p,assets:p.assets.map((x,j)=>j===i?{...x,[k]:v}:x)})),[]);
   const addAsset=useCallback((scope="scenario",name)=>setA(p=>({...p,assets:[...p.assets,{
     name:name||"Asset "+(p.assets.length+1),price:12000000,cap:.075,growth:.05,
-    startMonth:Math.min(36,(p.assets.length+1)*3+3),scope}]})),[]);
+    noiMargin:.65,startMonth:Math.min(36,(p.assets.length+1)*3+3),scope}]})),[]);
   const removeAsset=useCallback((i)=>setA(p=>({...p,assets:p.assets.filter((_,j)=>j!==i)})),[]);
 
   const setHire=useCallback((i,k,v)=>setA(p=>({...p,hires:p.hires.map((x,j)=>j===i?{...x,[k]:v}:x)})),[]);
@@ -651,7 +656,7 @@ export default function Portal(){
     const type=globalModal;
     setA(prev=>{
       const updated={...prev};
-      if(type==="assets") updated.assets=[...prev.assets,{name,price:12000000,cap:.075,growth:.05,startMonth:Math.min(36,(prev.assets.length+1)*3+3),scope:"global"}];
+      if(type==="assets") updated.assets=[...prev.assets,{name,price:12000000,cap:.075,growth:.05,noiMargin:.65,startMonth:Math.min(36,(prev.assets.length+1)*3+3),scope:"global"}];
       else if(type==="hires") updated.hires=[...prev.hires,{role:name,salary:75000,start:12,alloc:1.00,scope:"global"}];
       else if(type==="overhead") updated.overhead=[...prev.overhead,{label:name,annual:10000,start:1,end:0,rampMo:3,growth:.02,ramps:false,scope:"global"}];
       else if(type==="oneTime") updated.oneTime=[...prev.oneTime,{label:name,amount:5000,month:1,category:"Other",scope:"global"}];
@@ -818,7 +823,7 @@ export default function Portal(){
           <div style={{height:1,background:C.border,margin:"12px 0"}}/>
           <SHdr t="Fees & Carry"/>
           <Sli label="AM Fee"         value={a.amFee}        min={.005} max={.02}  step={.0025} disp={v=>`${(v*100).toFixed(2)}%`} onChange={v=>set("amFee",v)} sub="% invested capital/yr"/>
-          <Sli label="PM Fee"         value={a.pmFee}        min={.03}  max={.10}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("pmFee",v)} sub="% gross NOI"/>
+          <Sli label="PM Fee"         value={a.pmFee}        min={.03}  max={.10}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("pmFee",v)} sub="% EGI (gross revenue)"/>
           <Sli label="Carried Int."   value={a.carry}        min={.10}  max={.30}  step={.025}  disp={v=>`${(v*100).toFixed(0)}%`} onChange={v=>set("carry",v)}/>
           <Sli label="Preferred Ret." value={a.prefReturn}   min={.05}  max={.10}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("prefReturn",v)}/>
           {/* Pref type toggle */}
@@ -1004,11 +1009,12 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset,addGlobalWithModal}){
                 )}
               </div>
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10}}>
               {[
                 {k:"price",     l:"Price",       min:5e6, max:50e6,step:5e5, d:v=>`$${(v/1e6).toFixed(1)}M`},
                 {k:"cap",       l:"Going-In Cap",min:.05, max:.12, step:.005,d:v=>`${(v*100).toFixed(1)}%`},
                 {k:"growth",    l:"NOI Growth",  min:.02, max:.12, step:.005,d:v=>`${(v*100).toFixed(1)}%`},
+                {k:"noiMargin", l:"NOI Margin",  min:.40, max:.85, step:.01, d:v=>`${(v*100).toFixed(0)}%`},
                 {k:"startMonth",l:"Close Month", min:3,   max:36,  step:3,   d:v=>`M${v}`},
               ].map(fi=>(
                 <div key={fi.k}>
