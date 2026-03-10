@@ -69,12 +69,26 @@ const DEF_PARTNER_SALARIES = [
   {role:"Managing Partner / CIO",  salary:220000, start:1},
 ];
 
+// Multi-tier promote structure: each tier has optional IRR/MOIC hurdles and LP/GP splits
+// Dual trigger: whichever threshold reached first advances to next tier
+const DEF_PROMOTE_TIERS = [
+  { irrHurdle: null, moicHurdle: null, lpSplit: 0.80, gpSplit: 0.20 },
+];
+
+// Preset: institutional multi-tier waterfall
+const MULTI_TIER_PRESET = [
+  { irrHurdle: 0.16, moicHurdle: 1.80, lpSplit: 0.80, gpSplit: 0.20 },
+  { irrHurdle: 0.19, moicHurdle: 2.25, lpSplit: 0.70, gpSplit: 0.30 },
+  { irrHurdle: null, moicHurdle: null, lpSplit: 0.60, gpSplit: 0.40 },
+];
+
 const DEFAULT = {
   fundTerm:7, debtPct:.60, interestRate:.065, amortYears:25,
   exitCapRate:.075, saleCosts:.02, carry:.20, prefReturn:.07,
   gpPct:.02, amFee:.01, pmFee:.06, benefitsRate:.22, salaryGrowth:.03,
   partners:3, compoundPref:false, catchUp:false,
-  assets:DEF_ASSETS, hires:DEF_HIRES, overhead:DEF_OVERHEAD, oneTime:DEF_ONE_TIME, partnerSalaries:DEF_PARTNER_SALARIES,
+  assets:DEF_ASSETS, hires:DEF_HIRES, overhead:DEF_OVERHEAD, oneTime:DEF_ONE_TIME,
+  partnerSalaries:DEF_PARTNER_SALARIES, promoteTiers:DEF_PROMOTE_TIERS,
 };
 
 // ── MATH ──────────────────────────────────────────────────────────────────────
@@ -93,12 +107,22 @@ function irr(cfs,g=.1){
   return r;
 }
 
+// Given a target IRR, compute total LP distributions needed across the fund life.
+// Uses the annual approximation: Year 0 = -lpCapital, Years 1..N-1 = annualInterim, Year N = terminal.
+function totalLPForIRR(targetIRR, lpCapital, annualInterim, N) {
+  if (targetIRR <= -0.99) return Infinity;
+  let pvInterim = 0;
+  for (let y = 1; y < N; y++) pvInterim += annualInterim / Math.pow(1 + targetIRR, y);
+  const terminal = (lpCapital - pvInterim) * Math.pow(1 + targetIRR, N);
+  return annualInterim * (N - 1) + terminal;
+}
+
 // ── MODEL ─────────────────────────────────────────────────────────────────────
 function run(a){
   const {assets,hires,overhead,fundTerm,debtPct,interestRate,amortYears,
     exitCapRate,saleCosts,carry,prefReturn,gpPct,amFee,pmFee,
     benefitsRate,salaryGrowth,partners,partnerSalaries,oneTime=[],
-    compoundPref=false,catchUp=false}=a;
+    compoundPref=false,catchUp=false,promoteTiers=DEF_PROMOTE_TIERS}=a;
   const MO=fundTerm*12;
 
   // G&A monthly
@@ -212,7 +236,7 @@ function run(a){
   const lpActualCapital = totLPCalled + totGAShortfall;
   const gpActualCapital = totGPCalled; // GP basis = equity co-invest only
 
-  // WATERFALL
+  // WATERFALL — multi-tier with dual trigger (IRR + MOIC thresholds)
   const pool=totSaleProc+totOpCF;
   let rem=pool;
 
@@ -220,39 +244,78 @@ function run(a){
   const lpROC=Math.min(lpActualCapital,rem); rem-=lpROC;
   const gpROC=Math.min(gpActualCapital,rem); rem-=gpROC;
 
-
   // Tier 2: LP preferred return — simple or compound
-  // Simple:   lpActualCapital * rate * years
-  // Compound: lpActualCapital * ((1+rate)^years - 1)  — standard for institutional LPAs
   const lpPrefDue = compoundPref
     ? lpActualCapital * (Math.pow(1+prefReturn, fundTerm) - 1)
     : lpActualCapital * prefReturn * fundTerm;
   const lpPref=Math.min(lpPrefDue,rem); rem-=lpPref;
 
-  // Tier 3: Catch-up + Promote
-  // Without catch-up: GP gets carry% of everything above pref
-  // With catch-up: GP first takes 100% until GP total = carry% of (pref+promote pool),
-  //   then residual splits carry / (1-carry).
-  //   Formula: catch-up amount = (carry * lpPref) / (1 - carry)
-  let gpPromote=0, lpResid=0;
+  // Tier 3: GP catch-up (if enabled)
+  // GP catches up to carry% using catch-up target derived from carry setting
+  let gpCatchUp=0;
   if(catchUp){
-    const cuAmt = Math.min(rem, (carry * lpPref) / (1 - carry)); // GP catches up
+    const cuAmt = Math.min(rem, (carry * lpPref) / (1 - carry));
+    gpCatchUp = cuAmt;
     rem -= cuAmt;
-    gpPromote = cuAmt + Math.max(0,rem*carry);
-    lpResid   = Math.max(0,rem*(1-carry));
-  } else {
-    gpPromote = Math.max(0,rem*carry);
-    lpResid   = Math.max(0,rem*(1-carry));
+  }
+
+  // Interim LP distributions (for IRR threshold calculation)
+  const annualInterimLP=(totOpCF*(1-gpPct))/(fundTerm);
+
+  // Promote tiers — distribute remaining pool according to LP/GP splits
+  // Dual trigger: advance to next tier when EITHER IRR or MOIC threshold is reached (whichever first)
+  let lpDistTotal = lpROC + lpPref;  // LP waterfall total so far
+  let gpPromote = gpCatchUp;
+  let lpResid = 0;
+
+  const tierResults = [];
+  for (const tier of promoteTiers) {
+    if (rem <= 0) {
+      tierResults.push({ ...tier, lp: 0, gp: 0 });
+      continue;
+    }
+    if (tier.irrHurdle == null && tier.moicHurdle == null) {
+      // No hurdle — final tier, distribute everything remaining
+      const lpAmt = rem * tier.lpSplit;
+      const gpAmt = rem * tier.gpSplit;
+      lpDistTotal += lpAmt;
+      gpPromote += gpAmt;
+      lpResid += lpAmt;
+      tierResults.push({ ...tier, lp: lpAmt, gp: gpAmt });
+      rem = 0;
+    } else {
+      // Dual trigger: find LP total at each threshold, take the minimum
+      let lpTarget = Infinity;
+      if (tier.moicHurdle != null) {
+        lpTarget = Math.min(lpTarget, tier.moicHurdle * lpActualCapital);
+      }
+      if (tier.irrHurdle != null) {
+        const lpForIRR = totalLPForIRR(tier.irrHurdle, lpActualCapital, annualInterimLP, fundTerm);
+        if (isFinite(lpForIRR) && lpForIRR > 0) {
+          lpTarget = Math.min(lpTarget, lpForIRR);
+        }
+      }
+      const lpNeeded = Math.max(0, lpTarget - lpDistTotal);
+      const tierTotalNeeded = tier.lpSplit > 0 ? lpNeeded / tier.lpSplit : 0;
+      const tierActual = Math.min(rem, tierTotalNeeded);
+
+      const lpAmt = tierActual * tier.lpSplit;
+      const gpAmt = tierActual * tier.gpSplit;
+      lpDistTotal += lpAmt;
+      gpPromote += gpAmt;
+      lpResid += lpAmt;
+      tierResults.push({ ...tier, lp: lpAmt, gp: gpAmt });
+      rem -= tierActual;
+    }
   }
 
   const lpTotal=lpROC+lpPref+lpResid;
   const gpFundTotal=gpROC+gpPromote;
-  const lpMOIC=lpTotal/Math.max(1,lpActualCapital);  // MOIC on actual LP capital deployed
+  const lpMOIC=lpTotal/Math.max(1,lpActualCapital);
 
   // LP IRR — annual approximation
   const lpCF=Array(fundTerm+1).fill(0);
-  lpCF[0]=-lpActualCapital;  // LP total capital at risk incl. funded shortfall
-  const annualInterimLP=(totOpCF*(1-gpPct))/(fundTerm);
+  lpCF[0]=-lpActualCapital;
   for(let y=1;y<fundTerm;y++)lpCF[y]=annualInterimLP;
   lpCF[fundTerm]=lpTotal-annualInterimLP*(fundTerm-1);
   const lpIRR=irr(lpCF);
@@ -328,7 +391,7 @@ function run(a){
 
   return{
     assetR,lpIRR,lpMOIC,lpROC,lpPref,lpResid,lpTotal,
-    gpROC,gpPromote,gpFundTotal,
+    gpROC,gpPromote,gpCatchUp,gpFundTotal,tierResults,
     totEqDep,totLPIn,totLPCalled,totGPCalled,totGPIn,
     totGAShortfall,lpActualCapital,gpActualCapital,
     totSaleProc,totExitVal,totDebtRepaid,totSellingCosts,
@@ -341,9 +404,10 @@ function run(a){
     waterfall:[
       {name:"LP Capital", value:lpROC,      fill:"#2980B9"},
       {name:"LP Pref",    value:lpPref,     fill:"#1A5276"},
-      {name:"LP Residual",value:lpResid,    fill:"#5DADE2"},
+      ...tierResults.map((t,i)=>({name:`LP T${i+4}`,value:t.lp,fill:["#5DADE2","#3498DB","#2471A3"][i]||"#5DADE2"})),
       {name:"GP Co-inv",  value:gpROC,      fill:"#8B7536"},
-      {name:"GP Promote", value:gpPromote,  fill:C.gold},
+      ...(gpCatchUp>0?[{name:"GP Catch-up",value:gpCatchUp,fill:"#A08040"}]:[]),
+      ...tierResults.map((t,i)=>({name:`GP T${i+4}`,value:t.gp,fill:[C.gold,"#D4AF37","#B8860B"][i]||C.gold})),
     ],
   };
 }
@@ -649,6 +713,13 @@ export default function Portal(){
     {label:name||"New Expense",amount:5000,month:1,category:"Other",scope}]})),[]);
   const removeOneTime=useCallback((i)=>setA(p=>({...p,oneTime:p.oneTime.filter((_,j)=>j!==i)})),[]);
 
+  // Promote tier management
+  const setTier=useCallback((i,k,v)=>setA(p=>({...p,promoteTiers:(p.promoteTiers||DEF_PROMOTE_TIERS).map((x,j)=>j===i?{...x,[k]:v}:x)})),[]);
+  const addTier=useCallback(()=>setA(p=>({...p,promoteTiers:[...(p.promoteTiers||DEF_PROMOTE_TIERS),
+    {irrHurdle:null,moicHurdle:null,lpSplit:0.60,gpSplit:0.40}]})),[]);
+  const removeTier=useCallback((i)=>setA(p=>({...p,promoteTiers:(p.promoteTiers||DEF_PROMOTE_TIERS).filter((_,j)=>j!==i)})),[]);
+  const setTierPreset=useCallback((preset)=>setA(p=>({...p,promoteTiers:preset})),[]);
+
   const pendingGlobalSaveRef=useRef(false);
   const addGlobalWithModal=useCallback((type)=>{
     setGlobalModal(type);
@@ -831,7 +902,7 @@ export default function Portal(){
           <SHdr t="Fees & Carry"/>
           <Sli label="AM Fee"         value={a.amFee}        min={.005} max={.02}  step={.0025} disp={v=>`${(v*100).toFixed(2)}%`} onChange={v=>set("amFee",v)} sub="% invested capital/yr"/>
           <Sli label="PM Fee"         value={a.pmFee}        min={.03}  max={.10}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("pmFee",v)} sub="% EGI (gross revenue)"/>
-          <Sli label="Carried Int."   value={a.carry}        min={.10}  max={.30}  step={.025}  disp={v=>`${(v*100).toFixed(0)}%`} onChange={v=>set("carry",v)}/>
+          <Sli label="Carried Int."   value={a.carry}        min={.10}  max={.30}  step={.025}  disp={v=>`${(v*100).toFixed(0)}%`} onChange={v=>set("carry",v)} sub="GP catch-up target"/>
           <Sli label="Preferred Ret." value={a.prefReturn}   min={.05}  max={.10}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("prefReturn",v)}/>
           {/* Pref type toggle */}
           <div style={{marginBottom:12}}>
@@ -894,7 +965,7 @@ export default function Portal(){
         <div style={{flex:1,padding:"24px 28px",overflowY:"auto",minHeight:"calc(100vh - 52px)"}}>
           {m&&tab==="Overview"    && <TabOverview    m={m} a={a}/>}
           {m&&tab==="Assets"      && <TabAssets      m={m} a={a} setAsset={setAsset} addAsset={addAsset} removeAsset={removeAsset} addGlobalWithModal={addGlobalWithModal}/>}
-          {m&&tab==="Waterfall"   && <TabWaterfall   m={m} a={a}/>}
+          {m&&tab==="Waterfall"   && <TabWaterfall   m={m} a={a} setTier={setTier} addTier={addTier} removeTier={removeTier} setTierPreset={setTierPreset}/>}
           {m&&tab==="Fund CF"     && <TabFundCF      m={m} a={a}/>}
           {m&&tab==="G&A Model"   && <TabGA          m={m} a={a} setHire={setHire} addHire={addHire} removeHire={removeHire} setOhead={setOhead} addOhead={addOhead} removeOhead={removeOhead} setPartnerSal={setPartnerSal} setOneTime={setOneTime} addOneTime={addOneTime} removeOneTime={removeOneTime} addGlobalWithModal={addGlobalWithModal}/>}
           {m&&tab==="GP Partners" && <TabGPPartners  m={m} a={a}/>}
@@ -913,7 +984,14 @@ function PresentationView({m,a,scenName,onClose}){
   const tiers=[
     {tier:"Tier 1",label:"Return of Capital",lp:m.lpROC,gp:m.gpROC,color:"#2980B9"},
     {tier:"Tier 2",label:`Preferred Return (${f.p(a.prefReturn)} ${a.compoundPref?"compound":"simple"})`,lp:m.lpPref,gp:0,color:C.mid},
-    {tier:"Tier 3",label:`Promote (${f.p(1-a.carry)} LP / ${f.p(a.carry)} GP${a.catchUp?" + catch-up":""})`,lp:m.lpResid,gp:m.gpPromote,color:C.gold},
+    ...(a.catchUp?[{tier:"Tier 3",label:`GP Catch-Up (to ${f.p(a.carry)})`,lp:0,gp:m.gpCatchUp,color:"#A08040"}]:[]),
+    ...(m.tierResults||[]).map((t,i)=>({
+      tier:`Tier ${(a.catchUp?4:3)+i}`,
+      label:t.irrHurdle!=null||t.moicHurdle!=null
+        ? `${Math.round(t.lpSplit*100)}/${Math.round(t.gpSplit*100)} (${t.irrHurdle!=null?f.p(t.irrHurdle)+" IRR":""}${t.irrHurdle!=null&&t.moicHurdle!=null?" / ":""}${t.moicHurdle!=null?f.x(t.moicHurdle)+" EM":""})`
+        : `Residual (${Math.round(t.lpSplit*100)}/${Math.round(t.gpSplit*100)})`,
+      lp:t.lp,gp:t.gp,color:["#5DADE2","#3498DB","#2471A3"][i]||C.gold,
+    })),
   ];
 
   const Slide=({children,title,sub})=>(
@@ -1389,7 +1467,7 @@ function TabOverview({m,a}){
       <div style={{height:1,background:C.border,margin:"14px 0"}}/>
       <div style={{fontSize:9,color:C.gold,letterSpacing:".12em",textTransform:"uppercase",marginBottom:7,fontWeight:700}}>GP Economics</div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:22}}>
-        <KPI label="GP Promote"   value={f.$(m.gpPromote)}    sub={`${f.p(a.carry)} carry above pref`} gold/>
+        <KPI label="GP Promote"   value={f.$(m.gpPromote)}    sub={`Total promote${(a.promoteTiers||[]).length>1?" (multi-tier)":""}`} gold/>
         <KPI label="AM + PM Fees" value={f.$(m.totFees)}      sub="7-yr fee income"/>
         <KPI label="Per Partner"  value={f.$(m.promPP)}       sub={`1 of ${a.partners} partners`}/>
         <KPI label="GP Net 7-yr"  value={f.$(m.gpNetTotal)}   sub="After co-invest (LP funds G&A gap)"/>
@@ -1529,18 +1607,36 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset,addGlobalWithModal}){
 // ═══════════════════════════════════════════════════════════════════════════════
 // WATERFALL
 // ═══════════════════════════════════════════════════════════════════════════════
-function TabWaterfall({m,a}){
-  const tiers=[
+function TabWaterfall({m,a,setTier,addTier,removeTier,setTierPreset}){
+  const tiers = a.promoteTiers || DEF_PROMOTE_TIERS;
+  const isMultiTier = tiers.length > 1 || (tiers[0] && tiers[0].irrHurdle != null);
+
+  // Build display rows for the full waterfall
+  const displayTiers=[
     {tier:"Tier 1",label:"Return of Capital",lp:m.lpROC,gp:m.gpROC,color:"#2980B9",
-      note:`LP equity + funded G&A shortfall · GP equity co-invest only`},
-    {tier:"Tier 2",label:`Preferred Return (${f.p(a.prefReturn)} ${a.compoundPref?"compound":"simple"})`,lp:m.lpPref,gp:0,color:C.mid,note:`LP only · ${a.compoundPref?"compound accrual":"simple interest"}`},
-    {tier:"Tier 3",label:`Promote (${f.p(1-a.carry)} LP / ${f.p(a.carry)} GP${a.catchUp?" + catch-up":""})`,lp:m.lpResid,gp:m.gpPromote,color:C.gold,note:a.catchUp?"GP catch-up then residual split":"Residual after pref"},
+      note:`LP equity + funded G&A shortfall · GP equity co-invest only`,split:"100% LP"},
+    {tier:"Tier 2",label:`Preferred Return (${f.p(a.prefReturn)} ${a.compoundPref?"compound":"simple"})`,
+      lp:m.lpPref,gp:0,color:C.mid,note:`LP only · ${a.compoundPref?"compound accrual":"simple interest"}`,split:"100% LP"},
+    ...(a.catchUp?[{tier:"Tier 3",label:`GP Catch-Up (to ${f.p(a.carry)})`,
+      lp:0,gp:m.gpCatchUp,color:"#A08040",note:`GP takes 100% until catch-up target reached`,split:"100% GP"}]:[]),
+    ...(m.tierResults||[]).map((t,i)=>({
+      tier:`Tier ${(a.catchUp?4:3)+i}`,
+      label:t.irrHurdle!=null||t.moicHurdle!=null
+        ? `${t.irrHurdle!=null?f.p(t.irrHurdle)+" IRR":""}${t.irrHurdle!=null&&t.moicHurdle!=null?" / ":""}${t.moicHurdle!=null?f.x(t.moicHurdle)+" EM":""}`
+        : "Residual",
+      lp:t.lp,gp:t.gp,
+      color:["#5DADE2","#3498DB","#2471A3","#1A5276"][i]||"#5DADE2",
+      note:t.irrHurdle!=null||t.moicHurdle!=null?"Dual trigger — whichever reached first":"All remaining proceeds",
+      split:`${Math.round(t.lpSplit*100)}/${Math.round(t.gpSplit*100)}`,
+    })),
   ];
+
   return(
     <div>
-      <PHdr title="Distribution Waterfall" sub={`3-tier · ${f.$(m.pool)} total pool · ${f.$(m.totSaleProc)} sale proceeds + ${f.$(m.totOpCF)} op CF`}/>
+      <PHdr title="Distribution Waterfall"
+        sub={`${displayTiers.length}-tier${isMultiTier?" multi-tier":""} · ${f.$(m.pool)} total pool · ${f.$(m.totSaleProc)} sale proceeds + ${f.$(m.totOpCF)} op CF`}/>
 
-            {/* LP shortfall explainer */}
+      {/* G&A shortfall explainer */}
       <div style={{background:"rgba(201,168,76,.06)",border:`1px solid rgba(201,168,76,.25)`,
         borderRadius:5,padding:"11px 15px",marginBottom:16,fontSize:11,color:C.whDim}}>
         <span style={{color:C.gold,fontWeight:700}}>How the G&A shortfall works: </span>
@@ -1549,30 +1645,191 @@ function TabWaterfall({m,a}){
         Total LP capital at risk: <span style={{color:C.gold,fontWeight:700}}>{f.$(m.lpActualCapital)}</span> (equity{" "}
         <span style={{color:C.whDim}}>{f.$(m.totLPCalled)}</span> + shortfall{" "}
         <span style={{color:C.whDim}}>{f.$(m.totGAShortfall)}</span>).
-        LP pref and MOIC calculated on full basis. GP ROC = equity co-invest only.
         {m.totGAShortfall <= 0 && <span style={{color:C.green}}> Fees cover G&A fully — no shortfall.</span>}
       </div>
+
+      {/* ── WATERFALL TIER CONFIGURATION ── */}
+      <Card style={{marginBottom:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <CT c="Waterfall Structure — Promote Tiers"/>
+          <div style={{display:"flex",gap:4}}>
+            <button onClick={()=>setTierPreset(DEF_PROMOTE_TIERS)}
+              style={{padding:"3px 10px",borderRadius:3,fontSize:8,fontWeight:700,cursor:"pointer",
+                letterSpacing:".06em",textTransform:"uppercase",
+                background:!isMultiTier?"rgba(201,168,76,.2)":"rgba(255,255,255,.06)",
+                color:!isMultiTier?C.gold:C.whDim,
+                border:`1px solid ${!isMultiTier?"rgba(201,168,76,.4)":"rgba(255,255,255,.1)"}`}}>
+              Simple
+            </button>
+            <button onClick={()=>setTierPreset(MULTI_TIER_PRESET)}
+              style={{padding:"3px 10px",borderRadius:3,fontSize:8,fontWeight:700,cursor:"pointer",
+                letterSpacing:".06em",textTransform:"uppercase",
+                background:isMultiTier?"rgba(201,168,76,.2)":"rgba(255,255,255,.06)",
+                color:isMultiTier?C.gold:C.whDim,
+                border:`1px solid ${isMultiTier?"rgba(201,168,76,.4)":"rgba(255,255,255,.1)"}`}}>
+              Multi-Tier PE
+            </button>
+          </div>
+        </div>
+        <div style={{fontSize:10,color:C.goldDim,marginBottom:12}}>
+          Tiers 1-{a.catchUp?3:2} (ROC, Pref{a.catchUp?", Catch-up":""}) controlled by sidebar.
+          Promote tiers below define the split above pref.
+          {isMultiTier&&" Dual trigger: tier advances when either IRR or MOIC threshold is reached first."}
+        </div>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+          <thead>
+            <tr style={{borderBottom:`1px solid ${C.border}`}}>
+              {["Tier","IRR Hurdle","MOIC Hurdle","LP Split","GP Split","LP Dist","GP Dist",""].map(h=>(
+                <th key={h} style={{padding:"6px 8px",color:C.goldDim,fontSize:9,textTransform:"uppercase",
+                  letterSpacing:".06em",textAlign:h==="Tier"?"left":"center"}}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {/* Fixed tiers (read-only) */}
+            <tr style={{borderBottom:"1px solid rgba(255,255,255,.04)",background:"rgba(41,128,185,.04)"}}>
+              <td style={{padding:"6px 8px",color:"#5DADE2",fontWeight:600}}>1 — ROC</td>
+              <td style={{padding:"6px 8px",textAlign:"center",color:C.whDim}}>—</td>
+              <td style={{padding:"6px 8px",textAlign:"center",color:C.whDim}}>—</td>
+              <td style={{padding:"6px 8px",textAlign:"center",color:"#5DADE2"}}>100%</td>
+              <td style={{padding:"6px 8px",textAlign:"center",color:C.whDim}}>0%</td>
+              <td style={{padding:"6px 8px",textAlign:"center",color:"#5DADE2",fontWeight:600}}>{f.$(m.lpROC)}</td>
+              <td style={{padding:"6px 8px",textAlign:"center",color:C.whDim}}>{f.$(m.gpROC)}</td>
+              <td/>
+            </tr>
+            <tr style={{borderBottom:"1px solid rgba(255,255,255,.04)",background:"rgba(41,128,185,.04)"}}>
+              <td style={{padding:"6px 8px",color:"#5DADE2",fontWeight:600}}>2 — Pref ({f.p(a.prefReturn)})</td>
+              <td style={{padding:"6px 8px",textAlign:"center",color:C.whDim}}>—</td>
+              <td style={{padding:"6px 8px",textAlign:"center",color:C.whDim}}>—</td>
+              <td style={{padding:"6px 8px",textAlign:"center",color:"#5DADE2"}}>100%</td>
+              <td style={{padding:"6px 8px",textAlign:"center",color:C.whDim}}>0%</td>
+              <td style={{padding:"6px 8px",textAlign:"center",color:"#5DADE2",fontWeight:600}}>{f.$(m.lpPref)}</td>
+              <td style={{padding:"6px 8px",textAlign:"center",color:C.whDim}}>—</td>
+              <td/>
+            </tr>
+            {a.catchUp&&(
+              <tr style={{borderBottom:"1px solid rgba(255,255,255,.04)",background:"rgba(201,168,76,.04)"}}>
+                <td style={{padding:"6px 8px",color:C.gold,fontWeight:600}}>3 — Catch-Up</td>
+                <td style={{padding:"6px 8px",textAlign:"center",color:C.whDim}}>—</td>
+                <td style={{padding:"6px 8px",textAlign:"center",color:C.whDim}}>—</td>
+                <td style={{padding:"6px 8px",textAlign:"center",color:C.whDim}}>0%</td>
+                <td style={{padding:"6px 8px",textAlign:"center",color:C.gold}}>100%</td>
+                <td style={{padding:"6px 8px",textAlign:"center",color:C.whDim}}>—</td>
+                <td style={{padding:"6px 8px",textAlign:"center",color:C.gold,fontWeight:600}}>{f.$(m.gpCatchUp)}</td>
+                <td/>
+              </tr>
+            )}
+            {/* Editable promote tiers */}
+            {tiers.map((t,idx)=>{
+              const tierNum = (a.catchUp?4:3)+idx;
+              const result = m.tierResults?.[idx]||{lp:0,gp:0};
+              const isLast = idx === tiers.length-1 && t.irrHurdle==null && t.moicHurdle==null;
+              return(
+                <tr key={idx} style={{borderBottom:"1px solid rgba(255,255,255,.04)",
+                  background:idx%2===0?"transparent":"rgba(255,255,255,.015)"}}>
+                  <td style={{padding:"6px 8px",color:C.gold,fontWeight:600}}>
+                    {tierNum} — {isLast?"Residual":"Promote"}
+                  </td>
+                  <td style={{padding:"6px 8px"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
+                      {isLast
+                        ? <span style={{color:C.whDim,fontSize:10}}>—</span>
+                        : <>
+                            <MiniSlider value={t.irrHurdle||0} min={0.08} max={0.30} step={0.005}
+                              onChange={v=>setTier(idx,"irrHurdle",v)} color={C.gold} width={55}/>
+                            <span style={{color:C.gold,minWidth:36,fontSize:10}}>{t.irrHurdle!=null?f.p(t.irrHurdle):"—"}</span>
+                          </>
+                      }
+                    </div>
+                  </td>
+                  <td style={{padding:"6px 8px"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
+                      {isLast
+                        ? <span style={{color:C.whDim,fontSize:10}}>—</span>
+                        : <>
+                            <MiniSlider value={t.moicHurdle||1.0} min={1.0} max={3.5} step={0.05}
+                              onChange={v=>setTier(idx,"moicHurdle",v)} color={C.blue} width={55}/>
+                            <span style={{color:C.blue,minWidth:36,fontSize:10}}>{t.moicHurdle!=null?f.x(t.moicHurdle):"—"}</span>
+                          </>
+                      }
+                    </div>
+                  </td>
+                  <td style={{padding:"6px 8px"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
+                      <MiniSlider value={t.lpSplit} min={0.50} max={0.95} step={0.05}
+                        onChange={v=>{setTier(idx,"lpSplit",v);setTier(idx,"gpSplit",+(1-v).toFixed(2));}}
+                        color={"#5DADE2"} width={50}/>
+                      <span style={{color:"#5DADE2",minWidth:28,fontSize:10}}>{Math.round(t.lpSplit*100)}%</span>
+                    </div>
+                  </td>
+                  <td style={{padding:"6px 8px",color:C.gold,textAlign:"center",fontSize:10,fontWeight:600}}>
+                    {Math.round(t.gpSplit*100)}%
+                  </td>
+                  <td style={{padding:"6px 8px",textAlign:"center",color:"#5DADE2",fontWeight:600}}>{f.$(result.lp)}</td>
+                  <td style={{padding:"6px 8px",textAlign:"center",color:C.gold,fontWeight:600}}>{f.$(result.gp)}</td>
+                  <td style={{padding:"6px 8px",textAlign:"center"}}>
+                    {tiers.length>1&&(
+                      <button onClick={()=>removeTier(idx)}
+                        style={{background:"rgba(192,57,43,.15)",border:`1px solid rgba(192,57,43,.3)`,
+                          color:C.red,borderRadius:3,padding:"2px 7px",fontSize:9,cursor:"pointer"}}>✕</button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+            {/* Totals row */}
+            <tr style={{borderTop:`2px solid ${C.border}`,background:"rgba(201,168,76,.06)"}}>
+              <td colSpan={5} style={{padding:"7px 8px",color:C.gold,fontWeight:700}}>TOTALS</td>
+              <td style={{padding:"7px 8px",textAlign:"center",color:"#5DADE2",fontWeight:700}}>{f.$(m.lpTotal)}</td>
+              <td style={{padding:"7px 8px",textAlign:"center",color:C.gold,fontWeight:700}}>{f.$(m.gpFundTotal)}</td>
+              <td/>
+            </tr>
+          </tbody>
+        </table>
+        <button onClick={addTier} style={{
+          width:"100%",marginTop:8,padding:"8px",
+          background:"rgba(201,168,76,.06)",border:`1px dashed rgba(201,168,76,.3)`,
+          color:C.goldDim,borderRadius:4,fontSize:10,fontWeight:600,cursor:"pointer"}}>
+          + Add Promote Tier
+        </button>
+      </Card>
+
+      {/* Dual trigger note for multi-tier */}
+      {isMultiTier&&(
+        <div style={{background:"rgba(41,128,185,.06)",border:`1px solid rgba(41,128,185,.2)`,
+          borderRadius:5,padding:"10px 14px",marginBottom:16,fontSize:11,color:C.whDim}}>
+          <span style={{color:"#5DADE2",fontWeight:700}}>Dual trigger: </span>
+          Each promote tier advances when either the IRR hurdle or MOIC hurdle is reached — whichever comes first.
+          This protects both LP and GP across different return scenarios.
+        </div>
+      )}
+
+      {/* Waterfall breakdown + chart */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1.4fr",gap:20}}>
         <div>
-          {tiers.map(row=>(
+          {displayTiers.map(row=>(
             <div key={row.tier} style={{background:C.whFaint,border:`1px solid ${C.border}`,
-              borderRadius:5,padding:"13px 15px",marginBottom:10}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:9}}>
-                <div style={{width:3,height:28,background:row.color,borderRadius:2}}/>
-                <div>
-                  <div style={{fontSize:9,color:C.gold,textTransform:"uppercase",letterSpacing:".1em"}}>{row.tier}</div>
-                  <div style={{fontSize:12,color:C.white,fontWeight:600}}>{row.label}</div>
+              borderRadius:5,padding:"11px 13px",marginBottom:8}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:7}}>
+                <div style={{width:3,height:24,background:row.color,borderRadius:2}}/>
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div style={{fontSize:9,color:C.gold,textTransform:"uppercase",letterSpacing:".1em"}}>{row.tier}</div>
+                    <div style={{fontSize:9,color:C.whDim,background:"rgba(255,255,255,.06)",
+                      padding:"1px 6px",borderRadius:2}}>{row.split}</div>
+                  </div>
+                  <div style={{fontSize:11,color:C.white,fontWeight:600}}>{row.label}</div>
                   <div style={{fontSize:9,color:C.whDim}}>{row.note}</div>
                 </div>
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                <div style={{background:"rgba(41,128,185,.12)",borderRadius:3,padding:"7px 10px"}}>
-                  <div style={{fontSize:9,color:"rgba(41,128,185,.7)",textTransform:"uppercase"}}>LP</div>
-                  <div style={{fontSize:16,color:"#5DADE2",fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(row.lp)}</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                <div style={{background:"rgba(41,128,185,.12)",borderRadius:3,padding:"5px 8px"}}>
+                  <div style={{fontSize:8,color:"rgba(41,128,185,.7)",textTransform:"uppercase"}}>LP</div>
+                  <div style={{fontSize:14,color:"#5DADE2",fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(row.lp)}</div>
                 </div>
-                <div style={{background:"rgba(201,168,76,.08)",borderRadius:3,padding:"7px 10px"}}>
-                  <div style={{fontSize:9,color:C.goldDim,textTransform:"uppercase"}}>GP</div>
-                  <div style={{fontSize:16,color:C.gold,fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(row.gp)}</div>
+                <div style={{background:"rgba(201,168,76,.08)",borderRadius:3,padding:"5px 8px"}}>
+                  <div style={{fontSize:8,color:C.goldDim,textTransform:"uppercase"}}>GP</div>
+                  <div style={{fontSize:14,color:C.gold,fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(row.gp)}</div>
                 </div>
               </div>
             </div>
@@ -1583,12 +1840,12 @@ function TabWaterfall({m,a}){
               <div>
                 <div style={{fontSize:9,color:"rgba(93,173,226,.7)",textTransform:"uppercase"}}>LP Total</div>
                 <div style={{fontSize:19,color:"#5DADE2",fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(m.lpTotal)}</div>
-                <div style={{fontSize:10,color:C.whDim}}>MOIC: {f.x(m.lpMOIC)}</div>
+                <div style={{fontSize:10,color:C.whDim}}>MOIC: {f.x(m.lpMOIC)} · IRR: {f.p(m.lpIRR)}</div>
               </div>
               <div>
                 <div style={{fontSize:9,color:C.goldDim,textTransform:"uppercase"}}>GP Total</div>
                 <div style={{fontSize:19,color:C.gold,fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(m.gpFundTotal)}</div>
-                <div style={{fontSize:10,color:C.whDim}}>{f.$(m.gpPromote)} promote</div>
+                <div style={{fontSize:10,color:C.whDim}}>{f.$(m.gpPromote)} promote{m.gpCatchUp>0?` (incl. ${f.$(m.gpCatchUp)} catch-up)`:""}</div>
               </div>
             </div>
           </div>
@@ -1596,12 +1853,12 @@ function TabWaterfall({m,a}){
         <Card>
           <CT c="Proceeds by Recipient"/>
           <ResponsiveContainer width="100%" height={320}>
-            <BarChart data={m.waterfall} margin={{top:10,right:10,bottom:10,left:10}}>
+            <BarChart data={m.waterfall.filter(x=>x.value>0)} margin={{top:10,right:10,bottom:10,left:10}}>
               <XAxis dataKey="name" tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false}/>
               <YAxis tickFormatter={v=>`$${(v/1e6).toFixed(0)}M`} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false} width={40}/>
               <Tooltip content={<TT/>}/>
               <Bar dataKey="value" name="Amount" radius={[3,3,0,0]}>
-                {m.waterfall.map((e,i)=><Cell key={i} fill={e.fill}/>)}
+                {m.waterfall.filter(x=>x.value>0).map((e,i)=><Cell key={i} fill={e.fill}/>)}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
