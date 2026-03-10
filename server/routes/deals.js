@@ -65,12 +65,12 @@ export default function dealRoutes(pool) {
 
   // ── CREATE DEAL ─────────────────────────────────────────────────────────
   router.post('/deals', async (req, res) => {
-    const { name, property_type, market, address, units, price, start_month, notes, assumptions } = req.body;
+    const { name, property_type, market, address, units, slips, price, start_month, notes, assumptions } = req.body;
     try {
       const result = await pool.query(
-        `INSERT INTO deals (name, property_type, market, address, units, price, start_month, notes, assumptions)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [name, property_type, market, address, units, price, start_month || 1, notes,
+        `INSERT INTO deals (name, property_type, market, address, units, slips, price, start_month, notes, assumptions)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        [name, property_type, market, address, units || slips, slips || units, price, start_month || 1, notes,
          JSON.stringify(assumptions || {})]
       );
       res.json(result.rows[0]);
@@ -82,13 +82,13 @@ export default function dealRoutes(pool) {
 
   // ── UPDATE DEAL ─────────────────────────────────────────────────────────
   router.put('/deals/:id', async (req, res) => {
-    const { name, property_type, market, address, units, price, start_month, status, notes, assumptions } = req.body;
+    const { name, property_type, market, address, units, slips, price, start_month, status, notes, assumptions } = req.body;
     try {
       const result = await pool.query(
-        `UPDATE deals SET name=$1, property_type=$2, market=$3, address=$4, units=$5, price=$6,
-         start_month=$7, status=$8, notes=$9, assumptions=$10, updated_at=NOW()
-         WHERE id=$11 RETURNING *`,
-        [name, property_type, market, address, units, price, start_month, status, notes,
+        `UPDATE deals SET name=$1, property_type=$2, market=$3, address=$4, units=$5, slips=$6, price=$7,
+         start_month=$8, status=$9, notes=$10, assumptions=$11, updated_at=NOW()
+         WHERE id=$12 RETURNING *`,
+        [name, property_type, market, address, units || slips, slips || units, price, start_month, status, notes,
          JSON.stringify(assumptions || {}), req.params.id]
       );
       if (result.rows.length === 0) return res.status(404).json({ error: 'Deal not found' });

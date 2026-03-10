@@ -3124,29 +3124,48 @@ function TabSensitivity({m,a}){
 // ── DEALS TAB ─────────────────────────────────────────────────────────────
 // ── REVENUE LINE PRESETS ──────────────────────────────────────────────────
 const REV_LINE_PRESETS = {
-  "Marina": [
-    {category:"Slips",line_type:"Wet Slip",unit_count:50,rate:1200,rate_period:"monthly",occupancy:0.90,growth_rate:0.03},
-    {category:"Slips",line_type:"Dry Slip",unit_count:100,rate:600,rate_period:"monthly",occupancy:0.85,growth_rate:0.03},
-    {category:"Lifts",line_type:"Boat Lift",unit_count:20,rate:350,rate_period:"monthly",occupancy:0.80,growth_rate:0.02},
-    {category:"Storage",line_type:"Indoor Storage",unit_count:30,rate:400,rate_period:"monthly",occupancy:0.75,growth_rate:0.03},
-    {category:"Services",line_type:"Fuel Sales",unit_count:1,rate:180000,rate_period:"annual",occupancy:1.0,growth_rate:0.04},
-    {category:"Services",line_type:"Ship Store / Retail",unit_count:1,rate:48000,rate_period:"annual",occupancy:1.0,growth_rate:0.02},
+  "Full-Service Marina": [
+    {category:"Wet Slips",line_type:"Under 30'",unit_count:40,rate:900,rate_period:"monthly",occupancy:0.92,growth_rate:0.03},
+    {category:"Wet Slips",line_type:"30'–40'",unit_count:60,rate:1400,rate_period:"monthly",occupancy:0.90,growth_rate:0.03},
+    {category:"Wet Slips",line_type:"40'–50'",unit_count:30,rate:2000,rate_period:"monthly",occupancy:0.88,growth_rate:0.03},
+    {category:"Wet Slips",line_type:"50'+",unit_count:10,rate:3200,rate_period:"monthly",occupancy:0.85,growth_rate:0.04},
+    {category:"Dry Storage",line_type:"Rack Storage",unit_count:120,rate:550,rate_period:"monthly",occupancy:0.85,growth_rate:0.03},
+    {category:"Dry Storage",line_type:"Covered Storage",unit_count:40,rate:400,rate_period:"monthly",occupancy:0.80,growth_rate:0.03},
+    {category:"Dry Storage",line_type:"Yard Storage",unit_count:30,rate:250,rate_period:"monthly",occupancy:0.75,growth_rate:0.02},
+    {category:"Lifts & Launch",line_type:"Forklift Launch",unit_count:1,rate:72000,rate_period:"annual",occupancy:1.0,growth_rate:0.03},
+    {category:"Lifts & Launch",line_type:"Travel Lift",unit_count:1,rate:96000,rate_period:"annual",occupancy:1.0,growth_rate:0.03},
+    {category:"Fuel",line_type:"Gas Dock",unit_count:1,rate:240000,rate_period:"annual",occupancy:1.0,growth_rate:0.04},
+    {category:"Service & Repair",line_type:"Boat Yard / Service",unit_count:1,rate:180000,rate_period:"annual",occupancy:1.0,growth_rate:0.03},
+    {category:"Retail & F&B",line_type:"Ship Store",unit_count:1,rate:48000,rate_period:"annual",occupancy:1.0,growth_rate:0.02},
+    {category:"Retail & F&B",line_type:"Restaurant / Bar",unit_count:1,rate:120000,rate_period:"annual",occupancy:1.0,growth_rate:0.03},
   ],
-  "Multifamily": [
-    {category:"Residential",line_type:"1BR Unit",unit_count:40,rate:1400,rate_period:"monthly",occupancy:0.95,growth_rate:0.03},
-    {category:"Residential",line_type:"2BR Unit",unit_count:30,rate:1800,rate_period:"monthly",occupancy:0.94,growth_rate:0.03},
-    {category:"Residential",line_type:"3BR Unit",unit_count:10,rate:2200,rate_period:"monthly",occupancy:0.93,growth_rate:0.03},
-    {category:"Ancillary",line_type:"Parking",unit_count:60,rate:100,rate_period:"monthly",occupancy:0.80,growth_rate:0.02},
-    {category:"Ancillary",line_type:"Storage Units",unit_count:20,rate:75,rate_period:"monthly",occupancy:0.70,growth_rate:0.02},
-    {category:"Ancillary",line_type:"Laundry / Vending",unit_count:1,rate:12000,rate_period:"annual",occupancy:1.0,growth_rate:0.01},
+  "Dry Stack Marina": [
+    {category:"Dry Storage",line_type:"Under 25'",unit_count:100,rate:450,rate_period:"monthly",occupancy:0.88,growth_rate:0.03},
+    {category:"Dry Storage",line_type:"25'–35'",unit_count:80,rate:650,rate_period:"monthly",occupancy:0.85,growth_rate:0.03},
+    {category:"Dry Storage",line_type:"35'+",unit_count:20,rate:900,rate_period:"monthly",occupancy:0.82,growth_rate:0.04},
+    {category:"Lifts & Launch",line_type:"Forklift Launch",unit_count:1,rate:96000,rate_period:"annual",occupancy:1.0,growth_rate:0.03},
+    {category:"Fuel",line_type:"Gas Dock",unit_count:1,rate:180000,rate_period:"annual",occupancy:1.0,growth_rate:0.04},
+    {category:"Retail & F&B",line_type:"Ship Store",unit_count:1,rate:36000,rate_period:"annual",occupancy:1.0,growth_rate:0.02},
   ],
-  "Self-Storage": [
-    {category:"Climate Controlled",line_type:"5x10",unit_count:80,rate:95,rate_period:"monthly",occupancy:0.90,growth_rate:0.04},
-    {category:"Climate Controlled",line_type:"10x10",unit_count:60,rate:150,rate_period:"monthly",occupancy:0.88,growth_rate:0.04},
-    {category:"Climate Controlled",line_type:"10x20",unit_count:40,rate:225,rate_period:"monthly",occupancy:0.85,growth_rate:0.04},
-    {category:"Non-Climate",line_type:"10x10",unit_count:50,rate:90,rate_period:"monthly",occupancy:0.82,growth_rate:0.03},
-    {category:"Non-Climate",line_type:"10x20",unit_count:30,rate:140,rate_period:"monthly",occupancy:0.80,growth_rate:0.03},
-    {category:"Ancillary",line_type:"Retail / Insurance",unit_count:1,rate:24000,rate_period:"annual",occupancy:1.0,growth_rate:0.02},
+  "Wet Slip Marina": [
+    {category:"Wet Slips",line_type:"Under 30'",unit_count:60,rate:800,rate_period:"monthly",occupancy:0.93,growth_rate:0.03},
+    {category:"Wet Slips",line_type:"30'–40'",unit_count:80,rate:1300,rate_period:"monthly",occupancy:0.91,growth_rate:0.03},
+    {category:"Wet Slips",line_type:"40'–60'",unit_count:40,rate:2200,rate_period:"monthly",occupancy:0.88,growth_rate:0.04},
+    {category:"Wet Slips",line_type:"60'+",unit_count:10,rate:4000,rate_period:"monthly",occupancy:0.85,growth_rate:0.04},
+    {category:"Liveaboard",line_type:"Liveaboard Surcharge",unit_count:15,rate:400,rate_period:"monthly",occupancy:1.0,growth_rate:0.03},
+    {category:"Fuel",line_type:"Gas & Diesel Dock",unit_count:1,rate:300000,rate_period:"annual",occupancy:1.0,growth_rate:0.04},
+    {category:"Service & Repair",line_type:"Pumpout / Utilities",unit_count:1,rate:24000,rate_period:"annual",occupancy:1.0,growth_rate:0.02},
+  ],
+  "Mixed-Use Marina": [
+    {category:"Wet Slips",line_type:"30'–50'",unit_count:50,rate:1600,rate_period:"monthly",occupancy:0.90,growth_rate:0.03},
+    {category:"Dry Storage",line_type:"Rack Storage",unit_count:80,rate:550,rate_period:"monthly",occupancy:0.85,growth_rate:0.03},
+    {category:"Dry Storage",line_type:"Yard / Trailer",unit_count:25,rate:200,rate_period:"monthly",occupancy:0.70,growth_rate:0.02},
+    {category:"Lifts & Launch",line_type:"Travel Lift / Forklift",unit_count:1,rate:144000,rate_period:"annual",occupancy:1.0,growth_rate:0.03},
+    {category:"Fuel",line_type:"Gas Dock",unit_count:1,rate:200000,rate_period:"annual",occupancy:1.0,growth_rate:0.04},
+    {category:"Service & Repair",line_type:"Boat Yard",unit_count:1,rate:120000,rate_period:"annual",occupancy:1.0,growth_rate:0.03},
+    {category:"Retail & F&B",line_type:"Ship Store",unit_count:1,rate:42000,rate_period:"annual",occupancy:1.0,growth_rate:0.02},
+    {category:"Retail & F&B",line_type:"Restaurant / Tiki Bar",unit_count:1,rate:96000,rate_period:"annual",occupancy:1.0,growth_rate:0.03},
+    {category:"Ancillary",line_type:"Parking / Trailer Storage",unit_count:40,rate:75,rate_period:"monthly",occupancy:0.65,growth_rate:0.02},
   ],
 };
 
@@ -3178,7 +3197,7 @@ function TabDeals({a}){
   const [comparing,setComparing]=useState(false);
   const [compareIds,setCompareIds]=useState([]);
   const [compareResult,setCompareResult]=useState(null);
-  const [newDeal,setNewDeal]=useState({name:"",property_type:"Multifamily",market:"",price:"",units:""});
+  const [newDeal,setNewDeal]=useState({name:"",property_type:"Full-Service Marina",market:"",price:"",slips:""});
   const [analyzing,setAnalyzing]=useState(false);
   const [revLines,setRevLines]=useState([]);
   const [revDirty,setRevDirty]=useState(false);
@@ -3196,9 +3215,9 @@ function TabDeals({a}){
     if(!newDeal.name.trim()) return;
     try{
       const res=await fetch('/api/deals',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({...newDeal,price:newDeal.price?Number(newDeal.price):null,units:newDeal.units?Number(newDeal.units):null})});
+        body:JSON.stringify({...newDeal,price:newDeal.price?Number(newDeal.price):null,slips:newDeal.slips?Number(newDeal.slips):null})});
       const d=await res.json();
-      setCreating(false);setNewDeal({name:"",property_type:"Multifamily",market:"",price:"",units:""});
+      setCreating(false);setNewDeal({name:"",property_type:"Full-Service Marina",market:"",price:"",slips:""});
       await loadDeals(); selectDeal(d.id);
     }catch(e){ console.error(e); }
   };
@@ -3344,7 +3363,7 @@ function TabDeals({a}){
           {/* Deal Overview KPIs */}
           <div style={{display:"flex",gap:12,marginBottom:30,flexWrap:"wrap"}}>
             {selectedDeal.price&&<KPI label="Acquisition Price" value={f.$(Number(selectedDeal.price))} gold/>}
-            {selectedDeal.units&&<KPI label="Total Units" value={selectedDeal.units}/>}
+            {(selectedDeal.slips||selectedDeal.units)&&<KPI label="Total Slips" value={selectedDeal.slips||selectedDeal.units}/>}
             <KPI label="Revenue Lines" value={revLines.length}/>
             <KPI label="Yr 1 Revenue" value={f.$(totalRevLineRevenue)}/>
             {analysis?.modelResult&&<KPI label="LP IRR" value={f.p(analysis.modelResult.lpIRR)} gold/>}
@@ -3472,7 +3491,7 @@ function TabDeals({a}){
 
   return(
     <div>
-      <PHdr title="Deal Analyzer" sub="Upload financials, build revenue mix, run proforma, compare deals"/>
+      <PHdr title="Marina Analyzer" sub="Upload financials, build slip/storage mix, run proforma, compare marinas"/>
 
       {/* ── DEAL LIST + COMPARE ─────────────────────────────── */}
       <Card style={{marginBottom:18}}>
@@ -3492,8 +3511,8 @@ function TabDeals({a}){
           <div style={{background:"rgba(201,168,76,.06)",border:`1px solid ${C.border}`,borderRadius:6,
             padding:16,marginBottom:14}}>
             <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:10}}>
-              {[["name","Deal Name","text",""],["property_type","Type","text","Multifamily"],
-                ["market","Market","text",""],["price","Price ($)","number",""],["units","Units","number",""]
+              {[["name","Marina Name","text",""],["property_type","Marina Type","text","Full-Service Marina"],
+                ["market","Market / Region","text",""],["price","Price ($)","number",""],["slips","Slips","number",""]
               ].map(([k,l,t,ph])=>(
                 <div key={k} style={{flex:k==="name"?2:1,minWidth:100}}>
                   <div style={{fontSize:9,color:C.goldDim,marginBottom:3,textTransform:"uppercase"}}>{l}</div>
@@ -3518,8 +3537,8 @@ function TabDeals({a}){
           <table style={{width:"100%",borderCollapse:"collapse"}}>
             <thead><tr>
               <th style={{...thS,width:30}}></th>
-              <th style={thS}>Name</th><th style={thS}>Type</th><th style={thS}>Market</th>
-              <th style={thS}>Price</th><th style={thS}>Units</th><th style={thS}>Files</th><th style={thS}>Status</th>
+              <th style={thS}>Marina</th><th style={thS}>Type</th><th style={thS}>Market</th>
+              <th style={thS}>Price</th><th style={thS}>Slips</th><th style={thS}>Files</th><th style={thS}>Status</th>
             </tr></thead>
             <tbody>
               {deals.map(d=>{
@@ -3532,7 +3551,7 @@ function TabDeals({a}){
                       onChange={e=>{e.stopPropagation();toggleCompare(d.id);}} style={{cursor:"pointer"}}/></td>
                     <td style={{...tdS,color:isSel?C.gold:C.white,fontWeight:isSel?700:400}}>{d.name}</td>
                     <td style={tdS}>{d.property_type||"—"}</td><td style={tdS}>{d.market||"—"}</td>
-                    <td style={tdS}>{d.price?f.$(Number(d.price)):"—"}</td><td style={tdS}>{d.units||"—"}</td>
+                    <td style={tdS}>{d.price?f.$(Number(d.price)):"—"}</td><td style={tdS}>{d.slips||d.units||"—"}</td>
                     <td style={tdS}>{d.financial_count||0}</td>
                     <td style={tdS}><span style={{padding:"2px 8px",borderRadius:10,fontSize:9,fontWeight:600,
                       background:d.status==="active"?"rgba(30,132,73,.2)":d.status==="closed"?"rgba(41,128,185,.2)":"rgba(201,168,76,.12)",
@@ -3585,7 +3604,7 @@ function TabDeals({a}){
               </div>
               <div style={{fontSize:10,color:C.goldDim,marginTop:2}}>
                 {[selectedDeal.property_type,selectedDeal.market,
-                  selectedDeal.units&&`${selectedDeal.units} units`,
+                  (selectedDeal.slips||selectedDeal.units)&&`${selectedDeal.slips||selectedDeal.units} slips`,
                   selectedDeal.price&&f.$(Number(selectedDeal.price))
                 ].filter(Boolean).join(" · ")}
               </div>
@@ -3629,7 +3648,7 @@ function TabDeals({a}){
                   <thead><tr>
                     <th style={thS}>Type</th><th style={thS}>Year</th><th style={thS}>File</th>
                     <th style={thS}>NOI</th><th style={thS}>Revenue</th><th style={thS}>Occupancy</th>
-                    <th style={thS}>Units</th><th style={{...thS,width:30}}></th>
+                    <th style={thS}>Slips</th><th style={{...thS,width:30}}></th>
                   </tr></thead>
                   <tbody>
                     {selectedDeal.financials.map(fin=>{
@@ -3674,7 +3693,7 @@ function TabDeals({a}){
 
               {revLines.length===0?(
                 <div style={{textAlign:"center",padding:30,color:C.whDim,fontSize:11}}>
-                  No revenue lines yet. Add lines manually or load a preset (Marina, Multifamily, Self-Storage).
+                  No revenue lines yet. Add lines manually or load a marina preset above.
                 </div>
               ):(
                 <div style={{overflowX:"auto"}}>

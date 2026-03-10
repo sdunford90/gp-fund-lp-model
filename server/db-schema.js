@@ -15,6 +15,7 @@ export async function ensureSchema(pool) {
         market VARCHAR(255),
         address TEXT,
         units INTEGER,
+        slips INTEGER,
         price NUMERIC,
         start_month INTEGER DEFAULT 1,
         status VARCHAR(50) DEFAULT 'pipeline',
