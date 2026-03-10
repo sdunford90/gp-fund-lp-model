@@ -2,6 +2,8 @@ import express from 'express';
 import pg from 'pg';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { ensureSchema } from './db-schema.js';
+import dealRoutes from './routes/deals.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -11,6 +13,11 @@ const app = express();
 app.use(express.json({ limit: '10mb' }));
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// Auto-create tables on startup
+ensureSchema(pool).catch(err => console.error('Schema init failed:', err));
+
+// ── EXISTING ROUTES (scenarios + globals) ─────────────────────────────────
 
 app.get('/api/scenarios', async (req, res) => {
   try {
@@ -89,6 +96,10 @@ app.put('/api/globals/bulk', async (req, res) => {
   }
 });
 
+// ── DEAL ANALYSIS ROUTES ──────────────────────────────────────────────────
+app.use('/api', dealRoutes(pool));
+
+// ── STATIC FILES ──────────────────────────────────────────────────────────
 const distPath = join(__dirname, '..', 'dist');
 app.use(express.static(distPath));
 app.get('/{*path}', (req, res) => {
