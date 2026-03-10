@@ -64,6 +64,42 @@ export async function ensureSchema(pool) {
       )
     `);
 
+    // Revenue lines: per-deal unit mix / business lines (slips, lifts, storage, etc.)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS deal_revenue_lines (
+        id SERIAL PRIMARY KEY,
+        deal_id INTEGER REFERENCES deals(id) ON DELETE CASCADE,
+        category VARCHAR(100) NOT NULL,
+        line_type VARCHAR(100) NOT NULL,
+        unit_count INTEGER DEFAULT 0,
+        rate NUMERIC DEFAULT 0,
+        rate_period VARCHAR(20) DEFAULT 'monthly',
+        occupancy NUMERIC DEFAULT 1.0,
+        growth_rate NUMERIC DEFAULT 0.03,
+        start_year INTEGER DEFAULT 1,
+        notes TEXT,
+        sort_order INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    // Deal proforma: per-deal year-by-year proforma overrides
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS deal_proforma (
+        id SERIAL PRIMARY KEY,
+        deal_id INTEGER REFERENCES deals(id) ON DELETE CASCADE,
+        year INTEGER NOT NULL,
+        revenue_overrides JSONB DEFAULT '{}',
+        expense_overrides JSONB DEFAULT '{}',
+        assumptions_overrides JSONB DEFAULT '{}',
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(deal_id, year)
+      )
+    `);
+
     // Existing tables — ensure they exist (idempotent)
     await client.query(`
       CREATE TABLE IF NOT EXISTS scenarios (

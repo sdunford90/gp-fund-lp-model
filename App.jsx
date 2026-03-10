@@ -3122,6 +3122,53 @@ function TabSensitivity({m,a}){
 }
 
 // ── DEALS TAB ─────────────────────────────────────────────────────────────
+// ── REVENUE LINE PRESETS ──────────────────────────────────────────────────
+const REV_LINE_PRESETS = {
+  "Marina": [
+    {category:"Slips",line_type:"Wet Slip",unit_count:50,rate:1200,rate_period:"monthly",occupancy:0.90,growth_rate:0.03},
+    {category:"Slips",line_type:"Dry Slip",unit_count:100,rate:600,rate_period:"monthly",occupancy:0.85,growth_rate:0.03},
+    {category:"Lifts",line_type:"Boat Lift",unit_count:20,rate:350,rate_period:"monthly",occupancy:0.80,growth_rate:0.02},
+    {category:"Storage",line_type:"Indoor Storage",unit_count:30,rate:400,rate_period:"monthly",occupancy:0.75,growth_rate:0.03},
+    {category:"Services",line_type:"Fuel Sales",unit_count:1,rate:180000,rate_period:"annual",occupancy:1.0,growth_rate:0.04},
+    {category:"Services",line_type:"Ship Store / Retail",unit_count:1,rate:48000,rate_period:"annual",occupancy:1.0,growth_rate:0.02},
+  ],
+  "Multifamily": [
+    {category:"Residential",line_type:"1BR Unit",unit_count:40,rate:1400,rate_period:"monthly",occupancy:0.95,growth_rate:0.03},
+    {category:"Residential",line_type:"2BR Unit",unit_count:30,rate:1800,rate_period:"monthly",occupancy:0.94,growth_rate:0.03},
+    {category:"Residential",line_type:"3BR Unit",unit_count:10,rate:2200,rate_period:"monthly",occupancy:0.93,growth_rate:0.03},
+    {category:"Ancillary",line_type:"Parking",unit_count:60,rate:100,rate_period:"monthly",occupancy:0.80,growth_rate:0.02},
+    {category:"Ancillary",line_type:"Storage Units",unit_count:20,rate:75,rate_period:"monthly",occupancy:0.70,growth_rate:0.02},
+    {category:"Ancillary",line_type:"Laundry / Vending",unit_count:1,rate:12000,rate_period:"annual",occupancy:1.0,growth_rate:0.01},
+  ],
+  "Self-Storage": [
+    {category:"Climate Controlled",line_type:"5x10",unit_count:80,rate:95,rate_period:"monthly",occupancy:0.90,growth_rate:0.04},
+    {category:"Climate Controlled",line_type:"10x10",unit_count:60,rate:150,rate_period:"monthly",occupancy:0.88,growth_rate:0.04},
+    {category:"Climate Controlled",line_type:"10x20",unit_count:40,rate:225,rate_period:"monthly",occupancy:0.85,growth_rate:0.04},
+    {category:"Non-Climate",line_type:"10x10",unit_count:50,rate:90,rate_period:"monthly",occupancy:0.82,growth_rate:0.03},
+    {category:"Non-Climate",line_type:"10x20",unit_count:30,rate:140,rate_period:"monthly",occupancy:0.80,growth_rate:0.03},
+    {category:"Ancillary",line_type:"Retail / Insurance",unit_count:1,rate:24000,rate_period:"annual",occupancy:1.0,growth_rate:0.02},
+  ],
+};
+
+// ── PROFORMA BUILDER ────────────────────────────────────────────────────
+function buildProforma(revenueLines, holdYears = 7, expenseRatio = 0.40, expenseGrowth = 0.03) {
+  const years = [];
+  for (let yr = 1; yr <= holdYears; yr++) {
+    const lines = revenueLines.map(l => {
+      const annualRate = l.rate_period === 'monthly' ? l.rate * 12 : l.rate;
+      const grown = annualRate * Math.pow(1 + (l.growth_rate || 0.03), yr - 1);
+      const gross = l.unit_count * grown;
+      const effective = gross * (l.occupancy ?? 1.0);
+      return { ...l, year: yr, annualRate: grown, gross, effective };
+    });
+    const totalRevenue = lines.reduce((s, l) => s + l.effective, 0);
+    const totalExpenses = totalRevenue * expenseRatio * Math.pow(1 + expenseGrowth, yr - 1);
+    const noi = totalRevenue - totalExpenses;
+    years.push({ year: yr, lines, totalRevenue, totalExpenses, noi });
+  }
+  return years;
+}
+
 function TabDeals({a}){
   const [deals,setDeals]=useState([]);
   const [selectedDeal,setSelectedDeal]=useState(null);
@@ -3133,6 +3180,10 @@ function TabDeals({a}){
   const [compareResult,setCompareResult]=useState(null);
   const [newDeal,setNewDeal]=useState({name:"",property_type:"Multifamily",market:"",price:"",units:""});
   const [analyzing,setAnalyzing]=useState(false);
+  const [revLines,setRevLines]=useState([]);
+  const [revDirty,setRevDirty]=useState(false);
+  const [dealTab,setDealTab]=useState("financials");
+  const [showPresentation,setShowPresentation]=useState(false);
 
   const loadDeals=useCallback(async()=>{
     try{ const res=await fetch('/api/deals'); const data=await res.json(); setDeals(Array.isArray(data)?data:[]); }
@@ -3156,12 +3207,13 @@ function TabDeals({a}){
     try{
       const res=await fetch(`/api/deals/${id}`); const d=await res.json();
       setSelectedDeal(d); setAnalysis(d.latestResult?.result||null);
+      setRevLines(d.revenueLines||[]); setRevDirty(false);
     }catch(e){ console.error(e); }
   };
 
   const deleteDeal=async(id)=>{
     if(!confirm("Delete this deal and all its financials?")) return;
-    try{ await fetch(`/api/deals/${id}`,{method:'DELETE'}); setSelectedDeal(null); setAnalysis(null); await loadDeals(); }
+    try{ await fetch(`/api/deals/${id}`,{method:'DELETE'}); setSelectedDeal(null); setAnalysis(null); setRevLines([]); await loadDeals(); }
     catch(e){ console.error(e); }
   };
 
@@ -3216,6 +3268,50 @@ function TabDeals({a}){
     catch(e){ console.error(e); }
   };
 
+  // Revenue line management
+  const addRevLine=()=>{
+    setRevLines([...revLines,{category:"",line_type:"",unit_count:0,rate:0,rate_period:"monthly",
+      occupancy:1.0,growth_rate:0.03,start_year:1,notes:""}]);
+    setRevDirty(true);
+  };
+
+  const updateRevLine=(idx,field,val)=>{
+    const updated=[...revLines];
+    updated[idx]={...updated[idx],[field]:val};
+    setRevLines(updated);
+    setRevDirty(true);
+  };
+
+  const removeRevLine=(idx)=>{
+    setRevLines(revLines.filter((_,i)=>i!==idx));
+    setRevDirty(true);
+  };
+
+  const loadPreset=(presetName)=>{
+    const preset=REV_LINE_PRESETS[presetName];
+    if(preset){ setRevLines([...preset]); setRevDirty(true); }
+  };
+
+  const saveRevLines=async()=>{
+    if(!selectedDeal) return;
+    try{
+      await fetch(`/api/deals/${selectedDeal.id}/revenue-lines`,{method:'PUT',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({lines:revLines})});
+      setRevDirty(false);
+    }catch(e){ console.error(e); }
+  };
+
+  // Proforma computation
+  const proforma=useMemo(()=>{
+    if(revLines.length===0) return [];
+    return buildProforma(revLines, a.fundTerm || 7, 0.40, 0.03);
+  },[revLines,a.fundTerm]);
+
+  const totalRevLineRevenue=revLines.reduce((s,l)=>{
+    const annual=l.rate_period==="monthly"?l.rate*12:l.rate;
+    return s+l.unit_count*annual*(l.occupancy??1);
+  },0);
+
   const thS={padding:"8px 12px",fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".07em",
     textAlign:"left",borderBottom:`1px solid ${C.border}`};
   const tdS={padding:"9px 12px",fontSize:11,color:C.white,borderBottom:"1px solid rgba(255,255,255,.04)"};
@@ -3223,10 +3319,160 @@ function TabDeals({a}){
     letterSpacing:".04em"};
   const goldBtn={...btnS,background:C.gold,color:C.dark};
   const dimBtn={...btnS,background:"rgba(255,255,255,.08)",color:C.whDim,border:`1px solid rgba(255,255,255,.12)`};
+  const inputS={background:"rgba(255,255,255,.06)",border:`1px solid ${C.border}`,borderRadius:3,
+    padding:"5px 8px",color:C.white,fontSize:11,outline:"none",fontFamily:"'DM Sans',sans-serif",
+    boxSizing:"border-box",width:"100%"};
+  const dealTabs=["financials","revenue","proforma","analysis","presentation"];
+
+  // ── PRESENTATION VIEW ──────────────────────────────────
+  if(showPresentation&&selectedDeal){
+    const today=new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});
+    const fins=(selectedDeal.financials||[]).filter(f2=>f2.parsed?.noi).sort((a2,b2)=>(a2.year||0)-(b2.year||0));
+    return(
+      <div style={{background:C.dark,minHeight:"100vh",padding:40,fontFamily:"'DM Sans',sans-serif"}}>
+        <div style={{maxWidth:1000,margin:"0 auto"}}>
+          {/* Header */}
+          <div style={{textAlign:"center",marginBottom:40,paddingBottom:20,borderBottom:`2px solid ${C.gold}`}}>
+            <div style={{fontSize:11,color:C.gold,letterSpacing:".2em",textTransform:"uppercase",marginBottom:6}}>Investment Memorandum</div>
+            <div style={{fontSize:32,fontWeight:700,color:C.white,fontFamily:"'Playfair Display',serif"}}>{selectedDeal.name}</div>
+            <div style={{fontSize:13,color:C.goldDim,marginTop:6}}>
+              {[selectedDeal.property_type,selectedDeal.market,selectedDeal.address].filter(Boolean).join(" | ")}
+            </div>
+            <div style={{fontSize:10,color:C.whDim,marginTop:8}}>{today}</div>
+          </div>
+
+          {/* Deal Overview KPIs */}
+          <div style={{display:"flex",gap:12,marginBottom:30,flexWrap:"wrap"}}>
+            {selectedDeal.price&&<KPI label="Acquisition Price" value={f.$(Number(selectedDeal.price))} gold/>}
+            {selectedDeal.units&&<KPI label="Total Units" value={selectedDeal.units}/>}
+            <KPI label="Revenue Lines" value={revLines.length}/>
+            <KPI label="Yr 1 Revenue" value={f.$(totalRevLineRevenue)}/>
+            {analysis?.modelResult&&<KPI label="LP IRR" value={f.p(analysis.modelResult.lpIRR)} gold/>}
+            {analysis?.modelResult&&<KPI label="LP MOIC" value={f.x(analysis.modelResult.lpMOIC)}/>}
+          </div>
+
+          {/* Historical Performance */}
+          {fins.length>0&&(
+            <Card style={{marginBottom:20}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.gold,marginBottom:12,textTransform:"uppercase",letterSpacing:".1em"}}>
+                Historical Performance
+              </div>
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead><tr>
+                  <th style={thS}>Year</th><th style={thS}>Revenue</th><th style={thS}>NOI</th>
+                  <th style={thS}>Margin</th><th style={thS}>Occupancy</th>
+                </tr></thead>
+                <tbody>
+                  {fins.map(fin=>{
+                    const p=fin.parsed||{};
+                    return <tr key={fin.id}><td style={tdS}>{fin.year}</td>
+                      <td style={tdS}>{f.$(p.revenue||p.egi)}</td>
+                      <td style={{...tdS,color:C.green}}>{f.$(p.noi)}</td>
+                      <td style={tdS}>{p.noi_margin?f.p(p.noi_margin):"—"}</td>
+                      <td style={tdS}>{p.occupancy?f.p(p.occupancy):"—"}</td>
+                    </tr>;
+                  })}
+                </tbody>
+              </table>
+            </Card>
+          )}
+
+          {/* Revenue Lines */}
+          {revLines.length>0&&(
+            <Card style={{marginBottom:20}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.gold,marginBottom:12,textTransform:"uppercase",letterSpacing:".1em"}}>
+                Revenue Breakdown
+              </div>
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead><tr>
+                  <th style={thS}>Category</th><th style={thS}>Type</th><th style={thS}>Count</th>
+                  <th style={thS}>Rate</th><th style={thS}>Occ</th><th style={thS}>Annual Rev</th><th style={thS}>Growth</th>
+                </tr></thead>
+                <tbody>
+                  {revLines.map((l,i)=>{
+                    const annual=l.rate_period==="monthly"?l.rate*12:l.rate;
+                    const rev=l.unit_count*annual*(l.occupancy??1);
+                    return <tr key={i}><td style={tdS}>{l.category}</td><td style={tdS}>{l.line_type}</td>
+                      <td style={tdS}>{l.unit_count}</td>
+                      <td style={tdS}>{f.$(l.rate)}/{l.rate_period==="monthly"?"mo":"yr"}</td>
+                      <td style={tdS}>{f.p(l.occupancy??1)}</td>
+                      <td style={{...tdS,color:C.green}}>{f.$(rev)}</td>
+                      <td style={tdS}>{f.p(l.growth_rate)}</td>
+                    </tr>;
+                  })}
+                  <tr style={{borderTop:`2px solid ${C.gold}`}}>
+                    <td colSpan={5} style={{...tdS,fontWeight:700,color:C.gold}}>Total</td>
+                    <td style={{...tdS,fontWeight:700,color:C.gold}}>{f.$(totalRevLineRevenue)}</td>
+                    <td style={tdS}></td>
+                  </tr>
+                </tbody>
+              </table>
+            </Card>
+          )}
+
+          {/* Proforma Projection */}
+          {proforma.length>0&&(
+            <Card style={{marginBottom:20}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.gold,marginBottom:12,textTransform:"uppercase",letterSpacing:".1em"}}>
+                Proforma Projection
+              </div>
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead><tr>
+                  <th style={thS}>Year</th><th style={thS}>Revenue</th><th style={thS}>Expenses</th>
+                  <th style={thS}>NOI</th><th style={thS}>Margin</th>
+                </tr></thead>
+                <tbody>
+                  {proforma.map(yr=>(
+                    <tr key={yr.year}><td style={tdS}>Yr {yr.year}</td>
+                      <td style={tdS}>{f.$(yr.totalRevenue)}</td>
+                      <td style={{...tdS,color:C.red}}>{f.$(yr.totalExpenses)}</td>
+                      <td style={{...tdS,color:C.green,fontWeight:600}}>{f.$(yr.noi)}</td>
+                      <td style={tdS}>{yr.totalRevenue>0?f.p(yr.noi/yr.totalRevenue):"—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {/* Revenue + NOI chart */}
+              <div style={{marginTop:14}}>
+                <ResponsiveContainer width="100%" height={200}>
+                  <ComposedChart data={proforma} margin={{top:10,right:16,bottom:0,left:0}}>
+                    <XAxis dataKey="year" tickFormatter={v=>`Yr ${v}`} tick={{fill:C.whDim,fontSize:10}} axisLine={false} tickLine={false}/>
+                    <YAxis tickFormatter={v=>f.$(v)} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false} width={55}/>
+                    <Tooltip content={<TT/>}/>
+                    <Bar dataKey="totalRevenue" fill="rgba(41,128,185,.4)" radius={[3,3,0,0]} name="Revenue"/>
+                    <Line type="monotone" dataKey="noi" stroke={C.gold} strokeWidth={2.5} dot={{fill:C.gold,r:4}} name="NOI"/>
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            </Card>
+          )}
+
+          {/* Fund Returns */}
+          {analysis?.modelResult&&(
+            <Card style={{marginBottom:20}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.gold,marginBottom:12,textTransform:"uppercase",letterSpacing:".1em"}}>
+                Fund Returns
+              </div>
+              <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+                <KPI label="LP IRR" value={f.p(analysis.modelResult.lpIRR)} gold/>
+                <KPI label="LP MOIC" value={f.x(analysis.modelResult.lpMOIC)}/>
+                <KPI label="GP Promote" value={f.$(analysis.modelResult.gpPromote)}/>
+                <KPI label="Exit Value" value={f.$(analysis.modelResult.totExitVal)}/>
+              </div>
+            </Card>
+          )}
+
+          <div style={{textAlign:"center",marginTop:30}}>
+            <button onClick={()=>setShowPresentation(false)} style={dimBtn}>Close Presentation</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return(
     <div>
-      <PHdr title="Deal Analyzer" sub="Upload financials, run the model, compare deals side-by-side"/>
+      <PHdr title="Deal Analyzer" sub="Upload financials, build revenue mix, run proforma, compare deals"/>
 
       {/* ── DEAL LIST + COMPARE ─────────────────────────────── */}
       <Card style={{marginBottom:18}}>
@@ -3252,9 +3498,7 @@ function TabDeals({a}){
                 <div key={k} style={{flex:k==="name"?2:1,minWidth:100}}>
                   <div style={{fontSize:9,color:C.goldDim,marginBottom:3,textTransform:"uppercase"}}>{l}</div>
                   <input type={t} value={newDeal[k]} onChange={e=>setNewDeal({...newDeal,[k]:e.target.value})}
-                    placeholder={ph} style={{width:"100%",background:"rgba(255,255,255,.06)",border:`1px solid ${C.border}`,
-                    borderRadius:3,padding:"7px 10px",color:C.white,fontSize:11,outline:"none",
-                    fontFamily:"'DM Sans',sans-serif",boxSizing:"border-box"}}/>
+                    placeholder={ph} style={{...inputS}}/>
                 </div>
               ))}
             </div>
@@ -3274,13 +3518,8 @@ function TabDeals({a}){
           <table style={{width:"100%",borderCollapse:"collapse"}}>
             <thead><tr>
               <th style={{...thS,width:30}}></th>
-              <th style={thS}>Name</th>
-              <th style={thS}>Type</th>
-              <th style={thS}>Market</th>
-              <th style={thS}>Price</th>
-              <th style={thS}>Units</th>
-              <th style={thS}>Files</th>
-              <th style={thS}>Status</th>
+              <th style={thS}>Name</th><th style={thS}>Type</th><th style={thS}>Market</th>
+              <th style={thS}>Price</th><th style={thS}>Units</th><th style={thS}>Files</th><th style={thS}>Status</th>
             </tr></thead>
             <tbody>
               {deals.map(d=>{
@@ -3289,27 +3528,17 @@ function TabDeals({a}){
                 return(
                   <tr key={d.id} onClick={()=>selectDeal(d.id)} style={{cursor:"pointer",
                     background:isSel?"rgba(201,168,76,.1)":"transparent"}}>
-                    <td style={tdS}>
-                      <input type="checkbox" checked={isComp}
-                        onChange={e=>{e.stopPropagation();toggleCompare(d.id);}}
-                        style={{cursor:"pointer"}}/>
-                    </td>
+                    <td style={tdS}><input type="checkbox" checked={isComp}
+                      onChange={e=>{e.stopPropagation();toggleCompare(d.id);}} style={{cursor:"pointer"}}/></td>
                     <td style={{...tdS,color:isSel?C.gold:C.white,fontWeight:isSel?700:400}}>{d.name}</td>
-                    <td style={tdS}>{d.property_type||"—"}</td>
-                    <td style={tdS}>{d.market||"—"}</td>
-                    <td style={tdS}>{d.price?f.$(Number(d.price)):"—"}</td>
-                    <td style={tdS}>{d.units||"—"}</td>
+                    <td style={tdS}>{d.property_type||"—"}</td><td style={tdS}>{d.market||"—"}</td>
+                    <td style={tdS}>{d.price?f.$(Number(d.price)):"—"}</td><td style={tdS}>{d.units||"—"}</td>
                     <td style={tdS}>{d.financial_count||0}</td>
-                    <td style={tdS}>
-                      <span style={{padding:"2px 8px",borderRadius:10,fontSize:9,fontWeight:600,
-                        background:d.status==="active"?"rgba(30,132,73,.2)":
-                          d.status==="closed"?"rgba(41,128,185,.2)":"rgba(201,168,76,.12)",
-                        color:d.status==="active"?C.green:d.status==="closed"?C.blue:C.gold}}>
-                        {(d.status||"pipeline").toUpperCase()}
-                      </span>
-                    </td>
-                  </tr>
-                );
+                    <td style={tdS}><span style={{padding:"2px 8px",borderRadius:10,fontSize:9,fontWeight:600,
+                      background:d.status==="active"?"rgba(30,132,73,.2)":d.status==="closed"?"rgba(41,128,185,.2)":"rgba(201,168,76,.12)",
+                      color:d.status==="active"?C.green:d.status==="closed"?C.blue:C.gold}}>
+                      {(d.status||"pipeline").toUpperCase()}</span></td>
+                  </tr>);
               })}
             </tbody>
           </table>
@@ -3324,27 +3553,20 @@ function TabDeals({a}){
             <button onClick={()=>setCompareResult(null)} style={dimBtn}>Close</button>
           </div>
           <table style={{width:"100%",borderCollapse:"collapse"}}>
-            <thead><tr>
-              <th style={thS}>Metric</th>
+            <thead><tr><th style={thS}>Metric</th>
               {compareResult.summary.map(s=><th key={s.name} style={{...thS,textAlign:"center"}}>{s.name}</th>)}
             </tr></thead>
             <tbody>
-              {[
-                ["Price",s=>f.$(s.price)],
-                ["Cap Rate",s=>f.p(s.capRate)],
-                ["NOI Growth",s=>f.p(s.noiGrowth)],
-                ["LP IRR",s=>f.p(s.lpIRR)],
-                ["LP MOIC",s=>f.x(s.lpMOIC)],
-                ["GP Promote",s=>f.$(s.gpPromote)],
-                ["Exit Value",s=>f.$(s.totalExitValue)],
+              {[["Price",s=>f.$(s.price)],["Cap Rate",s=>f.p(s.capRate)],["NOI Growth",s=>f.p(s.noiGrowth)],
+                ["LP IRR",s=>f.p(s.lpIRR)],["LP MOIC",s=>f.x(s.lpMOIC)],["GP Promote",s=>f.$(s.gpPromote)],
+                ["Exit Value",s=>f.$(s.totalExitValue)]
               ].map(([label,fmt])=>(
                 <tr key={label} style={{borderBottom:"1px solid rgba(255,255,255,.04)"}}>
                   <td style={{...tdS,color:C.goldDim,fontWeight:600}}>{label}</td>
                   {compareResult.summary.map(s=>{
-                    const val=fmt(s);
                     const isBest=label==="LP IRR"&&s.lpIRR===Math.max(...compareResult.summary.map(x=>x.lpIRR));
                     return <td key={s.name} style={{...tdS,textAlign:"center",fontWeight:isBest?700:400,
-                      color:isBest?C.gold:C.white}}>{val}</td>;
+                      color:isBest?C.gold:C.white}}>{fmt(s)}</td>;
                   })}
                 </tr>
               ))}
@@ -3371,181 +3593,339 @@ function TabDeals({a}){
             <div style={{display:"flex",gap:8}}>
               <label style={{...goldBtn,cursor:"pointer",display:"inline-block"}}>
                 {uploading?"Uploading...":"Upload Financials"}
-                <input type="file" multiple accept=".xlsx,.xls,.xlsm,.csv" onChange={uploadFiles}
-                  style={{display:"none"}}/>
+                <input type="file" multiple accept=".xlsx,.xls,.xlsm,.csv" onChange={uploadFiles} style={{display:"none"}}/>
               </label>
               <button onClick={runAnalysis} disabled={analyzing||!selectedDeal.financials?.length}
                 style={{...goldBtn,background:selectedDeal.financials?.length?C.gold:"rgba(201,168,76,.3)",
                   cursor:selectedDeal.financials?.length?"pointer":"not-allowed"}}>
                 {analyzing?"Running Model...":"Analyze"}
               </button>
+              <button onClick={()=>setShowPresentation(true)} style={dimBtn}>Presentation</button>
               <button onClick={()=>deleteDeal(selectedDeal.id)} style={{...dimBtn,color:C.red}}>Delete</button>
             </div>
           </div>
 
-          {/* Uploaded financials */}
-          <SHdr t={"Uploaded Financials ("+((selectedDeal.financials||[]).length)+" records)"}/>
-          {(!selectedDeal.financials||selectedDeal.financials.length===0)?(
-            <div style={{textAlign:"center",padding:24,color:C.whDim,fontSize:11}}>
-              No financials uploaded yet. Upload T12s, rent rolls, or operating statements (Excel/CSV).
-              <br/><span style={{fontSize:10,color:C.goldDim}}>Supports multi-year files — upload a single spreadsheet with 5+ years of data.</span>
+          {/* Sub-tabs */}
+          <div style={{display:"flex",gap:0,marginBottom:16,borderBottom:`1px solid ${C.border}`}}>
+            {dealTabs.map(t=>(
+              <button key={t} onClick={()=>setDealTab(t)}
+                style={{padding:"8px 18px",fontSize:10,fontWeight:dealTab===t?700:400,color:dealTab===t?C.gold:C.whDim,
+                  background:"transparent",border:"none",borderBottom:dealTab===t?`2px solid ${C.gold}`:"2px solid transparent",
+                  cursor:"pointer",textTransform:"uppercase",letterSpacing:".06em"}}>{t}</button>
+            ))}
+          </div>
+
+          {/* ── FINANCIALS SUB-TAB ──────────────────────────── */}
+          {dealTab==="financials"&&(
+            <div>
+              <SHdr t={"Uploaded Financials ("+((selectedDeal.financials||[]).length)+" records)"}/>
+              {(!selectedDeal.financials||selectedDeal.financials.length===0)?(
+                <div style={{textAlign:"center",padding:24,color:C.whDim,fontSize:11}}>
+                  No financials uploaded yet. Upload T12s, rent rolls, or operating statements.
+                  <br/><span style={{fontSize:10,color:C.goldDim}}>Supports monthly columns, multi-year files, 5+ years of data.</span>
+                </div>
+              ):(
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr>
+                    <th style={thS}>Type</th><th style={thS}>Year</th><th style={thS}>File</th>
+                    <th style={thS}>NOI</th><th style={thS}>Revenue</th><th style={thS}>Occupancy</th>
+                    <th style={thS}>Units</th><th style={{...thS,width:30}}></th>
+                  </tr></thead>
+                  <tbody>
+                    {selectedDeal.financials.map(fin=>{
+                      const p=fin.parsed||{};
+                      return(
+                        <tr key={fin.id}>
+                          <td style={tdS}><span style={{padding:"2px 8px",borderRadius:10,fontSize:9,fontWeight:600,
+                            background:"rgba(41,128,185,.15)",color:C.blue}}>
+                            {(fin.type||"unknown").replace(/_/g," ").toUpperCase()}</span></td>
+                          <td style={{...tdS,fontWeight:600}}>{fin.year||"—"}</td>
+                          <td style={{...tdS,fontSize:10,color:C.whDim}}>{fin.filename||"—"}</td>
+                          <td style={{...tdS,color:p.noi?C.green:C.whDim}}>{p.noi?f.$(p.noi):"—"}</td>
+                          <td style={tdS}>{p.revenue?f.$(p.revenue):(p.egi?f.$(p.egi):"—")}</td>
+                          <td style={tdS}>{p.occupancy?f.p(p.occupancy):"—"}</td>
+                          <td style={tdS}>{p.units||"—"}</td>
+                          <td style={tdS}><button onClick={(ev)=>{ev.stopPropagation();deleteFinancial(selectedDeal.id,fin.id);}}
+                            style={{background:"transparent",border:"none",color:C.red,cursor:"pointer",fontSize:12}}>×</button></td>
+                        </tr>);
+                    })}
+                  </tbody>
+                </table>
+              )}
             </div>
-          ):(
-            <table style={{width:"100%",borderCollapse:"collapse",marginBottom:14}}>
-              <thead><tr>
-                <th style={thS}>Type</th><th style={thS}>Year</th><th style={thS}>File</th>
-                <th style={thS}>NOI</th><th style={thS}>Revenue</th><th style={thS}>Occupancy</th>
-                <th style={thS}>Units</th><th style={{...thS,width:30}}></th>
-              </tr></thead>
-              <tbody>
-                {selectedDeal.financials.map(fin=>{
-                  const p=fin.parsed||{};
-                  return(
-                    <tr key={fin.id} style={{borderBottom:"1px solid rgba(255,255,255,.04)"}}>
-                      <td style={tdS}>
-                        <span style={{padding:"2px 8px",borderRadius:10,fontSize:9,fontWeight:600,
-                          background:"rgba(41,128,185,.15)",color:C.blue}}>
-                          {(fin.type||"unknown").replace(/_/g," ").toUpperCase()}
-                        </span>
-                      </td>
-                      <td style={{...tdS,fontWeight:600}}>{fin.year||"—"}</td>
-                      <td style={{...tdS,fontSize:10,color:C.whDim}}>{fin.filename||"—"}</td>
-                      <td style={{...tdS,color:p.noi?C.green:C.whDim}}>{p.noi?f.$(p.noi):"—"}</td>
-                      <td style={tdS}>{p.revenue?f.$(p.revenue):(p.egi?f.$(p.egi):"—")}</td>
-                      <td style={tdS}>{p.occupancy?f.p(p.occupancy):"—"}</td>
-                      <td style={tdS}>{p.units||"—"}</td>
-                      <td style={tdS}>
-                        <button onClick={(ev)=>{ev.stopPropagation();deleteFinancial(selectedDeal.id,fin.id);}}
-                          style={{background:"transparent",border:"none",color:C.red,cursor:"pointer",fontSize:12}}>
-                          ×
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
           )}
 
-          {/* Analysis Results */}
-          {analysis&&analysis.modelResult&&(
+          {/* ── REVENUE LINES SUB-TAB ───────────────────────── */}
+          {dealTab==="revenue"&&(
             <div>
-              <SHdr t="Analysis Results"/>
-              <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
-                <KPI label="LP IRR" value={f.p(analysis.modelResult.lpIRR)} gold/>
-                <KPI label="LP MOIC" value={f.x(analysis.modelResult.lpMOIC)}/>
-                <KPI label="GP Promote" value={f.$(analysis.modelResult.gpPromote)}/>
-                <KPI label="Exit Value" value={f.$(analysis.modelResult.totExitVal)}/>
-                <KPI label="Sale Proceeds" value={f.$(analysis.modelResult.totSaleProc)}/>
-                <KPI label="Op CF" value={f.$(analysis.modelResult.totOpCF)}/>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <SHdr t={"Revenue Lines ("+revLines.length+")"}/>
+                <div style={{display:"flex",gap:6}}>
+                  {Object.keys(REV_LINE_PRESETS).map(p=>(
+                    <button key={p} onClick={()=>loadPreset(p)} style={{...dimBtn,fontSize:9,padding:"4px 10px"}}>
+                      {p} Preset
+                    </button>
+                  ))}
+                  <button onClick={addRevLine} style={{...goldBtn,fontSize:9,padding:"4px 10px"}}>+ Add Line</button>
+                  {revDirty&&<button onClick={saveRevLines} style={{...goldBtn,fontSize:9,padding:"4px 10px",
+                    background:C.green}}>Save</button>}
+                </div>
               </div>
 
-              {/* Historical analysis */}
-              {analysis.historicalAnalysis&&analysis.historicalAnalysis.yearsOfData>0&&(
-                <div style={{marginBottom:14}}>
-                  <SHdr t={"Historical Analysis ("+analysis.historicalAnalysis.yearsOfData+" years of data)"}/>
-                  <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:10}}>
-                    <KPI label="NOI CAGR" value={f.p(analysis.historicalAnalysis.noiCAGR)}
-                      sub="Computed from uploaded data"/>
-                    {analysis.historicalAnalysis.revenueGrowth!=null&&(
-                      <KPI label="Revenue CAGR" value={f.p(analysis.historicalAnalysis.revenueGrowth)}/>
-                    )}
-                    {analysis.historicalAnalysis.expenseGrowth!=null&&(
-                      <KPI label="Expense CAGR" value={f.p(analysis.historicalAnalysis.expenseGrowth)}/>
-                    )}
-                    {analysis.historicalAnalysis.avgOccupancy!=null&&(
-                      <KPI label="Avg Occupancy" value={f.p(analysis.historicalAnalysis.avgOccupancy)}/>
-                    )}
-                  </div>
-
-                  {/* NOI History Chart */}
-                  {analysis.historicalAnalysis.noiHistory.length>=2&&(
-                    <Card style={{marginBottom:10}}>
-                      <CT c="Historical NOI Trend"/>
-                      <ResponsiveContainer width="100%" height={180}>
-                        <BarChart data={analysis.historicalAnalysis.noiHistory}
-                          margin={{top:10,right:16,bottom:0,left:0}}>
-                          <XAxis dataKey="year" tick={{fill:C.whDim,fontSize:10}} axisLine={false} tickLine={false}/>
-                          <YAxis tickFormatter={v=>f.$(v)} tick={{fill:C.whDim,fontSize:9}}
-                            axisLine={false} tickLine={false} width={50}/>
-                          <Tooltip content={<TT/>}/>
-                          <Bar dataKey="noi" fill={C.gold} radius={[3,3,0,0]} name="NOI"/>
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </Card>
-                  )}
+              {revLines.length===0?(
+                <div style={{textAlign:"center",padding:30,color:C.whDim,fontSize:11}}>
+                  No revenue lines yet. Add lines manually or load a preset (Marina, Multifamily, Self-Storage).
                 </div>
-              )}
-
-              {/* Waterfall tiers */}
-              {analysis.modelResult.tierResults&&(
-                <div>
-                  <SHdr t="Waterfall Breakdown"/>
-                  <table style={{width:"100%",borderCollapse:"collapse"}}>
+              ):(
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",minWidth:800}}>
                     <thead><tr>
-                      <th style={thS}>Tier</th><th style={thS}>IRR Hurdle</th><th style={thS}>MOIC Hurdle</th>
-                      <th style={thS}>LP Split</th><th style={thS}>GP Split</th>
-                      <th style={thS}>LP $</th><th style={thS}>GP $</th>
+                      <th style={thS}>Category</th><th style={thS}>Type</th><th style={thS}>Count</th>
+                      <th style={thS}>Rate ($)</th><th style={thS}>Period</th><th style={thS}>Occ %</th>
+                      <th style={thS}>Growth %</th><th style={thS}>Annual Rev</th><th style={{...thS,width:30}}></th>
                     </tr></thead>
                     <tbody>
-                      <tr style={{borderBottom:"1px solid rgba(255,255,255,.04)"}}>
-                        <td style={{...tdS,fontWeight:600}}>ROC</td>
-                        <td style={tdS}>—</td><td style={tdS}>—</td><td style={tdS}>—</td><td style={tdS}>—</td>
-                        <td style={{...tdS,color:C.blue}}>{f.$(analysis.modelResult.lpROC)}</td>
-                        <td style={tdS}>—</td>
+                      {revLines.map((l,i)=>{
+                        const annual=l.rate_period==="monthly"?l.rate*12:l.rate;
+                        const rev=l.unit_count*annual*(l.occupancy??1);
+                        return(
+                          <tr key={i}>
+                            <td style={tdS}><input value={l.category||""} onChange={e=>updateRevLine(i,"category",e.target.value)}
+                              placeholder="e.g. Slips" style={{...inputS,width:100}}/></td>
+                            <td style={tdS}><input value={l.line_type||""} onChange={e=>updateRevLine(i,"line_type",e.target.value)}
+                              placeholder="e.g. Wet Slip" style={{...inputS,width:110}}/></td>
+                            <td style={tdS}><input type="number" value={l.unit_count||0}
+                              onChange={e=>updateRevLine(i,"unit_count",parseInt(e.target.value)||0)}
+                              style={{...inputS,width:55,textAlign:"center"}}/></td>
+                            <td style={tdS}><input type="number" value={l.rate||0}
+                              onChange={e=>updateRevLine(i,"rate",parseFloat(e.target.value)||0)}
+                              style={{...inputS,width:80,textAlign:"right"}}/></td>
+                            <td style={tdS}>
+                              <select value={l.rate_period||"monthly"} onChange={e=>updateRevLine(i,"rate_period",e.target.value)}
+                                style={{...inputS,width:75}}>
+                                <option value="monthly">Monthly</option>
+                                <option value="annual">Annual</option>
+                              </select>
+                            </td>
+                            <td style={tdS}><input type="number" value={Math.round((l.occupancy??1)*100)}
+                              onChange={e=>updateRevLine(i,"occupancy",(parseInt(e.target.value)||0)/100)}
+                              style={{...inputS,width:50,textAlign:"center"}} min={0} max={100}/></td>
+                            <td style={tdS}><input type="number" value={((l.growth_rate||0)*100).toFixed(1)}
+                              onChange={e=>updateRevLine(i,"growth_rate",(parseFloat(e.target.value)||0)/100)}
+                              style={{...inputS,width:50,textAlign:"center"}} step="0.5"/></td>
+                            <td style={{...tdS,color:C.green,fontWeight:600,textAlign:"right"}}>{f.$(rev)}</td>
+                            <td style={tdS}><button onClick={()=>removeRevLine(i)}
+                              style={{background:"transparent",border:"none",color:C.red,cursor:"pointer",fontSize:12}}>×</button></td>
+                          </tr>);
+                      })}
+                      <tr style={{borderTop:`2px solid ${C.gold}`}}>
+                        <td colSpan={7} style={{...tdS,fontWeight:700,color:C.gold,textAlign:"right"}}>Total Year 1 Revenue</td>
+                        <td style={{...tdS,fontWeight:700,color:C.gold,textAlign:"right"}}>{f.$(totalRevLineRevenue)}</td>
+                        <td style={tdS}></td>
                       </tr>
-                      <tr style={{borderBottom:"1px solid rgba(255,255,255,.04)"}}>
-                        <td style={{...tdS,fontWeight:600}}>Pref</td>
-                        <td style={tdS}>—</td><td style={tdS}>—</td><td style={tdS}>—</td><td style={tdS}>—</td>
-                        <td style={{...tdS,color:C.blue}}>{f.$(analysis.modelResult.lpPref)}</td>
-                        <td style={tdS}>—</td>
-                      </tr>
-                      {analysis.modelResult.tierResults.map((t,i)=>(
-                        <tr key={i} style={{borderBottom:"1px solid rgba(255,255,255,.04)"}}>
-                          <td style={{...tdS,fontWeight:600}}>Tier {i+1}</td>
-                          <td style={tdS}>{t.irrHurdle!=null?f.p(t.irrHurdle):"—"}</td>
-                          <td style={tdS}>{t.moicHurdle!=null?f.x(t.moicHurdle):"—"}</td>
-                          <td style={tdS}>{f.p(t.lpSplit)}</td>
-                          <td style={tdS}>{f.p(t.gpSplit)}</td>
-                          <td style={{...tdS,color:C.blue}}>{f.$(t.lp)}</td>
-                          <td style={{...tdS,color:C.gold}}>{f.$(t.gp)}</td>
-                        </tr>
-                      ))}
                     </tbody>
                   </table>
                 </div>
               )}
+            </div>
+          )}
 
-              {/* Sensitivity grid */}
-              {analysis.sensitivity&&(
-                <div style={{marginTop:14}}>
-                  <SHdr t="Sensitivity — LP IRR (Exit Cap × NOI Growth)"/>
-                  <div style={{overflowX:"auto"}}>
+          {/* ── PROFORMA SUB-TAB ────────────────────────────── */}
+          {dealTab==="proforma"&&(
+            <div>
+              <SHdr t="Proforma Projection"/>
+              {revLines.length===0?(
+                <div style={{textAlign:"center",padding:30,color:C.whDim,fontSize:11}}>
+                  Add revenue lines first (Revenue tab) to generate a proforma.
+                </div>
+              ):(
+                <div>
+                  {/* Summary table */}
+                  <div style={{overflowX:"auto",marginBottom:16}}>
                     <table style={{width:"100%",borderCollapse:"collapse"}}>
                       <thead><tr>
-                        <th style={{...thS,textAlign:"left"}}>Exit Cap ↓ / Growth →</th>
-                        {analysis.sensitivity.growthRates.map(g=>(
-                          <th key={g} style={{...thS,textAlign:"center"}}>{(g*100).toFixed(0)}%</th>
-                        ))}
+                        <th style={thS}>Year</th><th style={thS}>Revenue</th><th style={thS}>Expenses (40%)</th>
+                        <th style={thS}>NOI</th><th style={thS}>Margin</th><th style={thS}>YoY Growth</th>
                       </tr></thead>
                       <tbody>
-                        {analysis.sensitivity.grid.map(row=>(
-                          <tr key={row.exitCap} style={{borderBottom:"1px solid rgba(255,255,255,.04)"}}>
-                            <td style={{...tdS,color:C.goldDim,fontWeight:600}}>{(row.exitCap*100).toFixed(1)}%</td>
-                            {analysis.sensitivity.growthRates.map(g=>{
-                              const v=row.values[g]?.lpIRR;
-                              const bg=v>.18?"rgba(30,132,73,.25)":v>.14?"rgba(201,168,76,.12)":"rgba(192,57,43,.2)";
-                              const clr=v>.18?C.green:v>.14?C.white:C.red;
-                              return <td key={g} style={{...tdS,textAlign:"center",background:bg,color:clr,
-                                fontWeight:500}}>{v!=null?f.p(v):"—"}</td>;
+                        {proforma.map((yr,i)=>{
+                          const prevNoi=i>0?proforma[i-1].noi:null;
+                          const yoy=prevNoi&&prevNoi>0?(yr.noi-prevNoi)/prevNoi:null;
+                          return(
+                            <tr key={yr.year}>
+                              <td style={{...tdS,fontWeight:600}}>Yr {yr.year}</td>
+                              <td style={tdS}>{f.$(yr.totalRevenue)}</td>
+                              <td style={{...tdS,color:C.red}}>{f.$(yr.totalExpenses)}</td>
+                              <td style={{...tdS,color:C.green,fontWeight:600}}>{f.$(yr.noi)}</td>
+                              <td style={tdS}>{yr.totalRevenue>0?f.p(yr.noi/yr.totalRevenue):"—"}</td>
+                              <td style={{...tdS,color:yoy&&yoy>0?C.green:yoy&&yoy<0?C.red:C.whDim}}>
+                                {yoy!=null?f.p(yoy):"—"}</td>
+                            </tr>);
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Revenue by line per year */}
+                  <SHdr t="Revenue by Business Line"/>
+                  <div style={{overflowX:"auto",marginBottom:14}}>
+                    <table style={{width:"100%",borderCollapse:"collapse",minWidth:600}}>
+                      <thead><tr>
+                        <th style={thS}>Line</th>
+                        {proforma.map(yr=><th key={yr.year} style={{...thS,textAlign:"center"}}>Yr {yr.year}</th>)}
+                      </tr></thead>
+                      <tbody>
+                        {revLines.map((l,li)=>(
+                          <tr key={li}>
+                            <td style={{...tdS,whiteSpace:"nowrap"}}>{l.category} — {l.line_type}</td>
+                            {proforma.map(yr=>{
+                              const line=yr.lines[li];
+                              return <td key={yr.year} style={{...tdS,textAlign:"center"}}>{line?f.$(line.effective):"—"}</td>;
                             })}
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
+
+                  {/* Chart */}
+                  <Card>
+                    <CT c="Revenue vs NOI Projection"/>
+                    <ResponsiveContainer width="100%" height={220}>
+                      <ComposedChart data={proforma} margin={{top:10,right:16,bottom:0,left:0}}>
+                        <XAxis dataKey="year" tickFormatter={v=>`Yr ${v}`} tick={{fill:C.whDim,fontSize:10}}
+                          axisLine={false} tickLine={false}/>
+                        <YAxis tickFormatter={v=>f.$(v)} tick={{fill:C.whDim,fontSize:9}}
+                          axisLine={false} tickLine={false} width={55}/>
+                        <Tooltip content={<TT/>}/>
+                        <Bar dataKey="totalRevenue" fill="rgba(41,128,185,.4)" radius={[3,3,0,0]} name="Revenue"/>
+                        <Bar dataKey="totalExpenses" fill="rgba(192,57,43,.3)" radius={[3,3,0,0]} name="Expenses"/>
+                        <Line type="monotone" dataKey="noi" stroke={C.gold} strokeWidth={2.5}
+                          dot={{fill:C.gold,r:4}} name="NOI"/>
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </Card>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ── ANALYSIS SUB-TAB ────────────────────────────── */}
+          {dealTab==="analysis"&&(
+            <div>
+              {analysis&&analysis.modelResult?(
+                <div>
+                  <SHdr t="Analysis Results"/>
+                  <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
+                    <KPI label="LP IRR" value={f.p(analysis.modelResult.lpIRR)} gold/>
+                    <KPI label="LP MOIC" value={f.x(analysis.modelResult.lpMOIC)}/>
+                    <KPI label="GP Promote" value={f.$(analysis.modelResult.gpPromote)}/>
+                    <KPI label="Exit Value" value={f.$(analysis.modelResult.totExitVal)}/>
+                    <KPI label="Sale Proceeds" value={f.$(analysis.modelResult.totSaleProc)}/>
+                    <KPI label="Op CF" value={f.$(analysis.modelResult.totOpCF)}/>
+                  </div>
+
+                  {analysis.historicalAnalysis&&analysis.historicalAnalysis.yearsOfData>0&&(
+                    <div style={{marginBottom:14}}>
+                      <SHdr t={"Historical Analysis ("+analysis.historicalAnalysis.yearsOfData+" years)"}/>
+                      <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:10}}>
+                        <KPI label="NOI CAGR" value={f.p(analysis.historicalAnalysis.noiCAGR)} sub="From uploaded data"/>
+                        {analysis.historicalAnalysis.revenueGrowth!=null&&
+                          <KPI label="Revenue CAGR" value={f.p(analysis.historicalAnalysis.revenueGrowth)}/>}
+                        {analysis.historicalAnalysis.expenseGrowth!=null&&
+                          <KPI label="Expense CAGR" value={f.p(analysis.historicalAnalysis.expenseGrowth)}/>}
+                        {analysis.historicalAnalysis.avgOccupancy!=null&&
+                          <KPI label="Avg Occupancy" value={f.p(analysis.historicalAnalysis.avgOccupancy)}/>}
+                      </div>
+                      {analysis.historicalAnalysis.noiHistory.length>=2&&(
+                        <Card style={{marginBottom:10}}>
+                          <CT c="Historical NOI Trend"/>
+                          <ResponsiveContainer width="100%" height={180}>
+                            <BarChart data={analysis.historicalAnalysis.noiHistory} margin={{top:10,right:16,bottom:0,left:0}}>
+                              <XAxis dataKey="year" tick={{fill:C.whDim,fontSize:10}} axisLine={false} tickLine={false}/>
+                              <YAxis tickFormatter={v=>f.$(v)} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false} width={50}/>
+                              <Tooltip content={<TT/>}/>
+                              <Bar dataKey="noi" fill={C.gold} radius={[3,3,0,0]} name="NOI"/>
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </Card>
+                      )}
+                    </div>
+                  )}
+
+                  {analysis.modelResult.tierResults&&(
+                    <div>
+                      <SHdr t="Waterfall Breakdown"/>
+                      <table style={{width:"100%",borderCollapse:"collapse"}}>
+                        <thead><tr>
+                          <th style={thS}>Tier</th><th style={thS}>IRR</th><th style={thS}>MOIC</th>
+                          <th style={thS}>LP %</th><th style={thS}>GP %</th><th style={thS}>LP $</th><th style={thS}>GP $</th>
+                        </tr></thead>
+                        <tbody>
+                          <tr><td style={{...tdS,fontWeight:600}}>ROC</td><td style={tdS}>—</td><td style={tdS}>—</td>
+                            <td style={tdS}>—</td><td style={tdS}>—</td>
+                            <td style={{...tdS,color:C.blue}}>{f.$(analysis.modelResult.lpROC)}</td><td style={tdS}>—</td></tr>
+                          <tr><td style={{...tdS,fontWeight:600}}>Pref</td><td style={tdS}>—</td><td style={tdS}>—</td>
+                            <td style={tdS}>—</td><td style={tdS}>—</td>
+                            <td style={{...tdS,color:C.blue}}>{f.$(analysis.modelResult.lpPref)}</td><td style={tdS}>—</td></tr>
+                          {analysis.modelResult.tierResults.map((t,i)=>(
+                            <tr key={i}><td style={{...tdS,fontWeight:600}}>Tier {i+1}</td>
+                              <td style={tdS}>{t.irrHurdle!=null?f.p(t.irrHurdle):"—"}</td>
+                              <td style={tdS}>{t.moicHurdle!=null?f.x(t.moicHurdle):"—"}</td>
+                              <td style={tdS}>{f.p(t.lpSplit)}</td><td style={tdS}>{f.p(t.gpSplit)}</td>
+                              <td style={{...tdS,color:C.blue}}>{f.$(t.lp)}</td>
+                              <td style={{...tdS,color:C.gold}}>{f.$(t.gp)}</td></tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {analysis.sensitivity&&(
+                    <div style={{marginTop:14}}>
+                      <SHdr t="Sensitivity — LP IRR"/>
+                      <div style={{overflowX:"auto"}}>
+                        <table style={{width:"100%",borderCollapse:"collapse"}}>
+                          <thead><tr>
+                            <th style={{...thS,textAlign:"left"}}>Exit Cap ↓ / Growth →</th>
+                            {analysis.sensitivity.growthRates.map(g=>(
+                              <th key={g} style={{...thS,textAlign:"center"}}>{(g*100).toFixed(0)}%</th>
+                            ))}
+                          </tr></thead>
+                          <tbody>
+                            {analysis.sensitivity.grid.map(row=>(
+                              <tr key={row.exitCap}>
+                                <td style={{...tdS,color:C.goldDim,fontWeight:600}}>{(row.exitCap*100).toFixed(1)}%</td>
+                                {analysis.sensitivity.growthRates.map(g=>{
+                                  const v=row.values[g]?.lpIRR;
+                                  const bg=v>.18?"rgba(30,132,73,.25)":v>.14?"rgba(201,168,76,.12)":"rgba(192,57,43,.2)";
+                                  const clr=v>.18?C.green:v>.14?C.white:C.red;
+                                  return <td key={g} style={{...tdS,textAlign:"center",background:bg,color:clr,
+                                    fontWeight:500}}>{v!=null?f.p(v):"—"}</td>;
+                                })}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ):(
+                <div style={{textAlign:"center",padding:30,color:C.whDim,fontSize:11}}>
+                  Upload financials and click "Analyze" to run the fund model on this deal.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── PRESENTATION SUB-TAB ────────────────────────── */}
+          {dealTab==="presentation"&&(
+            <div style={{textAlign:"center",padding:30}}>
+              <div style={{color:C.whDim,fontSize:12,marginBottom:14}}>
+                Generate an investment memorandum with historicals, revenue breakdown, proforma, and fund returns.
+              </div>
+              <button onClick={()=>setShowPresentation(true)} style={goldBtn}>Open Presentation View</button>
             </div>
           )}
         </Card>

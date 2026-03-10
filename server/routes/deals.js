@@ -43,20 +43,19 @@ export default function dealRoutes(pool) {
       const deal = await pool.query('SELECT * FROM deals WHERE id = $1', [req.params.id]);
       if (deal.rows.length === 0) return res.status(404).json({ error: 'Deal not found' });
 
-      const financials = await pool.query(
-        'SELECT * FROM deal_financials WHERE deal_id = $1 ORDER BY year, period_start',
-        [req.params.id]
-      );
-
-      const latestResult = await pool.query(
-        'SELECT * FROM deal_results WHERE deal_id = $1 ORDER BY computed_at DESC LIMIT 1',
-        [req.params.id]
-      );
+      const [financials, latestResult, revenueLines, proforma] = await Promise.all([
+        pool.query('SELECT * FROM deal_financials WHERE deal_id = $1 ORDER BY year, period_start', [req.params.id]),
+        pool.query('SELECT * FROM deal_results WHERE deal_id = $1 ORDER BY computed_at DESC LIMIT 1', [req.params.id]),
+        pool.query('SELECT * FROM deal_revenue_lines WHERE deal_id = $1 ORDER BY sort_order', [req.params.id]),
+        pool.query('SELECT * FROM deal_proforma WHERE deal_id = $1 ORDER BY year', [req.params.id]),
+      ]);
 
       res.json({
         ...deal.rows[0],
         financials: financials.rows,
         latestResult: latestResult.rows[0] || null,
+        revenueLines: revenueLines.rows,
+        proforma: proforma.rows,
       });
     } catch (err) {
       console.error('Error getting deal:', err);
@@ -269,6 +268,125 @@ export default function dealRoutes(pool) {
       });
     } catch (err) {
       console.error('Error comparing deals:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── REVENUE LINES (unit mix / business lines) ─────────────────────────
+  // Get all revenue lines for a deal
+  router.get('/deals/:id/revenue-lines', async (req, res) => {
+    try {
+      const result = await pool.query(
+        'SELECT * FROM deal_revenue_lines WHERE deal_id = $1 ORDER BY sort_order, category, line_type',
+        [req.params.id]
+      );
+      res.json(result.rows);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Save all revenue lines for a deal (bulk replace)
+  router.put('/deals/:id/revenue-lines', async (req, res) => {
+    const { lines = [] } = req.body;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM deal_revenue_lines WHERE deal_id = $1', [req.params.id]);
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        await client.query(
+          `INSERT INTO deal_revenue_lines (deal_id, category, line_type, unit_count, rate, rate_period, occupancy, growth_rate, start_year, notes, sort_order)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          [req.params.id, l.category, l.line_type, l.unit_count || 0, l.rate || 0,
+           l.rate_period || 'monthly', l.occupancy ?? 1.0, l.growth_rate ?? 0.03,
+           l.start_year || 1, l.notes || null, i]
+        );
+      }
+      await client.query('COMMIT');
+      await pool.query('UPDATE deals SET updated_at = NOW() WHERE id = $1', [req.params.id]);
+      const result = await pool.query(
+        'SELECT * FROM deal_revenue_lines WHERE deal_id = $1 ORDER BY sort_order',
+        [req.params.id]
+      );
+      res.json(result.rows);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
+    }
+  });
+
+  // ── PROFORMA ─────────────────────────────────────────────────────────────
+  // Get proforma overrides for a deal
+  router.get('/deals/:id/proforma', async (req, res) => {
+    try {
+      const result = await pool.query(
+        'SELECT * FROM deal_proforma WHERE deal_id = $1 ORDER BY year',
+        [req.params.id]
+      );
+      res.json(result.rows);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Save proforma year overrides (upsert per year)
+  router.put('/deals/:id/proforma', async (req, res) => {
+    const { years = [] } = req.body;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const yr of years) {
+        await client.query(
+          `INSERT INTO deal_proforma (deal_id, year, revenue_overrides, expense_overrides, assumptions_overrides, notes, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,NOW())
+           ON CONFLICT (deal_id, year) DO UPDATE SET
+             revenue_overrides = $3, expense_overrides = $4, assumptions_overrides = $5, notes = $6, updated_at = NOW()`,
+          [req.params.id, yr.year,
+           JSON.stringify(yr.revenue_overrides || {}),
+           JSON.stringify(yr.expense_overrides || {}),
+           JSON.stringify(yr.assumptions_overrides || {}),
+           yr.notes || null]
+        );
+      }
+      await client.query('COMMIT');
+      const result = await pool.query(
+        'SELECT * FROM deal_proforma WHERE deal_id = $1 ORDER BY year',
+        [req.params.id]
+      );
+      res.json(result.rows);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
+    }
+  });
+
+  // ── DEAL PRESENTATION DATA ────────────────────────────────────────────
+  // Returns everything needed for a deal presentation: historicals + proforma + analysis
+  router.get('/deals/:id/presentation', async (req, res) => {
+    try {
+      const deal = await pool.query('SELECT * FROM deals WHERE id = $1', [req.params.id]);
+      if (deal.rows.length === 0) return res.status(404).json({ error: 'Deal not found' });
+
+      const [financials, revenueLines, proforma, latestResult] = await Promise.all([
+        pool.query('SELECT * FROM deal_financials WHERE deal_id = $1 ORDER BY year', [req.params.id]),
+        pool.query('SELECT * FROM deal_revenue_lines WHERE deal_id = $1 ORDER BY sort_order', [req.params.id]),
+        pool.query('SELECT * FROM deal_proforma WHERE deal_id = $1 ORDER BY year', [req.params.id]),
+        pool.query('SELECT * FROM deal_results WHERE deal_id = $1 ORDER BY computed_at DESC LIMIT 1', [req.params.id]),
+      ]);
+
+      res.json({
+        deal: deal.rows[0],
+        financials: financials.rows,
+        revenueLines: revenueLines.rows,
+        proforma: proforma.rows,
+        analysis: latestResult.rows[0]?.result || null,
+      });
+    } catch (err) {
       res.status(500).json({ error: err.message });
     }
   });
