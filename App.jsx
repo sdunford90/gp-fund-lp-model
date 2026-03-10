@@ -160,7 +160,7 @@ function run(a){
     const saleNet=exitVal-lb-exitVal*saleCosts;
     ecf[fundTerm]+=saleNet;
     const eqIRR=irr(ecf);
-    const moic=(saleNet+ecf.slice(1,fundTerm).reduce((s,v)=>s+v,0)+eq)/eq;
+    const moic=ecf.slice(1).reduce((s,v)=>s+v,0)/eq;
     return{...asset,eq,debt,annDS,noi,saleNet,exitVal,lb,irr:eqIRR,moic};
   });
 
@@ -197,7 +197,8 @@ function run(a){
   const totExitVal=assetR.reduce((s,x)=>s+x.exitVal,0);
   const totDebtRepaid=assetR.reduce((s,x)=>s+x.lb,0);
   const totSellingCosts=assetR.reduce((s,x)=>s+x.exitVal*saleCosts,0);
-  const totOpCF=monthly.reduce((s,x)=>s+Math.max(0,x.netOpCF),0);
+  const totOpCF=monthly.reduce((s,x)=>s+Math.max(0,x.netOpCF),0);  // positive months only — for waterfall distributable pool
+  const totNetOpCF=monthly.reduce((s,x)=>s+x.netOpCF,0);          // all months — for display
   const totAMFee=monthly.reduce((s,x)=>s+x.amFeeM,0);
   const totPMFee=monthly.reduce((s,x)=>s+x.pmFeeM,0);
   const totFees=totAMFee+totPMFee;
@@ -298,11 +299,11 @@ function run(a){
   let pCum=0;
   const partnerCum=partnerMonthly.map(x=>{pCum+=x.draw+x.promote;return{mo:x.mo,cum:pCum};});
 
-  // Portfolio NOI chart
-  const noiChart=Array.from({length:fundTerm},(_,y)=>({
-    year:`Yr ${y+1}`,
-    noi:assets.reduce((s,x)=>s+x.price*x.cap*Math.pow(1+x.growth,y),0),
-  }));
+  // Portfolio NOI chart — sums monthly NOI by year, respects asset close timing
+  const noiChart=Array.from({length:fundTerm},(_,y)=>{
+    const s=y*12,e=(y+1)*12;
+    return{year:`Yr ${y+1}`,noi:monthly.slice(s,e).reduce((t,x)=>t+x.noi,0)};
+  });
 
   // Fund CF by year
   const fundCFAnnual=Array.from({length:fundTerm},(_,y)=>{
@@ -331,12 +332,12 @@ function run(a){
     totEqDep,totLPIn,totLPCalled,totGPCalled,totGPIn,
     totGAShortfall,lpActualCapital,gpActualCapital,
     totSaleProc,totExitVal,totDebtRepaid,totSellingCosts,
-    totOpCF,pool,totAMFee,totPMFee,totFees,totGA,
+    totOpCF,totNetOpCF,pool,totAMFee,totPMFee,totFees,totGA,
     gpEntity,gpCumData,gpNetTotal,gpBreakeven,
     promPP,drawsPP,rocPP,coInvPP,totalPP,netPP,
     partnerMonthly,partnerCum,
     totPartnerSal,
-    noiChart,fundCFAnnual,deplCurve,gaMonthly,gaChart,
+    monthly,noiChart,fundCFAnnual,deplCurve,gaMonthly,gaChart,
     waterfall:[
       {name:"LP Capital", value:lpROC,      fill:"#2980B9"},
       {name:"LP Pref",    value:lpPref,     fill:"#1A5276"},
@@ -1033,7 +1034,7 @@ function PresentationView({m,a,scenName,onClose}){
               <tbody>
                 {[
                   ["Asset Management Fee",`${f.p(a.amFee)} of invested capital`],
-                  ["Property Management Fee",`${f.p(a.pmFee)} of gross NOI`],
+                  ["Property Management Fee",`${f.p(a.pmFee)} of EGI (gross revenue)`],
                   ["Carried Interest",f.p(a.carry)],
                   ["Preferred Return",`${f.p(a.prefReturn)} (${a.compoundPref?"compound":"simple"})`],
                   ["GP Catch-Up",a.catchUp?"Yes — full catch-up":"None"],
@@ -1616,43 +1617,21 @@ function TabWaterfall({m,a}){
 function TabFundCF({m,a}){
   const [view, setView] = useState("charts");
 
-  // Monthly fund CF table
-  const moTable = m.gpEntity.map((gp,i)=>{
-    const mo = m.gpEntity[i].mo;
-    const portNOI = m.gaMonthly[i] ? m.gpEntity[i].opDist/a.gpPct : 0;
-    const ds = m.gaMonthly[i] ? (portNOI - m.gpEntity[i].opDist/a.gpPct*(1)) : 0;
-    const lpCall = m.fundCFAnnual ? 0 : 0;
+  // Build monthly detail from raw monthly data
+  const moDetail = m.monthly.map((x,i)=>{
     return {
-      mo,
-      noi:   Math.round(m.gaMonthly[i] ? m.gaMonthly[i].mo && 0 : 0), // placeholder
-      lpDist: Math.round(Math.max(0,gp.opDist/Math.max(a.gpPct,0.001)*(1-a.gpPct))),
-      gpDist: Math.round(Math.max(0,gp.opDist)),
-      amFee:  Math.round(gp.fees - gp.opDist),
-      pmFee:  Math.round(0),
+      mo:       x.mo,
+      portOpCF: Math.round(x.netOpCF),
+      amFee:    Math.round(x.amFeeM),
+      lpShare:  Math.round(x.netOpCF*(1-a.gpPct)),
+      gpShare:  Math.round(x.netOpCF*a.gpPct),
+      lpCall:   Math.round(x.lpCall),
+      cumLPCall:0,
     };
   });
-
-  // Rebuild from monthly source data directly
-  const moDetail = Array.from({length:a.fundTerm*12},(_,i)=>{
-    const mo=i+1;
-    // Reconstruct from gpEntity
-    const gp = m.gpEntity[i]||{};
-    const totalFees = gp.fees||0;
-    const opDist = gp.opDist||0;
-    const portOpCF = opDist/Math.max(a.gpPct,0.001); // total fund op CF
-    return {
-      mo,
-      portOpCF: Math.round(portOpCF),
-      amFee:    Math.round(totalFees - opDist),
-      pmFeeEst: 0,
-      lpShare:  Math.round(portOpCF*(1-a.gpPct)),
-      gpShare:  Math.round(portOpCF*a.gpPct),
-      cumLP:    0,
-    };
-  });
-  // Build cumulative LP
-  let cumLP=0;
-  moDetail.forEach(r=>{cumLP+=r.lpShare;r.cumLP=Math.round(cumLP);});
+  // Build cumulative LP capital called
+  let cumLPCall=0;
+  moDetail.forEach(r=>{cumLPCall+=r.lpCall;r.cumLPCall=Math.round(cumLPCall);});
 
   return(
     <div>
@@ -1792,17 +1771,17 @@ function TabFundCF({m,a}){
                 {(()=>{
                   // Roll up moDetail into quarters
                   const qtrs=[];
-                  let cumLP=0;
+                  let cumCalled=0;
                   for(let q=0;q<a.fundTerm*4;q++){
                     const mos=moDetail.slice(q*3,(q+1)*3);
                     const portCF=mos.reduce((s,r)=>s+r.portOpCF,0);
                     const fee=mos.reduce((s,r)=>s+r.amFee,0);
                     const lp=mos.reduce((s,r)=>s+r.lpShare,0);
                     const gp=mos.reduce((s,r)=>s+r.gpShare,0);
-                    cumLP+=lp;
+                    cumCalled+=mos.reduce((s,r)=>s+r.lpCall,0);
                     const yr=Math.floor(q/4)+1;
                     const qn=(q%4)+1;
-                    qtrs.push({label:`Y${yr} Q${qn}`,portCF,fee,lp,gp,cumLP:Math.round(cumLP)});
+                    qtrs.push({label:`Y${yr} Q${qn}`,portCF,fee,lp,gp,cumLPCall:Math.round(cumCalled)});
                   }
                   return qtrs.map((row,i)=>{
                     const isYrEnd=(i+1)%4===0;
@@ -1817,18 +1796,18 @@ function TabFundCF({m,a}){
                         <td style={{padding:"5px 10px",textAlign:"right",color:"#E8D5A3"}}>{f.$(row.fee)}</td>
                         <td style={{padding:"5px 10px",textAlign:"right",color:"#5DADE2"}}>{f.$(row.lp)}</td>
                         <td style={{padding:"5px 10px",textAlign:"right",color:C.gold}}>{f.$(row.gp)}</td>
-                        <td style={{padding:"5px 10px",textAlign:"right",color:C.whDim}}>{f.$(row.cumLP)}</td>
+                        <td style={{padding:"5px 10px",textAlign:"right",color:C.whDim}}>{f.$(row.cumLPCall)}</td>
                       </tr>
                     );
                   });
                 })()}
                 <tr style={{borderTop:`2px solid ${C.border}`,background:"rgba(201,168,76,.06)"}}>
                   <td style={{padding:"7px 10px",color:C.gold,fontWeight:700}}>7-YR TOTAL</td>
-                  <td style={{padding:"7px 10px",textAlign:"right",color:C.green,fontWeight:700}}>{f.$(m.totOpCF)}</td>
+                  <td style={{padding:"7px 10px",textAlign:"right",color:C.green,fontWeight:700}}>{f.$(m.totNetOpCF)}</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:"#E8D5A3",fontWeight:700}}>{f.$(m.totAMFee)}</td>
-                  <td style={{padding:"7px 10px",textAlign:"right",color:"#5DADE2",fontWeight:700}}>{f.$(m.totOpCF*(1-a.gpPct))}</td>
-                  <td style={{padding:"7px 10px",textAlign:"right",color:C.gold,fontWeight:700}}>{f.$(m.totOpCF*a.gpPct)}</td>
-                  <td style={{padding:"7px 10px",textAlign:"right",color:C.whDim,fontWeight:700}}>{f.$(m.lpActualCapital)}</td>
+                  <td style={{padding:"7px 10px",textAlign:"right",color:"#5DADE2",fontWeight:700}}>{f.$(m.totNetOpCF*(1-a.gpPct))}</td>
+                  <td style={{padding:"7px 10px",textAlign:"right",color:C.gold,fontWeight:700}}>{f.$(m.totNetOpCF*a.gpPct)}</td>
+                  <td style={{padding:"7px 10px",textAlign:"right",color:C.whDim,fontWeight:700}}>{f.$(m.totLPCalled)}</td>
                 </tr>
               </tbody>
             </table>
@@ -1891,15 +1870,15 @@ function TabFundCF({m,a}){
                     <td style={{padding:"5px 10px",textAlign:"right",color:"#E8D5A3"}}>{f.$(row.amFee)}</td>
                     <td style={{padding:"5px 10px",textAlign:"right",color:"#5DADE2"}}>{f.$(row.lpShare)}</td>
                     <td style={{padding:"5px 10px",textAlign:"right",color:C.gold}}>{f.$(row.gpShare)}</td>
-                    <td style={{padding:"5px 10px",textAlign:"right",color:C.whDim}}>{f.$(row.cumLP)}</td>
+                    <td style={{padding:"5px 10px",textAlign:"right",color:C.whDim}}>{f.$(row.cumLPCall)}</td>
                   </tr>
                 ))}
                 <tr style={{borderTop:`2px solid ${C.border}`,background:"rgba(201,168,76,.06)"}}>
                   <td style={{padding:"7px 10px",color:C.gold,fontWeight:700}}>7-YR TOTAL</td>
-                  <td style={{padding:"7px 10px",textAlign:"right",color:C.green,fontWeight:700}}>{f.$(m.totOpCF)}</td>
+                  <td style={{padding:"7px 10px",textAlign:"right",color:C.green,fontWeight:700}}>{f.$(m.totNetOpCF)}</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:"#E8D5A3",fontWeight:700}}>{f.$(m.totAMFee)}</td>
-                  <td style={{padding:"7px 10px",textAlign:"right",color:"#5DADE2",fontWeight:700}}>{f.$(m.totOpCF*(1-a.gpPct))}</td>
-                  <td style={{padding:"7px 10px",textAlign:"right",color:C.gold,fontWeight:700}}>{f.$(m.totOpCF*a.gpPct)}</td>
+                  <td style={{padding:"7px 10px",textAlign:"right",color:"#5DADE2",fontWeight:700}}>{f.$(m.totNetOpCF*(1-a.gpPct))}</td>
+                  <td style={{padding:"7px 10px",textAlign:"right",color:C.gold,fontWeight:700}}>{f.$(m.totNetOpCF*a.gpPct)}</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:C.whDim,fontWeight:700}}>{f.$(m.totLPCalled)}</td>
                 </tr>
               </tbody>
@@ -2212,8 +2191,9 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
           <tbody>
             {a.partnerSalaries.map((p,idx)=>{
               const total7=Array.from({length:84},(_,i)=>{
-                if(i+1<p.start)return 0;
-                const y=Math.floor(i/12);
+                const mo=i+1;
+                if(mo<p.start)return 0;
+                const y=Math.floor((mo-p.start)/12);
                 return(p.salary*Math.pow(1+a.salaryGrowth,y)/12)*(1+a.benefitsRate);
               }).reduce((s,v)=>s+v,0);
               return(
@@ -2274,8 +2254,9 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
           <tbody>
             {a.hires.map((h,idx)=>{
               const total7=m.gaMonthly.reduce((s,x,i)=>{
-                if(i+1<h.start)return s;
-                const y=Math.floor(i/12);
+                const mo=i+1;
+                if(mo<h.start)return s;
+                const y=Math.floor((mo-h.start)/12);
                 return s+(h.salary*Math.pow(1+a.salaryGrowth,y)/12)*h.alloc*(1+a.benefitsRate);
               },0);
               return(
