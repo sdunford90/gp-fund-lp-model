@@ -3640,10 +3640,11 @@ function TabDeals({a}){
               <SHdr t={"Uploaded Financials ("+((selectedDeal.financials||[]).length)+" records)"}/>
               {(!selectedDeal.financials||selectedDeal.financials.length===0)?(
                 <div style={{textAlign:"center",padding:24,color:C.whDim,fontSize:11}}>
-                  No financials uploaded yet. Upload T12s, rent rolls, or operating statements.
-                  <br/><span style={{fontSize:10,color:C.goldDim}}>Supports monthly columns, multi-year files, 5+ years of data.</span>
+                  No financials uploaded yet. Upload T12s, slip schedules, or operating statements.
+                  <br/><span style={{fontSize:10,color:C.goldDim}}>Supports monthly columns, multi-year files, marina P&Ls with slip/fuel/storage/service detail.</span>
                 </div>
               ):(
+                <div>
                 <table style={{width:"100%",borderCollapse:"collapse"}}>
                   <thead><tr>
                     <th style={thS}>Type</th><th style={thS}>Year</th><th style={thS}>File</th>
@@ -3663,13 +3664,103 @@ function TabDeals({a}){
                           <td style={{...tdS,color:p.noi?C.green:C.whDim}}>{p.noi?f.$(p.noi):"—"}</td>
                           <td style={tdS}>{p.revenue?f.$(p.revenue):(p.egi?f.$(p.egi):"—")}</td>
                           <td style={tdS}>{p.occupancy?f.p(p.occupancy):"—"}</td>
-                          <td style={tdS}>{p.units||"—"}</td>
+                          <td style={tdS}>{p.slips||p.units||"—"}</td>
                           <td style={tdS}><button onClick={(ev)=>{ev.stopPropagation();deleteFinancial(selectedDeal.id,fin.id);}}
                             style={{background:"transparent",border:"none",color:C.red,cursor:"pointer",fontSize:12}}>×</button></td>
                         </tr>);
                     })}
                   </tbody>
                 </table>
+
+                {/* Revenue breakdown from parsed data */}
+                {selectedDeal.financials.some(fin=>fin.parsed?.revenue_lines?.length>0||fin.parsed?.slip_revenue||fin.parsed?.fuel_revenue)&&(
+                  <div style={{marginTop:14}}>
+                    <SHdr t="Parsed Revenue Breakdown"/>
+                    {selectedDeal.financials.filter(fin=>fin.parsed?.slip_revenue||fin.parsed?.fuel_revenue||fin.parsed?.revenue_lines?.length>0).map(fin=>{
+                      const p=fin.parsed;
+                      const cats=[
+                        p.slip_revenue&&["Slip Revenue",p.slip_revenue],
+                        p.dry_storage_revenue&&["Dry Storage",p.dry_storage_revenue],
+                        p.fuel_revenue&&["Fuel",p.fuel_revenue],
+                        p.service_revenue&&["Service & Repair",p.service_revenue],
+                        p.retail_fb_revenue&&["Retail & F&B",p.retail_fb_revenue],
+                        p.lift_revenue&&["Lifts & Launch",p.lift_revenue],
+                        p.ancillary_revenue&&["Ancillary",p.ancillary_revenue],
+                      ].filter(Boolean);
+                      if(cats.length===0&&p.revenue_lines?.length>0){
+                        // Show individual lines if no category aggregation
+                        return <div key={fin.id} style={{marginBottom:10}}>
+                          <div style={{fontSize:10,color:C.goldDim,marginBottom:4}}>{fin.year||""} — {fin.filename||"uploaded"}</div>
+                          {p.revenue_lines.map((l,i)=>
+                            <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"3px 12px",fontSize:10,
+                              color:C.white,borderBottom:"1px solid rgba(255,255,255,.03)"}}>
+                              <span>{l.label}</span><span style={{color:C.green}}>{f.$(l.value)}</span>
+                            </div>
+                          )}
+                        </div>;
+                      }
+                      return <div key={fin.id} style={{marginBottom:10}}>
+                        <div style={{fontSize:10,color:C.goldDim,marginBottom:4}}>{fin.year||""} — {fin.filename||"uploaded"}</div>
+                        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                          {cats.map(([label,val])=>
+                            <div key={label} style={{background:"rgba(255,255,255,.04)",borderRadius:4,padding:"6px 12px",minWidth:100}}>
+                              <div style={{fontSize:8,color:C.goldDim,textTransform:"uppercase"}}>{label}</div>
+                              <div style={{fontSize:13,fontWeight:600,color:C.green}}>{f.$(val)}</div>
+                              {p.revenue>0&&<div style={{fontSize:8,color:C.whDim}}>{f.p(val/p.revenue)} of rev</div>}
+                            </div>
+                          )}
+                        </div>
+                        {p.expense_lines?.length>0&&(
+                          <div style={{marginTop:8}}>
+                            <div style={{fontSize:9,color:C.goldDim,marginBottom:3}}>TOP EXPENSES</div>
+                            {p.expense_lines.sort((a,b)=>Math.abs(b.value)-Math.abs(a.value)).slice(0,8).map((l,i)=>
+                              <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"2px 12px",fontSize:10,
+                                color:C.white,borderBottom:"1px solid rgba(255,255,255,.03)"}}>
+                                <span style={{color:C.whDim}}>{l.label}</span><span style={{color:C.red}}>{f.$(Math.abs(l.value))}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>;
+                    })}
+                  </div>
+                )}
+
+                {/* Slip schedule detail */}
+                {selectedDeal.financials.filter(fin=>fin.type==="slip_schedule").map(fin=>{
+                  const p=fin.parsed||{};
+                  const sb=p.size_breakdown||{};
+                  return <div key={fin.id} style={{marginTop:14}}>
+                    <SHdr t="Slip Schedule Summary"/>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+                      <KPI label="Total Slips" value={p.slips}/>
+                      <KPI label="Occupied" value={p.occupied}/>
+                      <KPI label="Occupancy" value={p.occupancy?f.p(p.occupancy):"—"}/>
+                      <KPI label="Avg Rate" value={p.avg_rate?f.$(p.avg_rate)+"/mo":"—"}/>
+                      <KPI label="Avg LOA" value={p.avg_loa?`${Math.round(p.avg_loa)}'`:"—"}/>
+                      {p.liveaboard_count>0&&<KPI label="Liveaboards" value={p.liveaboard_count}/>}
+                      <KPI label="Annual Slip Rev" value={f.$(p.annual_slip_revenue||0)} gold/>
+                    </div>
+                    {Object.keys(sb).length>0&&(
+                      <table style={{width:"100%",borderCollapse:"collapse"}}>
+                        <thead><tr>
+                          <th style={thS}>Size</th><th style={thS}>Count</th><th style={thS}>Occupied</th>
+                          <th style={thS}>Avg Rate</th><th style={thS}>Annual Rev</th>
+                        </tr></thead>
+                        <tbody>
+                          {Object.entries(sb).sort((a,b)=>(a[0]<b[0]?-1:1)).map(([size,d])=>(
+                            <tr key={size}><td style={tdS}>{size}</td><td style={tdS}>{d.count}</td>
+                              <td style={tdS}>{d.occupied}</td>
+                              <td style={tdS}>{d.count>0?f.$(d.totalRate/d.count)+"/mo":"—"}</td>
+                              <td style={{...tdS,color:C.green}}>{f.$(d.totalRate*12)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>;
+                })}
+                </div>
               )}
             </div>
           )}
