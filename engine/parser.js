@@ -1,8 +1,77 @@
 // ── FILE PARSERS ────────────────────────────────────────────────────────────
 // Parse uploaded financials (Excel/CSV) into normalized deal data.
 // Supports: T12, rent rolls, operating statements, multi-year historicals.
+// Handles monthly columns (Jan, Feb...), yearly columns (2020, 2021...),
+// date columns (1/2024, Jan-24...), and single-value annual summaries.
 
 import { read, utils } from 'xlsx';
+
+// ── MONTH PATTERNS ──────────────────────────────────────────────────────────
+const MONTH_NAMES = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+const MONTH_FULL = ['january','february','march','april','may','june','july','august',
+  'september','october','november','december'];
+
+// Try to parse a header cell as a month reference. Returns { month: 0-11, year: number|null } or null.
+function parseMonthHeader(cell) {
+  if (cell == null) return null;
+  const s = String(cell).trim();
+
+  // Excel serial date number (e.g. 45292 = Jan 2024)
+  if (/^\d{5}$/.test(s)) {
+    const d = excelDateToJS(parseInt(s));
+    if (d) return { month: d.getMonth(), year: d.getFullYear() };
+  }
+
+  const lower = s.toLowerCase().replace(/[.\-_]/g, ' ').trim();
+
+  // "Jan 2024", "January 2024", "Jan 24", "Jan-24", "Jan-2024"
+  for (let mi = 0; mi < 12; mi++) {
+    const abbr = MONTH_NAMES[mi];
+    const full = MONTH_FULL[mi];
+    const re = new RegExp(`^(?:${full}|${abbr})\\s*(\\d{2,4})?$`, 'i');
+    const m = lower.match(re);
+    if (m) {
+      let yr = m[1] ? parseInt(m[1]) : null;
+      if (yr != null && yr < 100) yr += 2000;
+      return { month: mi, year: yr };
+    }
+  }
+
+  // "1/2024", "01/2024", "1/24", "1-2024"
+  const slashMatch = lower.match(/^(\d{1,2})\s*[\/\-]\s*(\d{2,4})$/);
+  if (slashMatch) {
+    const mo = parseInt(slashMatch[1]);
+    let yr = parseInt(slashMatch[2]);
+    if (yr < 100) yr += 2000;
+    if (mo >= 1 && mo <= 12) return { month: mo - 1, year: yr };
+  }
+
+  // "2024-01", "2024/01"
+  const isoMatch = lower.match(/^(20\d{2})\s*[\/\-]\s*(\d{1,2})$/);
+  if (isoMatch) {
+    const yr = parseInt(isoMatch[1]);
+    const mo = parseInt(isoMatch[2]);
+    if (mo >= 1 && mo <= 12) return { month: mo - 1, year: yr };
+  }
+
+  // Bare month name with no year: "Jan", "January"
+  for (let mi = 0; mi < 12; mi++) {
+    if (lower === MONTH_NAMES[mi] || lower === MONTH_FULL[mi]) {
+      return { month: mi, year: null };
+    }
+  }
+
+  return null;
+}
+
+function excelDateToJS(serial) {
+  if (serial < 1) return null;
+  // Excel epoch: Jan 0, 1900 (with the Lotus 1-2-3 leap year bug)
+  const utcDays = serial - 25569;
+  const d = new Date(utcDays * 86400000);
+  if (isNaN(d.getTime())) return null;
+  return d;
+}
 
 // ── MAIN ENTRY POINT ────────────────────────────────────────────────────────
 export function parseUpload(buffer, filename, options = {}) {
@@ -26,14 +95,16 @@ function parseExcel(buffer, options = {}) {
 
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
-    const data = utils.sheet_to_json(sheet, { header: 1, defval: null });
+    const data = utils.sheet_to_json(sheet, { header: 1, defval: null, raw: true });
 
     if (!data || data.length < 2) continue;
 
-    // Detect what kind of financial data this is
     const detected = detectSheetType(data, sheetName);
 
-    if (detected.type === 'operating_statement' || detected.type === 't12') {
+    if (detected.type === 'monthly') {
+      const parsed = parseMonthlyColumns(data, detected);
+      results.push(...parsed);
+    } else if (detected.type === 'operating_statement' || detected.type === 't12') {
       const parsed = parseOperatingStatement(data, detected);
       results.push(...parsed);
     } else if (detected.type === 'rent_roll') {
@@ -43,7 +114,6 @@ function parseExcel(buffer, options = {}) {
       const parsed = parseMultiYear(data, detected);
       results.push(...parsed);
     } else {
-      // Try generic parse — look for revenue/expense rows
       const parsed = parseGeneric(data, sheetName);
       if (parsed) results.push(parsed);
     }
@@ -57,11 +127,17 @@ function parseCSV(text, options = {}) {
   const lines = text.split('\n').map(l => l.split(',').map(c => c.trim().replace(/^"|"$/g, '')));
   if (lines.length < 2) return [];
   const detected = detectSheetType(lines, 'csv');
+  if (detected.type === 'monthly') {
+    return parseMonthlyColumns(lines, detected);
+  }
   if (detected.type === 'operating_statement' || detected.type === 't12') {
     return parseOperatingStatement(lines, detected);
   }
   if (detected.type === 'rent_roll') {
     return [parseRentRoll(lines, detected)];
+  }
+  if (detected.type === 'multi_year') {
+    return parseMultiYear(lines, detected);
   }
   const parsed = parseGeneric(lines, 'csv');
   return parsed ? [parsed] : [];
@@ -79,20 +155,49 @@ function detectSheetType(data, sheetName) {
     return { type: 'rent_roll' };
   }
 
+  // Check headers for monthly or yearly columns
+  // Scan first few rows to find the header row (sometimes row 0 is a title)
+  for (let headerIdx = 0; headerIdx < Math.min(5, data.length); headerIdx++) {
+    const headerRow = data[headerIdx] || [];
+    if (headerRow.length < 2) continue;
+
+    // Check for monthly columns
+    const monthCols = [];
+    for (let c = 0; c < headerRow.length; c++) {
+      const parsed = parseMonthHeader(headerRow[c]);
+      if (parsed) monthCols.push({ col: c, ...parsed });
+    }
+    if (monthCols.length >= 3) {
+      // Infer years for bare month names if we have some with years
+      const knownYears = monthCols.filter(m => m.year != null);
+      if (knownYears.length > 0) {
+        // Use the most common year as default
+        const yearCounts = {};
+        knownYears.forEach(m => { yearCounts[m.year] = (yearCounts[m.year] || 0) + 1; });
+        const defaultYear = parseInt(Object.entries(yearCounts).sort((a, b) => b[1] - a[1])[0][0]);
+        monthCols.forEach(m => { if (m.year == null) m.year = defaultYear; });
+      }
+      return { type: 'monthly', monthColumns: monthCols, headerRow: headerIdx };
+    }
+
+    // Check for year columns
+    const yearCols = [];
+    for (let c = 0; c < headerRow.length; c++) {
+      const s = String(headerRow[c] || '');
+      if (/^(19|20)\d{2}$/.test(s) || /^fy\s*(19|20)\d{2}$/i.test(s)) {
+        const ym = s.match(/((?:19|20)\d{2})/);
+        if (ym) yearCols.push({ col: c, year: parseInt(ym[1]) });
+      }
+    }
+    if (yearCols.length >= 2) {
+      return { type: 'multi_year', yearColumns: yearCols.map(c => String(data[headerIdx][c.col])), headerRow: headerIdx };
+    }
+  }
+
   // T12 / trailing twelve
   if (name.includes('t12') || name.includes('t-12') || name.includes('trailing') ||
       flatText.includes('t12') || flatText.includes('trailing twelve') || flatText.includes('trailing 12')) {
     return { type: 't12' };
-  }
-
-  // Multi-year if we see multiple year columns
-  const headerRow = data[0] || [];
-  const yearCols = headerRow.filter(c => {
-    const s = String(c || '');
-    return /^(19|20)\d{2}$/.test(s) || /fy\s*(19|20)\d{2}/i.test(s);
-  });
-  if (yearCols.length >= 2) {
-    return { type: 'multi_year', yearColumns: yearCols.map(String) };
   }
 
   // Operating statement
@@ -105,7 +210,198 @@ function detectSheetType(data, sheetName) {
   return { type: 'unknown' };
 }
 
-// ── OPERATING STATEMENT / T12 ───────────────────────────────────────────────
+// ── MONTHLY COLUMNS PARSER ──────────────────────────────────────────────────
+// Handles: Jan | Feb | Mar | ... | Dec (T12 format)
+// Also: Jan-22 | Feb-22 | ... | Dec-22 | Jan-23 | ... | Dec-23 (multi-year monthly)
+// Also: 1/2024 | 2/2024 | ... | 12/2024
+// Groups months by year, sums to annual totals per year.
+function parseMonthlyColumns(data, detected) {
+  const { monthColumns, headerRow: hIdx } = detected;
+  const headerRow = hIdx || 0;
+
+  // Also look for an "Annual" or "Total" column
+  const headers = (data[headerRow] || []);
+  let totalCol = null;
+  for (let c = 0; c < headers.length; c++) {
+    const s = String(headers[c] || '').toLowerCase().trim();
+    if (s === 'total' || s === 'annual' || s === 'annualized' || s === 'ytd' || s === 't12' || s === 'trailing 12') {
+      totalCol = c;
+      break;
+    }
+  }
+
+  // Group month columns by year
+  const yearMap = {}; // { year: [{ col, month }] }
+  for (const mc of monthColumns) {
+    const yr = mc.year || 0; // 0 = unknown year
+    if (!yearMap[yr]) yearMap[yr] = [];
+    yearMap[yr].push(mc);
+  }
+
+  // Parse row-level data
+  const rowData = [];
+  for (let r = headerRow + 1; r < data.length; r++) {
+    const row = data[r];
+    const label = String(row[0] || '').trim();
+    if (!label) continue;
+
+    const entry = { label, labelLower: label.toLowerCase(), monthValues: {}, totalValue: null };
+
+    // Read each month column value
+    for (const mc of monthColumns) {
+      const key = `${mc.year || 0}-${mc.month}`;
+      entry.monthValues[key] = parseNum(row[mc.col]);
+    }
+
+    // Read total column if present
+    if (totalCol != null) {
+      entry.totalValue = parseNum(row[totalCol]);
+    }
+
+    rowData.push(entry);
+  }
+
+  // Build one result per year
+  const years = Object.keys(yearMap).map(Number).sort();
+
+  // If all months have year=0 (bare month names), try to infer year from sheet content
+  if (years.length === 1 && years[0] === 0) {
+    // Look for a year in the first few rows or sheet data
+    let inferredYear = null;
+    for (let r = 0; r <= headerRow; r++) {
+      const rowText = (data[r] || []).filter(Boolean).map(String).join(' ');
+      const ym = rowText.match(/(20\d{2}|19\d{2})/);
+      if (ym) { inferredYear = parseInt(ym[1]); break; }
+    }
+    if (!inferredYear) inferredYear = new Date().getFullYear();
+    yearMap[inferredYear] = yearMap[0];
+    delete yearMap[0];
+    years[0] = inferredYear;
+  }
+
+  const results = [];
+
+  for (const year of years) {
+    const cols = yearMap[year];
+    if (!cols || cols.length === 0) continue;
+
+    const result = {
+      type: 'operating_statement',
+      year,
+      period_start: `${year}-01-01`,
+      period_end: `${year}-12-31`,
+      months_covered: cols.length,
+      parsed: {
+        revenue: null, egi: null, expenses: null, noi: null,
+        noi_margin: null, occupancy: null, units: null, debt_service: null,
+        monthly_detail: [],
+      },
+      raw_rows: [],
+    };
+
+    // Build monthly detail for this year
+    const monthKeys = cols.map(c => `${year}-${c.month}`);
+
+    // Sum each financial row across this year's months
+    for (const entry of rowData) {
+      const monthVals = monthKeys.map(k => entry.monthValues[k]).filter(v => v != null);
+      const annual = monthVals.length > 0 ? monthVals.reduce((s, v) => s + v, 0) : null;
+
+      // If we have a total column and only one year, prefer the total
+      const value = (years.length === 1 && entry.totalValue != null) ? entry.totalValue : annual;
+
+      result.raw_rows.push({ label: entry.label, value, monthlyValues: monthVals });
+
+      const label = entry.labelLower;
+
+      // Revenue
+      if (matchesAny(label, ['total revenue', 'gross revenue', 'total income', 'gross income',
+        'rental income', 'gross potential rent', 'gpr'])) {
+        if (!result.parsed.revenue && value != null) result.parsed.revenue = value;
+      }
+      if (matchesAny(label, ['effective gross income', 'egi'])) {
+        result.parsed.egi = value;
+      }
+
+      // Expenses
+      if (matchesAny(label, ['total expenses', 'total operating expenses', 'operating expenses', 'total expense'])) {
+        result.parsed.expenses = value;
+      }
+
+      // NOI
+      if (matchesAny(label, ['noi', 'net operating income', 'net income'])) {
+        result.parsed.noi = value;
+      }
+
+      // Occupancy (average across months)
+      if (matchesAny(label, ['occupancy', 'physical occupancy', 'economic occupancy', 'occ rate', 'occ%'])) {
+        if (monthVals.length > 0) {
+          const avg = monthVals.reduce((s, v) => s + v, 0) / monthVals.length;
+          result.parsed.occupancy = avg > 1 ? avg / 100 : avg;
+        }
+      }
+
+      // Units
+      if (matchesAny(label, ['units', 'total units', '# units', 'unit count'])) {
+        result.parsed.units = value;
+      }
+
+      // Debt service
+      if (matchesAny(label, ['debt service', 'mortgage', 'loan payment'])) {
+        result.parsed.debt_service = value;
+      }
+    }
+
+    // Build per-month detail for NOI trending
+    for (const mc of cols) {
+      const monthData = { month: mc.month + 1, year };
+      for (const entry of rowData) {
+        const val = entry.monthValues[`${year}-${mc.month}`];
+        const label = entry.labelLower;
+        if (matchesAny(label, ['noi', 'net operating income'])) monthData.noi = val;
+        if (matchesAny(label, ['total revenue', 'gross revenue', 'rental income'])) monthData.revenue = val;
+        if (matchesAny(label, ['total expenses', 'operating expenses'])) monthData.expenses = val;
+      }
+      if (monthData.noi != null || monthData.revenue != null) {
+        result.parsed.monthly_detail.push(monthData);
+      }
+    }
+
+    // Annualize if partial year (less than 12 months)
+    if (cols.length > 0 && cols.length < 12) {
+      const factor = 12 / cols.length;
+      if (result.parsed.revenue != null && entry_is_monthly_sum(result.parsed.revenue, cols.length)) {
+        result.parsed.revenue_annualized = result.parsed.revenue * factor;
+      }
+      if (result.parsed.noi != null) {
+        result.parsed.noi_annualized = result.parsed.noi * factor;
+      }
+    }
+
+    // Compute NOI from revenue - expenses if missing
+    if (result.parsed.noi == null && result.parsed.revenue != null && result.parsed.expenses != null) {
+      result.parsed.noi = result.parsed.revenue - Math.abs(result.parsed.expenses);
+    }
+
+    // NOI margin
+    const rev = result.parsed.egi || result.parsed.revenue;
+    if (result.parsed.noi != null && rev && rev > 0) {
+      result.parsed.noi_margin = result.parsed.noi / rev;
+    }
+
+    results.push(result);
+  }
+
+  return results;
+}
+
+// Check if a value looks like it was summed from monthly values (vs already annual)
+function entry_is_monthly_sum(value, monthCount) {
+  // Heuristic: if we're working with monthly columns, the sum IS the period total
+  return true;
+}
+
+// ── OPERATING STATEMENT / T12 (single-value columns) ────────────────────────
 function parseOperatingStatement(data, detected) {
   const result = {
     type: detected.type || 'operating_statement',
@@ -114,7 +410,7 @@ function parseOperatingStatement(data, detected) {
     period_end: null,
     parsed: {
       revenue: null,
-      egi: null,       // Effective Gross Income
+      egi: null,
       expenses: null,
       noi: null,
       noi_margin: null,
@@ -125,7 +421,6 @@ function parseOperatingStatement(data, detected) {
     raw_rows: [],
   };
 
-  // Find the value column (usually column B or the last numeric column)
   const valueColIdx = findValueColumn(data);
 
   for (const row of data) {
@@ -136,7 +431,6 @@ function parseOperatingStatement(data, detected) {
 
     result.raw_rows.push({ label: row[0], value });
 
-    // Revenue / Income
     if (matchesAny(label, ['total revenue', 'gross revenue', 'total income', 'gross income',
       'rental income', 'gross potential rent', 'gpr', 'effective gross income', 'egi'])) {
       if (matchesAny(label, ['effective gross income', 'egi'])) {
@@ -146,53 +440,44 @@ function parseOperatingStatement(data, detected) {
       }
     }
 
-    // Expenses
     if (matchesAny(label, ['total expenses', 'total operating expenses', 'operating expenses',
       'total expense'])) {
       result.parsed.expenses = value;
     }
 
-    // NOI
     if (matchesAny(label, ['noi', 'net operating income', 'net income'])) {
       result.parsed.noi = value;
     }
 
-    // Occupancy
     if (matchesAny(label, ['occupancy', 'physical occupancy', 'economic occupancy', 'occ rate', 'occ%'])) {
       if (value != null) {
         result.parsed.occupancy = value > 1 ? value / 100 : value;
       }
     }
 
-    // Units
     if (matchesAny(label, ['units', 'total units', '# units', 'unit count'])) {
       result.parsed.units = value;
     }
 
-    // Debt service
     if (matchesAny(label, ['debt service', 'mortgage', 'loan payment'])) {
       result.parsed.debt_service = value;
     }
 
-    // Year detection
     if (!result.year) {
       const yearMatch = label.match(/(20\d{2}|19\d{2})/);
       if (yearMatch) result.year = parseInt(yearMatch[1]);
     }
   }
 
-  // Compute NOI if we have revenue and expenses but not NOI
   if (result.parsed.noi == null && result.parsed.revenue != null && result.parsed.expenses != null) {
     result.parsed.noi = result.parsed.revenue - result.parsed.expenses;
   }
 
-  // Compute NOI margin
   const rev = result.parsed.egi || result.parsed.revenue;
   if (result.parsed.noi != null && rev && rev > 0) {
     result.parsed.noi_margin = result.parsed.noi / rev;
   }
 
-  // Try to extract year from headers if not found
   if (!result.year) {
     const headerText = data.slice(0, 3).flat().filter(Boolean).map(String).join(' ');
     const ym = headerText.match(/(20\d{2}|19\d{2})/);
@@ -202,12 +487,12 @@ function parseOperatingStatement(data, detected) {
   return [result];
 }
 
-// ── MULTI-YEAR ──────────────────────────────────────────────────────────────
+// ── MULTI-YEAR (year columns) ───────────────────────────────────────────────
 function parseMultiYear(data, detected) {
-  const headerRow = data[0] || [];
+  const hIdx = detected.headerRow || 0;
+  const headerRow = data[hIdx] || [];
   const yearCols = [];
 
-  // Find which columns correspond to years
   for (let c = 0; c < headerRow.length; c++) {
     const s = String(headerRow[c] || '');
     const ym = s.match(/((?:19|20)\d{2})/);
@@ -216,7 +501,6 @@ function parseMultiYear(data, detected) {
 
   if (yearCols.length === 0) return [];
 
-  // Parse each year column
   return yearCols.map(({ col, year }) => {
     const result = {
       type: 'operating_statement',
@@ -230,7 +514,7 @@ function parseMultiYear(data, detected) {
       raw_rows: [],
     };
 
-    for (let r = 1; r < data.length; r++) {
+    for (let r = hIdx + 1; r < data.length; r++) {
       const label = String(data[r][0] || '').trim().toLowerCase();
       const value = parseNum(data[r][col]);
       if (!label) continue;
@@ -263,7 +547,6 @@ function parseMultiYear(data, detected) {
 
 // ── RENT ROLL ───────────────────────────────────────────────────────────────
 function parseRentRoll(data, detected) {
-  // Find header row
   let headerIdx = 0;
   for (let r = 0; r < Math.min(10, data.length); r++) {
     const rowText = (data[r] || []).map(String).join(' ').toLowerCase();
@@ -275,7 +558,6 @@ function parseRentRoll(data, detected) {
 
   const headers = (data[headerIdx] || []).map(h => String(h || '').trim().toLowerCase());
 
-  // Map columns
   const unitCol = headers.findIndex(h => h.includes('unit'));
   const rentCol = headers.findIndex(h =>
     h.includes('rent') || h.includes('rate') || h.includes('market'));
@@ -322,8 +604,8 @@ function parseRentRoll(data, detected) {
       total_monthly_rent: totalMonthlyRent,
       annual_gpr: totalMonthlyRent * 12,
       avg_sqft: avgSqft,
-      revenue: totalMonthlyRent * 12,  // annualized for model compatibility
-      noi: null,  // can't compute from rent roll alone
+      revenue: totalMonthlyRent * 12,
+      noi: null,
     },
     unit_detail: units,
     raw_rows: units,
@@ -352,7 +634,6 @@ function parseGeneric(data, sheetName) {
 
     result.raw_rows.push({ label: row[0], value });
 
-    // Look for any financial-sounding rows
     if (label.includes('revenue') || label.includes('income')) {
       if (!result.parsed.revenue) { result.parsed.revenue = value; foundAnything = true; }
     }
@@ -387,7 +668,6 @@ function matchesAny(label, patterns) {
 }
 
 function findValueColumn(data) {
-  // Look for the first column (after col 0) that has mostly numbers
   if (!data || data.length < 2) return 1;
   const maxCols = Math.min(10, Math.max(...data.slice(0, 20).map(r => (r || []).length)));
 
