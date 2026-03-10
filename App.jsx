@@ -87,6 +87,8 @@ const DEFAULT = {
   exitCapRate:.075, saleCosts:.02, carry:.20, prefReturn:.07,
   gpPct:.02, amFee:.01, pmFee:.06, benefitsRate:.22, salaryGrowth:.03,
   partners:3, compoundPref:false, catchUp:false,
+  // Refinancing: optional mid-hold refi to return capital to LP
+  refiEnabled:false, refiMonth:36, refiLTV:.70, refiRate:.065, refiCosts:.01,
   assets:DEF_ASSETS, hires:DEF_HIRES, overhead:DEF_OVERHEAD, oneTime:DEF_ONE_TIME,
   partnerSalaries:DEF_PARTNER_SALARIES, promoteTiers:DEF_PROMOTE_TIERS,
 };
@@ -122,7 +124,8 @@ function run(a){
   const {assets,hires,overhead,fundTerm,debtPct,interestRate,amortYears,
     exitCapRate,saleCosts,carry,prefReturn,gpPct,amFee,pmFee,
     benefitsRate,salaryGrowth,partners,partnerSalaries,oneTime=[],
-    compoundPref=false,catchUp=false,promoteTiers=DEF_PROMOTE_TIERS}=a;
+    compoundPref=false,catchUp=false,promoteTiers=DEF_PROMOTE_TIERS,
+    refiEnabled=false,refiMonth=36,refiLTV=.70,refiRate=.065,refiCosts=.01}=a;
   const MO=fundTerm*12;
 
   // G&A monthly
@@ -167,6 +170,7 @@ function run(a){
   });
 
   // Asset calcs
+  const refiYr=refiEnabled?refiMonth/12:null; // fractional year of refi
   const assetR=assets.map(asset=>{
     const eq=asset.price*(1-debtPct),debt=asset.price*debtPct;
     const annDS=pmt(interestRate,amortYears,debt);
@@ -174,28 +178,60 @@ function run(a){
     const noi=Array.from({length:fundTerm+1},(_,y)=>
       y===0?0:asset.price*asset.cap*Math.pow(1+asset.growth,y-1));
     const egi=noi.map(n=>margin>0?n/margin:n);
+
+    // Refinancing: if enabled and asset was acquired before refiMonth
+    let refiProceeds=0, newDebt=0, newAnnDS=0, refiYearIdx=0;
+    const assetRefiEligible=refiEnabled&&asset.startMonth<refiMonth;
+    if(assetRefiEligible){
+      refiYearIdx=Math.ceil((refiMonth-asset.startMonth)/12);
+      const yrsHeld=(refiMonth-asset.startMonth)/12;
+      // Appraised value at refi = NOI at refi / exit cap (conservative: use exit cap)
+      const refiNOI=asset.price*asset.cap*Math.pow(1+asset.growth,yrsHeld);
+      const appraisedVal=refiNOI/exitCapRate;
+      newDebt=appraisedVal*refiLTV;
+      const yrsFromAcq=(refiMonth-asset.startMonth)/12;
+      const oldLB=Math.abs(fvLoan(interestRate,Math.round(yrsFromAcq),annDS,debt));
+      refiProceeds=newDebt-oldLB-appraisedVal*refiCosts;
+      if(refiProceeds<0)refiProceeds=0; // no cash-out if underwater
+      newAnnDS=pmt(refiRate,amortYears,newDebt);
+    }
+
     const ecf=noi.map((n,y)=>{
       if(y===0)return -eq;
-      return n-annDS-egi[y]*pmFee;
+      // Use new debt service after refi year
+      const ds=assetRefiEligible&&y>=refiYearIdx?newAnnDS:annDS;
+      return n-ds-egi[y]*pmFee;
     });
+    // Add refi cash-out proceeds in refi year
+    if(assetRefiEligible&&refiYearIdx<=fundTerm){
+      ecf[refiYearIdx]=(ecf[refiYearIdx]||0)+refiProceeds;
+    }
+
     const exitNOI=noi[fundTerm];
     const exitVal=exitNOI/exitCapRate;
-    const lb=Math.abs(fvLoan(interestRate,fundTerm,annDS,debt));
-    const saleNet=exitVal-lb-exitVal*saleCosts;
+    // Loan balance at exit: use new debt terms if refi'd
+    const exitLB=assetRefiEligible
+      ? Math.abs(fvLoan(refiRate,fundTerm-Math.round((refiMonth-asset.startMonth)/12),newAnnDS,newDebt))
+      : Math.abs(fvLoan(interestRate,fundTerm,annDS,debt));
+    const saleNet=exitVal-exitLB-exitVal*saleCosts;
     ecf[fundTerm]+=saleNet;
     const eqIRR=irr(ecf);
     const moic=ecf.slice(1).reduce((s,v)=>s+v,0)/eq;
-    return{...asset,eq,debt,annDS,noi,saleNet,exitVal,lb,irr:eqIRR,moic};
+    return{...asset,eq,debt,annDS,noi,saleNet,exitVal,lb:exitLB,irr:eqIRR,moic,
+      refiProceeds,newDebt,newAnnDS,assetRefiEligible};
   });
 
   // Monthly portfolio
   const totEqDep=assets.reduce((s,x)=>s+x.price*(1-debtPct),0);
   const totGPIn=totEqDep*gpPct,totLPIn=totEqDep*(1-gpPct);
 
+  // Total refi proceeds across all eligible assets (distributed in refiMonth)
+  const totRefiProceeds=assetR.reduce((s,x)=>s+(x.refiProceeds||0),0);
+
   const monthly=Array.from({length:MO},(_,i)=>{
     const mo=i+1;
     let noi=0,egi=0,invEq=0,ds=0;
-    assets.forEach(x=>{
+    assets.forEach((x,ai)=>{
       if(mo<x.startMonth)return;
       const yrs=(mo-x.startMonth)/12;
       const moNoi=x.price*x.cap*Math.pow(1+x.growth,yrs)/12;
@@ -203,14 +239,25 @@ function run(a){
       noi+=moNoi;
       egi+=margin>0?moNoi/margin:moNoi;
       invEq+=x.price*(1-debtPct);
-      ds+=Math.abs(pmt(interestRate,amortYears,x.price*debtPct))/12;
+      // After refi: use new debt service
+      const ar=assetR[ai];
+      if(ar.assetRefiEligible&&mo>=refiMonth){
+        ds+=Math.abs(ar.newAnnDS)/12;
+      }else{
+        ds+=Math.abs(pmt(interestRate,amortYears,x.price*debtPct))/12;
+      }
     });
     const amFeeM=invEq*amFee/12;
     const pmFeeM=egi*pmFee;
-    const netOpCF=noi-ds-pmFeeM-amFeeM;  // AM fee is fund expense, flows to GP entity separately
+    const netOpCF=noi-ds-pmFeeM-amFeeM;
     const lpCall=assets.reduce((s,x)=>x.startMonth===mo?s+x.price*(1-debtPct)*(1-gpPct):s,0);
     const gpCall=assets.reduce((s,x)=>x.startMonth===mo?s+x.price*(1-debtPct)*gpPct:s,0);
+    // Refi distribution in the refi month
+    const refiDist=refiEnabled&&mo===refiMonth?totRefiProceeds:0;
+    const lpRefiDist=refiDist*(1-gpPct);
+    const gpRefiDist=refiDist*gpPct;
     return{mo,noi,invEq,ds,amFeeM,pmFeeM,netOpCF,lpCall,gpCall,
+      refiDist,lpRefiDist,gpRefiDist,
       ga:gaMonthly[i].total};
   });
 
@@ -236,7 +283,14 @@ function run(a){
   const lpActualCapital = totLPCalled + totGAShortfall;
   const gpActualCapital = totGPCalled; // GP basis = equity co-invest only
 
+  // Total refi distributions
+  const totRefiLP=monthly.reduce((s,x)=>s+(x.lpRefiDist||0),0);
+  const totRefiGP=monthly.reduce((s,x)=>s+(x.gpRefiDist||0),0);
+  const totRefi=totRefiLP+totRefiGP;
+
   // WATERFALL — multi-tier with dual trigger (IRR + MOIC thresholds)
+  // Refi proceeds go directly to LP/GP as return of capital — not through waterfall
+  // They reduce the distributable pool but are counted toward LP total returns
   const pool=totSaleProc+totOpCF;
   let rem=pool;
 
@@ -309,15 +363,20 @@ function run(a){
     }
   }
 
-  const lpTotal=lpROC+lpPref+lpResid;
-  const gpFundTotal=gpROC+gpPromote;
+  const lpTotal=lpROC+lpPref+lpResid+totRefiLP;  // include refi distributions
+  const gpFundTotal=gpROC+gpPromote+totRefiGP;
   const lpMOIC=lpTotal/Math.max(1,lpActualCapital);
 
-  // LP IRR — annual approximation
+  // LP IRR — annual approximation, with refi distribution in its year
   const lpCF=Array(fundTerm+1).fill(0);
   lpCF[0]=-lpActualCapital;
   for(let y=1;y<fundTerm;y++)lpCF[y]=annualInterimLP;
-  lpCF[fundTerm]=lpTotal-annualInterimLP*(fundTerm-1);
+  lpCF[fundTerm]=(lpROC+lpPref+lpResid)-annualInterimLP*(fundTerm-1);
+  // Add refi LP distribution in the refi year
+  if(refiEnabled&&totRefiLP>0){
+    const refiYrIdx=Math.min(fundTerm,Math.ceil(refiMonth/12));
+    lpCF[refiYrIdx]+=totRefiLP;
+  }
   const lpIRR=irr(lpCF);
 
   // ── GP ENTITY cash flow (month by month)
@@ -331,8 +390,9 @@ function run(a){
     const opDist=Math.max(0,m.netOpCF)*gpPct; // GP's pro-rata share of residual op CF
     const coInvest=-m.gpCall;                  // co-invest equity outflow at deal close
     const ga=-gaMonthly[i].total;              // G&A outflow (personnel + overhead + partner sals)
-    const net=fees+opDist+coInvest+ga;
-    return{mo:m.mo,fees,opDist,coInvest,ga,net,promote:0,shortfallROC:0};
+    const refiGP=m.gpRefiDist||0;             // GP share of refi cash-out
+    const net=fees+opDist+coInvest+ga+refiGP;
+    return{mo:m.mo,fees,opDist,coInvest,ga,refiGP,net,promote:0,shortfallROC:0};
   });
   // Month 84: promote + shortfall ROC returned from waterfall
   gpEntity[MO-1].promote=gpPromote;
@@ -377,6 +437,7 @@ function run(a){
       lpCalls:-slice.reduce((t,x)=>t+x.lpCall,0),
       opCF:slice.reduce((t,x)=>t+x.netOpCF,0),
       noi:slice.reduce((t,x)=>t+x.noi,0),
+      refiDist:slice.reduce((t,x)=>t+(x.refiDist||0),0),
     };
   });
 
@@ -396,6 +457,7 @@ function run(a){
     totGAShortfall,lpActualCapital,gpActualCapital,
     totSaleProc,totExitVal,totDebtRepaid,totSellingCosts,
     totOpCF,totNetOpCF,pool,totAMFee,totPMFee,totFees,totGA,
+    totRefi,totRefiLP,totRefiGP,
     gpEntity,gpCumData,gpNetTotal,gpBreakeven,
     promPP,drawsPP,rocPP,coInvPP,totalPP,netPP,
     partnerMonthly,partnerCum,
@@ -404,9 +466,11 @@ function run(a){
     waterfall:[
       {name:"LP Capital", value:lpROC,      fill:"#2980B9"},
       {name:"LP Pref",    value:lpPref,     fill:"#1A5276"},
+      ...(totRefiLP>0?[{name:"LP Refi",value:totRefiLP,fill:"#48C9B0"}]:[]),
       ...tierResults.map((t,i)=>({name:`LP T${i+4}`,value:t.lp,fill:["#5DADE2","#3498DB","#2471A3"][i]||"#5DADE2"})),
       {name:"GP Co-inv",  value:gpROC,      fill:"#8B7536"},
       ...(gpCatchUp>0?[{name:"GP Catch-up",value:gpCatchUp,fill:"#A08040"}]:[]),
+      ...(totRefiGP>0?[{name:"GP Refi",value:totRefiGP,fill:"#A08040"}]:[]),
       ...tierResults.map((t,i)=>({name:`GP T${i+4}`,value:t.gp,fill:[C.gold,"#D4AF37","#B8860B"][i]||C.gold})),
     ],
   };
@@ -942,6 +1006,32 @@ export default function Portal(){
           <Sli label="Sale Costs"     value={a.saleCosts}    min={.01}  max={.04}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("saleCosts",v)}/>
 
           <div style={{height:1,background:C.border,margin:"12px 0"}}/>
+          <SHdr t="Refinancing"/>
+          {/* Refi toggle */}
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:9,color:C.whDim,textTransform:"uppercase",letterSpacing:".07em",marginBottom:5}}>Cash-Out Refi</div>
+            <div style={{display:"flex",gap:4}}>
+              {[["Off","false"],["On","true"]].map(([lbl,val])=>{
+                const active=String(a.refiEnabled)===val;
+                return(<button key={lbl} onClick={()=>set("refiEnabled",val==="true")}
+                  style={{flex:1,padding:"4px 0",fontSize:9,fontWeight:700,letterSpacing:".06em",
+                    textTransform:"uppercase",cursor:"pointer",borderRadius:3,
+                    background:active?C.gold:"transparent",color:active?C.navy:C.goldDim,
+                    border:`1px solid ${active?C.gold:"rgba(201,168,76,.2)"}`}}>{lbl}</button>);
+              })}
+            </div>
+            <div style={{fontSize:8,color:"rgba(201,168,76,.3)",marginTop:3}}>
+              {a.refiEnabled?"Refi at month "+a.refiMonth+" — cash returned to LP":"No mid-hold refinancing"}
+            </div>
+          </div>
+          {a.refiEnabled&&<>
+            <Sli label="Refi Month"    value={a.refiMonth}   min={12}   max={a.fundTerm*12-12} step={6}  disp={v=>`Mo ${v} (Yr ${(v/12).toFixed(1)})`} onChange={v=>set("refiMonth",v)}/>
+            <Sli label="Refi LTV"      value={a.refiLTV}     min={.50}  max={.80}  step={.05}  disp={v=>`${(v*100).toFixed(0)}%`} onChange={v=>set("refiLTV",v)} sub="New LTV on appraised value"/>
+            <Sli label="Refi Rate"     value={a.refiRate}    min={.04}  max={.10}  step={.005} disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("refiRate",v)} sub="New loan interest rate"/>
+            <Sli label="Refi Costs"    value={a.refiCosts}   min={.005} max={.03}  step={.005} disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("refiCosts",v)} sub="% of appraised value"/>
+          </>}
+
+          <div style={{height:1,background:C.border,margin:"12px 0"}}/>
           <SHdr t="G&A Globals"/>
           <Sli label="Benefits Rate"  value={a.benefitsRate} min={.15}  max={.30}  step={.01}  disp={v=>`${(v*100).toFixed(0)}%`} onChange={v=>set("benefitsRate",v)}/>
           <Sli label="Salary Growth"  value={a.salaryGrowth} min={.01}  max={.06}  step={.005} disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("salaryGrowth",v)}/>
@@ -1463,6 +1553,7 @@ function TabOverview({m,a}){
         <KPI label="LP Equity In" value={f.$(m.totLPIn)} sub="98% of total equity"/>
         <KPI label="Pref Hurdle"  value={f.p(a.prefReturn)} sub="Annual preferred return"/>
         <KPI label="LP Proceeds"  value={f.$(m.lpTotal)} sub="Total at fund exit"/>
+        {m.totRefiLP>0&&<KPI label="Refi to LP" value={f.$(m.totRefiLP)} sub={`Month ${a.refiMonth} cash-out refi`}/>}
       </div>
       <div style={{height:1,background:C.border,margin:"14px 0"}}/>
       <div style={{fontSize:9,color:C.gold,letterSpacing:".12em",textTransform:"uppercase",marginBottom:7,fontWeight:700}}>GP Economics</div>
@@ -1883,6 +1974,7 @@ function TabFundCF({m,a}){
       lpShare:  Math.round(x.netOpCF*(1-a.gpPct)),
       gpShare:  Math.round(x.netOpCF*a.gpPct),
       lpCall:   Math.round(x.lpCall),
+      refiDist: Math.round(x.refiDist||0),
       cumLPCall:0,
     };
   });
@@ -1896,6 +1988,7 @@ function TabFundCF({m,a}){
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:18}}>
         <KPI label="Total LP Called"   value={f.$(m.totLPCalled)} sub="Investment period"/>
         <KPI label="Total Op CF"       value={f.$(m.totOpCF)}     sub="Net of DS + PM fees"/>
+        {m.totRefi>0&&<KPI label="Refi Proceeds" value={f.$(m.totRefi)} sub={`LP: ${f.$(m.totRefiLP)} · GP: ${f.$(m.totRefiGP)}`}/>}
         <KPI label="Net Sale Proceeds" value={f.$(m.totSaleProc)} sub="After debt & costs" gold/>
         <KPI label="Total Pool"        value={f.$(m.pool)}        sub="Available for distribution"/>
       </div>
@@ -1945,6 +2038,7 @@ function TabFundCF({m,a}){
                   <ReferenceLine y={0} stroke="rgba(255,255,255,.2)"/>
                   <Bar dataKey="lpCalls" name="LP Capital Calls" fill={C.red}   radius={[2,2,0,0]}/>
                   <Bar dataKey="opCF"    name="Net Op CF"         fill={C.green} radius={[2,2,0,0]}/>
+                  {m.totRefi>0&&<Bar dataKey="refiDist" name="Refi Proceeds" fill="#48C9B0" radius={[2,2,0,0]}/>}
                 </ComposedChart>
               </ResponsiveContainer>
             </Card>
