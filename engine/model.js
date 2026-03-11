@@ -403,11 +403,22 @@ export function analyzeDeal(deal, fundAssumptions = {}) {
   // Compute trailing averages
   const latestFinancial = sorted[sorted.length - 1]?.parsed || {};
   const noi = assumptions.overrideNOI || latestFinancial.noi || 0;
-  const price = assumptions.overridePrice || deal.price || (noi > 0 ? noi / (assumptions.exitCapRate || 0.075) : 0);
-  const capRate = assumptions.overrideGoingInCap || (price > 0 ? noi / price : 0);
+  const price = Number(assumptions.overridePrice) || Number(deal.price) || (noi > 0 ? noi / (assumptions.exitCapRate || 0.075) : 0);
+  // Cap rate: use override, else derive from NOI/price, else use exit cap as fallback
+  let capRate;
+  if (assumptions.overrideGoingInCap) {
+    capRate = assumptions.overrideGoingInCap;
+  } else if (price > 0 && noi > 0) {
+    capRate = noi / price;
+  } else if (price > 0) {
+    // No NOI data — use exit cap rate as going-in cap proxy
+    capRate = assumptions.exitCapRate || 0.075;
+  } else {
+    capRate = 0;
+  }
 
   // Compute historical NOI growth (CAGR across available years)
-  let noiGrowth = assumptions.exitCapRate > 0 ? 0.03 : 0.03; // default 3%
+  let noiGrowth = 0.03; // default 3%
   if (noiHistory.length >= 2) {
     const first = noiHistory[0];
     const last = noiHistory[noiHistory.length - 1];
