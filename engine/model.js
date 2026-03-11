@@ -403,8 +403,8 @@ export function analyzeDeal(deal, fundAssumptions = {}) {
   // Compute trailing averages
   const latestFinancial = sorted[sorted.length - 1]?.parsed || {};
   const noi = latestFinancial.noi || 0;
-  const price = deal.price || (noi / (assumptions.exitCapRate || 0.075));
-  const capRate = price > 0 ? noi / price : 0;
+  const price = assumptions.overridePrice || deal.price || (noi / (assumptions.exitCapRate || 0.075));
+  const capRate = assumptions.overrideGoingInCap || (price > 0 ? noi / price : 0);
 
   // Compute historical NOI growth (CAGR across available years)
   let noiGrowth = assumptions.exitCapRate > 0 ? 0.03 : 0.03; // default 3%
@@ -423,11 +423,12 @@ export function analyzeDeal(deal, fundAssumptions = {}) {
     : latestFinancial.noi_margin || 0.525;
 
   // Build the asset for the model
+  const effectiveGrowth = assumptions.overrideGrowth != null ? assumptions.overrideGrowth : noiGrowth;
   const asset = {
     name: deal.name || "Uploaded Deal",
     price: price,
     cap: capRate,
-    growth: noiGrowth,
+    growth: effectiveGrowth,
     startMonth: deal.startMonth || 1,
     noiMargin: noiMargin,
     scope: "scenario",

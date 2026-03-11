@@ -3358,6 +3358,11 @@ function TabDeals({a}){
   const [expandedYears,setExpandedYears]=useState({}); // { 1: true, 3: true } = year 1 and 3 expanded to monthly
   const [dealTab,setDealTab]=useState("financials");
   const [showPresentation,setShowPresentation]=useState(false);
+  // Deal-level analysis assumptions (local overrides for this deal)
+  const [dealAssumptions,setDealAssumptions]=useState({
+    price:null, exitCapRate:0.075, noiGrowth:0.03, holdYears:7,
+    debtPct:0.60, interestRate:0.065, goingInCap:null, noiMargin:null,
+  });
 
   const loadDeals=useCallback(async()=>{
     try{ const res=await fetch('/api/deals'); const data=await res.json(); setDeals(Array.isArray(data)?data:[]); }
@@ -3384,6 +3389,21 @@ function TabDeals({a}){
       setRevLines(d.revenueLines||[]); setRevDirty(false);
       setExpLines(d.expenseLines||[]);
       setProformaOverrides(d.assumptions?.proforma_overrides||{});
+      // Populate deal assumptions from saved analysis or defaults
+      const saved=d.assumptions?.deal_analysis||{};
+      const latestParsed=d.financials?.length?d.financials.sort((a2,b2)=>(a2.year||0)-(b2.year||0)).slice(-1)[0]?.parsed:{};
+      const noi=latestParsed?.noi||0;
+      const pr=d.price?Number(d.price):null;
+      setDealAssumptions({
+        price:saved.price||pr||null,
+        exitCapRate:saved.exitCapRate||0.075,
+        noiGrowth:saved.noiGrowth||0.03,
+        holdYears:saved.holdYears||a.fundTerm||7,
+        debtPct:saved.debtPct||0.60,
+        interestRate:saved.interestRate||0.065,
+        goingInCap:saved.goingInCap||(pr&&noi>0?noi/pr:null),
+        noiMargin:saved.noiMargin||null,
+      });
     }catch(e){ console.error(e); }
   };
 
@@ -3411,12 +3431,28 @@ function TabDeals({a}){
     if(!selectedDeal) return;
     setAnalyzing(true);
     try{
+      // Merge fund-level assumptions with deal-level overrides
+      const dealOvr={};
+      if(dealAssumptions.exitCapRate) dealOvr.exitCapRate=dealAssumptions.exitCapRate;
+      if(dealAssumptions.holdYears) dealOvr.fundTerm=dealAssumptions.holdYears;
+      if(dealAssumptions.debtPct!=null) dealOvr.debtPct=dealAssumptions.debtPct;
+      if(dealAssumptions.interestRate) dealOvr.interestRate=dealAssumptions.interestRate;
+      if(dealAssumptions.price) dealOvr.overridePrice=dealAssumptions.price;
+      if(dealAssumptions.noiGrowth!=null) dealOvr.overrideGrowth=dealAssumptions.noiGrowth;
+      if(dealAssumptions.goingInCap) dealOvr.overrideGoingInCap=dealAssumptions.goingInCap;
+
       const res=await fetch(`/api/deals/${selectedDeal.id}/analyze`,{method:'POST',
-        headers:{'Content-Type':'application/json'},body:JSON.stringify({fundTerm:a.fundTerm,debtPct:a.debtPct,
-          interestRate:a.interestRate,exitCapRate:a.exitCapRate,prefReturn:a.prefReturn,carry:a.carry,gpPct:a.gpPct,
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({
+          ...dealOvr,
+          prefReturn:a.prefReturn,carry:a.carry,gpPct:a.gpPct,
           promoteTiers:a.promoteTiers})});
       const data=await res.json();
       setAnalysis(data);
+      // Save deal assumptions for next time
+      await fetch(`/api/deals/${selectedDeal.id}`,{method:'PUT',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({
+          ...selectedDeal,assumptions:{...(selectedDeal.assumptions||{}),deal_analysis:dealAssumptions}
+        })});
     }catch(err){ console.error(err); }
     finally{ setAnalyzing(false); }
   };
@@ -4418,9 +4454,107 @@ function TabDeals({a}){
           {/* ── ANALYSIS SUB-TAB ────────────────────────────── */}
           {dealTab==="analysis"&&(
             <div>
+              {/* ── DEAL ASSUMPTIONS CONTROLS ── */}
+              <div style={{marginBottom:16}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                  <SHdr t="Deal Assumptions"/>
+                  <button onClick={runAnalysis} disabled={analyzing}
+                    style={{...goldBtn,fontSize:10,padding:"6px 18px",
+                      background:analyzing?"rgba(201,168,76,.4)":C.gold}}>
+                    {analyzing?"Running...":"Run Analysis"}
+                  </button>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10,marginBottom:12}}>
+                  {/* Acquisition Price */}
+                  <div style={{background:C.whFaint,border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 12px"}}>
+                    <div style={{fontSize:8,color:C.goldDim,textTransform:"uppercase",letterSpacing:".08em",marginBottom:4}}>Acquisition Price</div>
+                    <input type="number" value={dealAssumptions.price||""} placeholder="e.g. 12000000"
+                      onChange={e=>setDealAssumptions(p=>({...p,price:e.target.value?Number(e.target.value):null}))}
+                      style={{...inputS,fontSize:13,fontWeight:600,padding:"6px 8px"}}/>
+                    {dealAssumptions.price&&<div style={{fontSize:9,color:C.whDim,marginTop:2}}>{f.$(dealAssumptions.price)}</div>}
+                  </div>
+                  {/* Going-In Cap */}
+                  <div style={{background:C.whFaint,border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 12px"}}>
+                    <div style={{fontSize:8,color:C.goldDim,textTransform:"uppercase",letterSpacing:".08em",marginBottom:4}}>Going-In Cap Rate</div>
+                    <div style={{display:"flex",alignItems:"center",gap:4}}>
+                      <input type="range" min={3} max={12} step={0.1}
+                        value={((dealAssumptions.goingInCap||0.07)*100).toFixed(1)}
+                        onChange={e=>setDealAssumptions(p=>({...p,goingInCap:parseFloat(e.target.value)/100}))}
+                        style={{flex:1,accentColor:C.gold}}/>
+                      <span style={{fontSize:13,fontWeight:600,color:C.white,minWidth:42,textAlign:"right"}}>
+                        {((dealAssumptions.goingInCap||0.07)*100).toFixed(1)}%</span>
+                    </div>
+                  </div>
+                  {/* Exit Cap Rate */}
+                  <div style={{background:C.whFaint,border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 12px"}}>
+                    <div style={{fontSize:8,color:C.goldDim,textTransform:"uppercase",letterSpacing:".08em",marginBottom:4}}>Exit Cap Rate</div>
+                    <div style={{display:"flex",alignItems:"center",gap:4}}>
+                      <input type="range" min={4} max={12} step={0.1}
+                        value={((dealAssumptions.exitCapRate||0.075)*100).toFixed(1)}
+                        onChange={e=>setDealAssumptions(p=>({...p,exitCapRate:parseFloat(e.target.value)/100}))}
+                        style={{flex:1,accentColor:C.gold}}/>
+                      <span style={{fontSize:13,fontWeight:600,color:C.white,minWidth:42,textAlign:"right"}}>
+                        {((dealAssumptions.exitCapRate||0.075)*100).toFixed(1)}%</span>
+                    </div>
+                  </div>
+                  {/* NOI Growth */}
+                  <div style={{background:C.whFaint,border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 12px"}}>
+                    <div style={{fontSize:8,color:C.goldDim,textTransform:"uppercase",letterSpacing:".08em",marginBottom:4}}>NOI Growth Rate</div>
+                    <div style={{display:"flex",alignItems:"center",gap:4}}>
+                      <input type="range" min={0} max={12} step={0.25}
+                        value={((dealAssumptions.noiGrowth||0.03)*100).toFixed(1)}
+                        onChange={e=>setDealAssumptions(p=>({...p,noiGrowth:parseFloat(e.target.value)/100}))}
+                        style={{flex:1,accentColor:C.gold}}/>
+                      <span style={{fontSize:13,fontWeight:600,color:C.white,minWidth:42,textAlign:"right"}}>
+                        {((dealAssumptions.noiGrowth||0.03)*100).toFixed(1)}%</span>
+                    </div>
+                  </div>
+                  {/* Hold Period */}
+                  <div style={{background:C.whFaint,border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 12px"}}>
+                    <div style={{fontSize:8,color:C.goldDim,textTransform:"uppercase",letterSpacing:".08em",marginBottom:4}}>Hold Period</div>
+                    <div style={{display:"flex",alignItems:"center",gap:4}}>
+                      <input type="range" min={3} max={15} step={1}
+                        value={dealAssumptions.holdYears||7}
+                        onChange={e=>setDealAssumptions(p=>({...p,holdYears:parseInt(e.target.value)}))}
+                        style={{flex:1,accentColor:C.gold}}/>
+                      <span style={{fontSize:13,fontWeight:600,color:C.white,minWidth:42,textAlign:"right"}}>
+                        {dealAssumptions.holdYears||7} yrs</span>
+                    </div>
+                  </div>
+                  {/* Debt % */}
+                  <div style={{background:C.whFaint,border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 12px"}}>
+                    <div style={{fontSize:8,color:C.goldDim,textTransform:"uppercase",letterSpacing:".08em",marginBottom:4}}>Leverage (LTV)</div>
+                    <div style={{display:"flex",alignItems:"center",gap:4}}>
+                      <input type="range" min={0} max={80} step={5}
+                        value={((dealAssumptions.debtPct||0.6)*100).toFixed(0)}
+                        onChange={e=>setDealAssumptions(p=>({...p,debtPct:parseInt(e.target.value)/100}))}
+                        style={{flex:1,accentColor:C.gold}}/>
+                      <span style={{fontSize:13,fontWeight:600,color:C.white,minWidth:42,textAlign:"right"}}>
+                        {((dealAssumptions.debtPct||0.6)*100).toFixed(0)}%</span>
+                    </div>
+                  </div>
+                  {/* Interest Rate */}
+                  <div style={{background:C.whFaint,border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 12px"}}>
+                    <div style={{fontSize:8,color:C.goldDim,textTransform:"uppercase",letterSpacing:".08em",marginBottom:4}}>Interest Rate</div>
+                    <div style={{display:"flex",alignItems:"center",gap:4}}>
+                      <input type="range" min={3} max={10} step={0.125}
+                        value={((dealAssumptions.interestRate||0.065)*100).toFixed(2)}
+                        onChange={e=>setDealAssumptions(p=>({...p,interestRate:parseFloat(e.target.value)/100}))}
+                        style={{flex:1,accentColor:C.gold}}/>
+                      <span style={{fontSize:13,fontWeight:600,color:C.white,minWidth:42,textAlign:"right"}}>
+                        {((dealAssumptions.interestRate||0.065)*100).toFixed(2)}%</span>
+                    </div>
+                  </div>
+                </div>
+                <div style={{fontSize:9,color:C.whDim,marginBottom:6}}>
+                  Adjust assumptions above, then click "Run Analysis" to see updated returns.
+                </div>
+              </div>
+
               {analysis&&analysis.modelResult?(
                 <div>
-                  <SHdr t="Analysis Results"/>
+                  {/* ── KPI ROW ── */}
+                  <SHdr t="Returns Summary"/>
                   <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
                     <KPI label="LP IRR" value={f.p(analysis.modelResult.lpIRR)} gold/>
                     <KPI label="LP MOIC" value={f.x(analysis.modelResult.lpMOIC)}/>
@@ -4429,6 +4563,16 @@ function TabDeals({a}){
                     <KPI label="Sale Proceeds" value={f.$(analysis.modelResult.totSaleProc)}/>
                     <KPI label="Op CF" value={f.$(analysis.modelResult.totOpCF)}/>
                   </div>
+
+                  {/* ── DEAL METRICS ── */}
+                  {analysis.asset&&(
+                    <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
+                      <KPI label="Going-In Cap" value={f.p(analysis.asset.cap)} sub="NOI / Price"/>
+                      <KPI label="NOI Growth" value={f.p(analysis.asset.growth)} sub="Applied to model"/>
+                      <KPI label="NOI Margin" value={f.p(analysis.asset.noiMargin)}/>
+                      <KPI label="Price" value={f.$(analysis.asset.price)}/>
+                    </div>
+                  )}
 
                   {analysis.historicalAnalysis&&analysis.historicalAnalysis.yearsOfData>0&&(
                     <div style={{marginBottom:14}}>
@@ -4518,7 +4662,8 @@ function TabDeals({a}){
                 </div>
               ):(
                 <div style={{textAlign:"center",padding:30,color:C.whDim,fontSize:11}}>
-                  Upload financials and click "Analyze" to run the fund model on this deal.
+                  Adjust assumptions above and click "Run Analysis" to model this deal.
+                  {selectedDeal.financials?.length>0?"":" Upload financials first on the Financials tab."}
                 </div>
               )}
             </div>
