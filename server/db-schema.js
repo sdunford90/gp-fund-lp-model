@@ -85,6 +85,24 @@ export async function ensureSchema(pool) {
       )
     `);
 
+    // Expense lines: per-deal operating expenses
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS deal_expense_lines (
+        id SERIAL PRIMARY KEY,
+        deal_id INTEGER REFERENCES deals(id) ON DELETE CASCADE,
+        category VARCHAR(100) NOT NULL,
+        line_type VARCHAR(100) NOT NULL,
+        amount NUMERIC DEFAULT 0,
+        rate_period VARCHAR(20) DEFAULT 'annual',
+        growth_rate NUMERIC DEFAULT 0.03,
+        pct_of_revenue NUMERIC,
+        notes TEXT,
+        sort_order INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
     // Deal proforma: per-deal year-by-year proforma overrides
     await client.query(`
       CREATE TABLE IF NOT EXISTS deal_proforma (

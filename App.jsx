@@ -3170,23 +3170,123 @@ const REV_LINE_PRESETS = {
 };
 
 // ── PROFORMA BUILDER ────────────────────────────────────────────────────
-function buildProforma(revenueLines, holdYears = 7, expenseRatio = 0.40, expenseGrowth = 0.03) {
+// Accepts revenue lines, expense lines, per-year overrides, and hold period.
+// Any cell can be hard-coded via overrides: { "rev_0_3": 150000, "exp_2_5": 50000, "totalRevenue_3": 2000000 }
+// Rate schedule overrides: { "rev_0_rate_3": 1500 } = line 0 rate in year 3
+function buildProforma(revenueLines, expenseLines, holdYears = 7, overrides = {}) {
   const years = [];
   for (let yr = 1; yr <= holdYears; yr++) {
-    const lines = revenueLines.map(l => {
-      const annualRate = l.rate_period === 'monthly' ? l.rate * 12 : l.rate;
-      const grown = annualRate * Math.pow(1 + (l.growth_rate || 0.03), yr - 1);
-      const gross = l.unit_count * grown;
+    // Revenue lines
+    const revLineResults = revenueLines.map((l, li) => {
+      // Check for rate override this year
+      const rateOverrideKey = `rev_${li}_rate_${yr}`;
+      const valueOverrideKey = `rev_${li}_${yr}`;
+
+      const baseAnnualRate = l.rate_period === 'monthly' ? l.rate * 12 : l.rate;
+      let annualRate;
+      if (overrides[rateOverrideKey] != null) {
+        // Hard-coded rate for this year
+        annualRate = l.rate_period === 'monthly' ? overrides[rateOverrideKey] * 12 : overrides[rateOverrideKey];
+      } else {
+        annualRate = baseAnnualRate * Math.pow(1 + (l.growth_rate || 0.03), yr - 1);
+      }
+
+      const gross = l.unit_count * annualRate;
       const effective = gross * (l.occupancy ?? 1.0);
-      return { ...l, year: yr, annualRate: grown, gross, effective };
+
+      // Hard-coded total value override for this line+year
+      const finalValue = overrides[valueOverrideKey] != null ? overrides[valueOverrideKey] : effective;
+      const isOverridden = overrides[valueOverrideKey] != null;
+      const isRateOverridden = overrides[rateOverrideKey] != null;
+
+      return { ...l, year: yr, idx: li, annualRate, gross, effective: finalValue, isOverridden, isRateOverridden };
     });
-    const totalRevenue = lines.reduce((s, l) => s + l.effective, 0);
-    const totalExpenses = totalRevenue * expenseRatio * Math.pow(1 + expenseGrowth, yr - 1);
-    const noi = totalRevenue - totalExpenses;
-    years.push({ year: yr, lines, totalRevenue, totalExpenses, noi });
+
+    // Expense lines
+    const expLineResults = expenseLines.map((l, li) => {
+      const rateOverrideKey = `exp_${li}_rate_${yr}`;
+      const valueOverrideKey = `exp_${li}_${yr}`;
+
+      const baseAmount = l.rate_period === 'monthly' ? l.amount * 12 : l.amount;
+      let amount;
+      if (overrides[rateOverrideKey] != null) {
+        amount = l.rate_period === 'monthly' ? overrides[rateOverrideKey] * 12 : overrides[rateOverrideKey];
+      } else {
+        amount = baseAmount * Math.pow(1 + (l.growth_rate || 0.03), yr - 1);
+      }
+
+      const finalValue = overrides[valueOverrideKey] != null ? overrides[valueOverrideKey] : amount;
+      const isOverridden = overrides[valueOverrideKey] != null;
+      const isRateOverridden = overrides[rateOverrideKey] != null;
+
+      return { ...l, year: yr, idx: li, amount: finalValue, isOverridden, isRateOverridden };
+    });
+
+    let totalRevenue = revLineResults.reduce((s, l) => s + l.effective, 0);
+    let totalExpenses = expLineResults.reduce((s, l) => s + Math.abs(l.amount), 0);
+
+    // Total-level overrides
+    if (overrides[`totalRevenue_${yr}`] != null) totalRevenue = overrides[`totalRevenue_${yr}`];
+    if (overrides[`totalExpenses_${yr}`] != null) totalExpenses = overrides[`totalExpenses_${yr}`];
+
+    let noi = totalRevenue - totalExpenses;
+    if (overrides[`noi_${yr}`] != null) noi = overrides[`noi_${yr}`];
+
+    years.push({
+      year: yr,
+      revLines: revLineResults,
+      expLines: expLineResults,
+      totalRevenue,
+      totalExpenses,
+      noi,
+      isRevOverridden: overrides[`totalRevenue_${yr}`] != null,
+      isExpOverridden: overrides[`totalExpenses_${yr}`] != null,
+      isNoiOverridden: overrides[`noi_${yr}`] != null,
+    });
   }
   return years;
 }
+
+// ── EXPENSE LINE PRESETS ──────────────────────────────────────────────────
+const EXP_LINE_PRESETS = {
+  "Full-Service Marina": [
+    {category:"Payroll",line_type:"Dock Staff & Harbor Master",amount:18000,rate_period:"monthly",growth_rate:0.03},
+    {category:"Payroll",line_type:"Service Technicians",amount:12000,rate_period:"monthly",growth_rate:0.03},
+    {category:"Payroll",line_type:"Admin / Office",amount:6000,rate_period:"monthly",growth_rate:0.03},
+    {category:"Payroll",line_type:"Benefits & Payroll Tax",amount:8000,rate_period:"monthly",growth_rate:0.03},
+    {category:"Dock & Facility",line_type:"Dock Maintenance",amount:48000,rate_period:"annual",growth_rate:0.04},
+    {category:"Dock & Facility",line_type:"Grounds / Landscaping",amount:18000,rate_period:"annual",growth_rate:0.02},
+    {category:"Dock & Facility",line_type:"Building Maintenance",amount:24000,rate_period:"annual",growth_rate:0.03},
+    {category:"Fuel COGS",line_type:"Fuel Cost of Goods",amount:156000,rate_period:"annual",growth_rate:0.04},
+    {category:"Insurance",line_type:"Property & Liability",amount:72000,rate_period:"annual",growth_rate:0.05},
+    {category:"Utilities",line_type:"Electric",amount:4500,rate_period:"monthly",growth_rate:0.03},
+    {category:"Utilities",line_type:"Water & Sewer",amount:1800,rate_period:"monthly",growth_rate:0.03},
+    {category:"Utilities",line_type:"Trash / Waste",amount:800,rate_period:"monthly",growth_rate:0.02},
+    {category:"Taxes",line_type:"Property Tax",amount:96000,rate_period:"annual",growth_rate:0.02},
+    {category:"Admin",line_type:"Management Fee",amount:0,rate_period:"annual",growth_rate:0.0,pct_of_revenue:0.05},
+    {category:"Admin",line_type:"Marketing",amount:18000,rate_period:"annual",growth_rate:0.02},
+    {category:"Admin",line_type:"Professional Fees",amount:12000,rate_period:"annual",growth_rate:0.02},
+    {category:"Admin",line_type:"Software / Technology",amount:6000,rate_period:"annual",growth_rate:0.03},
+    {category:"R&M",line_type:"Repairs & Maintenance",amount:36000,rate_period:"annual",growth_rate:0.03},
+    {category:"CapEx",line_type:"Replacement Reserve",amount:48000,rate_period:"annual",growth_rate:0.03},
+    {category:"Environmental",line_type:"Environmental Compliance",amount:12000,rate_period:"annual",growth_rate:0.02},
+  ],
+  "Dry Stack Marina": [
+    {category:"Payroll",line_type:"Forklift Operators",amount:14000,rate_period:"monthly",growth_rate:0.03},
+    {category:"Payroll",line_type:"Admin / Office",amount:5000,rate_period:"monthly",growth_rate:0.03},
+    {category:"Payroll",line_type:"Benefits & Payroll Tax",amount:4500,rate_period:"monthly",growth_rate:0.03},
+    {category:"Equipment",line_type:"Forklift Maintenance",amount:24000,rate_period:"annual",growth_rate:0.04},
+    {category:"Dock & Facility",line_type:"Rack / Building Maint",amount:30000,rate_period:"annual",growth_rate:0.03},
+    {category:"Fuel COGS",line_type:"Fuel Cost of Goods",amount:120000,rate_period:"annual",growth_rate:0.04},
+    {category:"Insurance",line_type:"Property & Liability",amount:48000,rate_period:"annual",growth_rate:0.05},
+    {category:"Utilities",line_type:"Electric",amount:3000,rate_period:"monthly",growth_rate:0.03},
+    {category:"Utilities",line_type:"Water & Sewer",amount:800,rate_period:"monthly",growth_rate:0.03},
+    {category:"Taxes",line_type:"Property Tax",amount:60000,rate_period:"annual",growth_rate:0.02},
+    {category:"Admin",line_type:"Management Fee",amount:0,rate_period:"annual",growth_rate:0.0,pct_of_revenue:0.05},
+    {category:"R&M",line_type:"Repairs & Maintenance",amount:24000,rate_period:"annual",growth_rate:0.03},
+    {category:"CapEx",line_type:"Replacement Reserve",amount:30000,rate_period:"annual",growth_rate:0.03},
+  ],
+};
 
 function TabDeals({a}){
   const [deals,setDeals]=useState([]);
@@ -3200,7 +3300,10 @@ function TabDeals({a}){
   const [newDeal,setNewDeal]=useState({name:"",property_type:"Full-Service Marina",market:"",price:"",slips:""});
   const [analyzing,setAnalyzing]=useState(false);
   const [revLines,setRevLines]=useState([]);
+  const [expLines,setExpLines]=useState([]);
+  const [proformaOverrides,setProformaOverrides]=useState({});
   const [revDirty,setRevDirty]=useState(false);
+  const [editingCell,setEditingCell]=useState(null); // { key, currentValue }
   const [dealTab,setDealTab]=useState("financials");
   const [showPresentation,setShowPresentation]=useState(false);
 
@@ -3227,6 +3330,8 @@ function TabDeals({a}){
       const res=await fetch(`/api/deals/${id}`); const d=await res.json();
       setSelectedDeal(d); setAnalysis(d.latestResult?.result||null);
       setRevLines(d.revenueLines||[]); setRevDirty(false);
+      setExpLines(d.expenseLines||[]);
+      setProformaOverrides(d.assumptions?.proforma_overrides||{});
     }catch(e){ console.error(e); }
   };
 
@@ -3311,25 +3416,85 @@ function TabDeals({a}){
     if(preset){ setRevLines([...preset]); setRevDirty(true); }
   };
 
-  const saveRevLines=async()=>{
+  const loadExpPreset=(presetName)=>{
+    const preset=EXP_LINE_PRESETS[presetName];
+    if(preset){ setExpLines([...preset]); setRevDirty(true); }
+  };
+
+  // Expense line management
+  const addExpLine=()=>{
+    setExpLines([...expLines,{category:"",line_type:"",amount:0,rate_period:"annual",growth_rate:0.03,notes:""}]);
+    setRevDirty(true);
+  };
+  const updateExpLine=(idx,field,val)=>{
+    const updated=[...expLines]; updated[idx]={...updated[idx],[field]:val}; setExpLines(updated); setRevDirty(true);
+  };
+  const removeExpLine=(idx)=>{
+    setExpLines(expLines.filter((_,i)=>i!==idx)); setRevDirty(true);
+  };
+
+  // Override management
+  const setOverride=(key,val)=>{
+    const next={...proformaOverrides};
+    if(val==null||val==="") delete next[key]; else next[key]=Number(val);
+    setProformaOverrides(next); setRevDirty(true);
+  };
+  const clearOverride=(key)=>{
+    const next={...proformaOverrides}; delete next[key]; setProformaOverrides(next); setRevDirty(true);
+  };
+
+  const saveAllLines=async()=>{
     if(!selectedDeal) return;
     try{
-      await fetch(`/api/deals/${selectedDeal.id}/revenue-lines`,{method:'PUT',
-        headers:{'Content-Type':'application/json'},body:JSON.stringify({lines:revLines})});
+      await Promise.all([
+        fetch(`/api/deals/${selectedDeal.id}/revenue-lines`,{method:'PUT',
+          headers:{'Content-Type':'application/json'},body:JSON.stringify({lines:revLines})}),
+        fetch(`/api/deals/${selectedDeal.id}/expense-lines`,{method:'PUT',
+          headers:{'Content-Type':'application/json'},body:JSON.stringify({lines:expLines})}),
+        fetch(`/api/deals/${selectedDeal.id}`,{method:'PUT',
+          headers:{'Content-Type':'application/json'},body:JSON.stringify({
+            ...selectedDeal,assumptions:{...(selectedDeal.assumptions||{}),proforma_overrides:proformaOverrides}
+          })}),
+      ]);
       setRevDirty(false);
     }catch(e){ console.error(e); }
   };
 
   // Proforma computation
   const proforma=useMemo(()=>{
-    if(revLines.length===0) return [];
-    return buildProforma(revLines, a.fundTerm || 7, 0.40, 0.03);
-  },[revLines,a.fundTerm]);
+    if(revLines.length===0&&expLines.length===0) return [];
+    return buildProforma(revLines, expLines, a.fundTerm || 7, proformaOverrides);
+  },[revLines,expLines,a.fundTerm,proformaOverrides]);
 
   const totalRevLineRevenue=revLines.reduce((s,l)=>{
     const annual=l.rate_period==="monthly"?l.rate*12:l.rate;
     return s+l.unit_count*annual*(l.occupancy??1);
   },0);
+  const totalExpLineAmount=expLines.reduce((s,l)=>{
+    const annual=l.rate_period==="monthly"?l.amount*12:l.amount;
+    return s+annual;
+  },0);
+
+  // Editable cell helper — double-click to override, right-click to clear
+  const EditableCell=({cellKey,computedValue,style={}})=>{
+    const isOverridden=proformaOverrides[cellKey]!=null;
+    const displayVal=isOverridden?proformaOverrides[cellKey]:computedValue;
+    if(editingCell?.key===cellKey){
+      return <td style={{...tdS,...style,padding:"2px 4px"}}><input type="number" autoFocus
+        defaultValue={Math.round(displayVal||0)}
+        onBlur={e=>{const v=e.target.value;if(v!==""&&Number(v)!==Math.round(computedValue||0)){setOverride(cellKey,v);}setEditingCell(null);}}
+        onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setEditingCell(null);}}}
+        style={{...inputS,width:"100%",textAlign:"right",fontSize:11,padding:"3px 6px"}}/></td>;
+    }
+    return <td style={{...tdS,...style,cursor:"pointer",
+      background:isOverridden?"rgba(41,128,185,.12)":"transparent",
+      fontStyle:isOverridden?"normal":"normal"}}
+      onDoubleClick={()=>setEditingCell({key:cellKey,currentValue:displayVal})}
+      onContextMenu={e=>{if(isOverridden){e.preventDefault();clearOverride(cellKey);}}}
+      title={isOverridden?"Double-click to edit, right-click to reset":"Double-click to hard-code"}>
+      {f.$(displayVal)}{isOverridden&&<span style={{fontSize:7,color:C.blue,marginLeft:3}}>HC</span>}
+    </td>;
+  };
 
   const thS={padding:"8px 12px",fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".07em",
     textAlign:"left",borderBottom:`1px solid ${C.border}`};
@@ -3341,7 +3506,7 @@ function TabDeals({a}){
   const inputS={background:"rgba(255,255,255,.06)",border:`1px solid ${C.border}`,borderRadius:3,
     padding:"5px 8px",color:C.white,fontSize:11,outline:"none",fontFamily:"'DM Sans',sans-serif",
     boxSizing:"border-box",width:"100%"};
-  const dealTabs=["financials","revenue","proforma","analysis","presentation"];
+  const dealTabs=["financials","revenue","expenses","proforma","analysis","presentation"];
 
   // ── PRESENTATION VIEW ──────────────────────────────────
   if(showPresentation&&selectedDeal){
@@ -3366,6 +3531,8 @@ function TabDeals({a}){
             {(selectedDeal.slips||selectedDeal.units)&&<KPI label="Total Slips" value={selectedDeal.slips||selectedDeal.units}/>}
             <KPI label="Revenue Lines" value={revLines.length}/>
             <KPI label="Yr 1 Revenue" value={f.$(totalRevLineRevenue)}/>
+            {totalExpLineAmount>0&&<KPI label="Yr 1 Expenses" value={f.$(totalExpLineAmount)}/>}
+            {totalRevLineRevenue>0&&totalExpLineAmount>0&&<KPI label="Yr 1 NOI" value={f.$(totalRevLineRevenue-totalExpLineAmount)} gold/>}
             {analysis?.modelResult&&<KPI label="LP IRR" value={f.p(analysis.modelResult.lpIRR)} gold/>}
             {analysis?.modelResult&&<KPI label="LP MOIC" value={f.x(analysis.modelResult.lpMOIC)}/>}
           </div>
@@ -3777,7 +3944,7 @@ function TabDeals({a}){
                     </button>
                   ))}
                   <button onClick={addRevLine} style={{...goldBtn,fontSize:9,padding:"4px 10px"}}>+ Add Line</button>
-                  {revDirty&&<button onClick={saveRevLines} style={{...goldBtn,fontSize:9,padding:"4px 10px",
+                  {revDirty&&<button onClick={saveAllLines} style={{...goldBtn,fontSize:9,padding:"4px 10px",
                     background:C.green}}>Save</button>}
                 </div>
               </div>
@@ -3840,22 +4007,111 @@ function TabDeals({a}){
             </div>
           )}
 
+          {/* ── EXPENSES SUB-TAB ──────────────────────────── */}
+          {dealTab==="expenses"&&(
+            <div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <SHdr t={"Operating Expenses ("+expLines.length+")"}/>
+                <div style={{display:"flex",gap:6}}>
+                  {Object.keys(EXP_LINE_PRESETS).map(p=>(
+                    <button key={p} onClick={()=>loadExpPreset(p)} style={{...dimBtn,fontSize:9,padding:"4px 10px"}}>
+                      {p} Preset
+                    </button>
+                  ))}
+                  <button onClick={addExpLine} style={{...goldBtn,fontSize:9,padding:"4px 10px"}}>+ Add Line</button>
+                  {revDirty&&<button onClick={saveAllLines} style={{...goldBtn,fontSize:9,padding:"4px 10px",
+                    background:C.green}}>Save</button>}
+                </div>
+              </div>
+
+              {expLines.length===0?(
+                <div style={{textAlign:"center",padding:30,color:C.whDim,fontSize:11}}>
+                  No expense lines yet. Add lines manually or load a marina expense preset.
+                </div>
+              ):(
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",minWidth:700}}>
+                    <thead><tr>
+                      <th style={thS}>Category</th><th style={thS}>Type</th><th style={thS}>Amount ($)</th>
+                      <th style={thS}>Period</th><th style={thS}>Growth %</th><th style={thS}>% of Rev</th>
+                      <th style={thS}>Annual</th><th style={{...thS,width:30}}></th>
+                    </tr></thead>
+                    <tbody>
+                      {expLines.map((l,i)=>{
+                        const annual=l.rate_period==="monthly"?l.amount*12:l.amount;
+                        return(
+                          <tr key={i}>
+                            <td style={tdS}><input value={l.category||""} onChange={e=>updateExpLine(i,"category",e.target.value)}
+                              placeholder="e.g. Payroll" style={{...inputS,width:110}}/></td>
+                            <td style={tdS}><input value={l.line_type||""} onChange={e=>updateExpLine(i,"line_type",e.target.value)}
+                              placeholder="e.g. Dock Staff" style={{...inputS,width:130}}/></td>
+                            <td style={tdS}><input type="number" value={l.amount||0}
+                              onChange={e=>updateExpLine(i,"amount",parseFloat(e.target.value)||0)}
+                              style={{...inputS,width:90,textAlign:"right"}}/></td>
+                            <td style={tdS}>
+                              <select value={l.rate_period||"annual"} onChange={e=>updateExpLine(i,"rate_period",e.target.value)}
+                                style={{...inputS,width:75}}>
+                                <option value="monthly">Monthly</option>
+                                <option value="annual">Annual</option>
+                              </select>
+                            </td>
+                            <td style={tdS}><input type="number" value={((l.growth_rate||0)*100).toFixed(1)}
+                              onChange={e=>updateExpLine(i,"growth_rate",(parseFloat(e.target.value)||0)/100)}
+                              style={{...inputS,width:50,textAlign:"center"}} step="0.5"/></td>
+                            <td style={tdS}>{l.pct_of_revenue?<span style={{color:C.goldDim}}>{(l.pct_of_revenue*100).toFixed(0)}%</span>:
+                              <span style={{color:"rgba(255,255,255,.2)"}}>—</span>}</td>
+                            <td style={{...tdS,color:C.red,fontWeight:600,textAlign:"right"}}>{f.$(annual)}</td>
+                            <td style={tdS}><button onClick={()=>removeExpLine(i)}
+                              style={{background:"transparent",border:"none",color:C.red,cursor:"pointer",fontSize:12}}>×</button></td>
+                          </tr>);
+                      })}
+                      <tr style={{borderTop:`2px solid ${C.gold}`}}>
+                        <td colSpan={6} style={{...tdS,fontWeight:700,color:C.gold,textAlign:"right"}}>Total Year 1 Expenses</td>
+                        <td style={{...tdS,fontWeight:700,color:C.red,textAlign:"right"}}>{f.$(totalExpLineAmount)}</td>
+                        <td style={tdS}></td>
+                      </tr>
+                      {totalRevLineRevenue>0&&(
+                        <tr>
+                          <td colSpan={6} style={{...tdS,color:C.goldDim,textAlign:"right",fontSize:10}}>Expense Ratio</td>
+                          <td style={{...tdS,color:C.goldDim,textAlign:"right",fontSize:10}}>{f.p(totalExpLineAmount/totalRevLineRevenue)}</td>
+                          <td style={tdS}></td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* ── PROFORMA SUB-TAB ────────────────────────────── */}
           {dealTab==="proforma"&&(
             <div>
-              <SHdr t="Proforma Projection"/>
-              {revLines.length===0?(
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <SHdr t="Proforma Projection"/>
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  <span style={{fontSize:9,color:C.whDim}}>Double-click any cell to hard-code. Right-click to reset.</span>
+                  {revDirty&&<button onClick={saveAllLines} style={{...goldBtn,fontSize:9,padding:"4px 10px",
+                    background:C.green}}>Save</button>}
+                  {Object.keys(proformaOverrides).length>0&&(
+                    <button onClick={()=>{setProformaOverrides({});setRevDirty(true);}} style={{...dimBtn,fontSize:9,padding:"4px 10px"}}>
+                      Clear All Overrides ({Object.keys(proformaOverrides).length})
+                    </button>
+                  )}
+                </div>
+              </div>
+              {revLines.length===0&&expLines.length===0?(
                 <div style={{textAlign:"center",padding:30,color:C.whDim,fontSize:11}}>
-                  Add revenue lines first (Revenue tab) to generate a proforma.
+                  Add revenue and expense lines first to generate a proforma.
                 </div>
               ):(
                 <div>
-                  {/* Summary table */}
+                  {/* Summary table with editable cells */}
                   <div style={{overflowX:"auto",marginBottom:16}}>
                     <table style={{width:"100%",borderCollapse:"collapse"}}>
                       <thead><tr>
-                        <th style={thS}>Year</th><th style={thS}>Revenue</th><th style={thS}>Expenses (40%)</th>
-                        <th style={thS}>NOI</th><th style={thS}>Margin</th><th style={thS}>YoY Growth</th>
+                        <th style={thS}>Year</th><th style={thS}>Revenue</th><th style={thS}>Expenses</th>
+                        <th style={thS}>NOI</th><th style={thS}>Margin</th><th style={thS}>NOI YoY</th>
                       </tr></thead>
                       <tbody>
                         {proforma.map((yr,i)=>{
@@ -3864,9 +4120,9 @@ function TabDeals({a}){
                           return(
                             <tr key={yr.year}>
                               <td style={{...tdS,fontWeight:600}}>Yr {yr.year}</td>
-                              <td style={tdS}>{f.$(yr.totalRevenue)}</td>
-                              <td style={{...tdS,color:C.red}}>{f.$(yr.totalExpenses)}</td>
-                              <td style={{...tdS,color:C.green,fontWeight:600}}>{f.$(yr.noi)}</td>
+                              <EditableCell cellKey={`totalRevenue_${yr.year}`} computedValue={yr.totalRevenue} style={{color:C.white}}/>
+                              <EditableCell cellKey={`totalExpenses_${yr.year}`} computedValue={yr.totalExpenses} style={{color:C.red}}/>
+                              <EditableCell cellKey={`noi_${yr.year}`} computedValue={yr.noi} style={{color:C.green,fontWeight:600}}/>
                               <td style={tdS}>{yr.totalRevenue>0?f.p(yr.noi/yr.totalRevenue):"—"}</td>
                               <td style={{...tdS,color:yoy&&yoy>0?C.green:yoy&&yoy<0?C.red:C.whDim}}>
                                 {yoy!=null?f.p(yoy):"—"}</td>
@@ -3876,27 +4132,73 @@ function TabDeals({a}){
                     </table>
                   </div>
 
-                  {/* Revenue by line per year */}
-                  <SHdr t="Revenue by Business Line"/>
-                  <div style={{overflowX:"auto",marginBottom:14}}>
-                    <table style={{width:"100%",borderCollapse:"collapse",minWidth:600}}>
-                      <thead><tr>
-                        <th style={thS}>Line</th>
-                        {proforma.map(yr=><th key={yr.year} style={{...thS,textAlign:"center"}}>Yr {yr.year}</th>)}
-                      </tr></thead>
-                      <tbody>
-                        {revLines.map((l,li)=>(
-                          <tr key={li}>
-                            <td style={{...tdS,whiteSpace:"nowrap"}}>{l.category} — {l.line_type}</td>
-                            {proforma.map(yr=>{
-                              const line=yr.lines[li];
-                              return <td key={yr.year} style={{...tdS,textAlign:"center"}}>{line?f.$(line.effective):"—"}</td>;
-                            })}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  {/* Revenue by line per year — editable */}
+                  {revLines.length>0&&(
+                    <div>
+                      <SHdr t="Revenue by Line"/>
+                      <div style={{overflowX:"auto",marginBottom:14}}>
+                        <table style={{width:"100%",borderCollapse:"collapse",minWidth:600}}>
+                          <thead><tr>
+                            <th style={thS}>Line</th>
+                            {proforma.map(yr=><th key={yr.year} style={{...thS,textAlign:"center"}}>Yr {yr.year}</th>)}
+                          </tr></thead>
+                          <tbody>
+                            {revLines.map((l,li)=>(
+                              <tr key={li}>
+                                <td style={{...tdS,whiteSpace:"nowrap",fontSize:10}}>{l.category} — {l.line_type}</td>
+                                {proforma.map(yr=>{
+                                  const line=yr.revLines?.[li];
+                                  return <EditableCell key={yr.year} cellKey={`rev_${li}_${yr.year}`}
+                                    computedValue={line?.effective||0} style={{textAlign:"center"}}/>;
+                                })}
+                              </tr>
+                            ))}
+                            <tr style={{borderTop:`1px solid ${C.gold}`}}>
+                              <td style={{...tdS,fontWeight:600,color:C.gold}}>Total Revenue</td>
+                              {proforma.map(yr=>(
+                                <td key={yr.year} style={{...tdS,textAlign:"center",fontWeight:600,color:C.gold}}>
+                                  {f.$(yr.totalRevenue)}</td>
+                              ))}
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Expenses by line per year — editable */}
+                  {expLines.length>0&&(
+                    <div>
+                      <SHdr t="Expenses by Line"/>
+                      <div style={{overflowX:"auto",marginBottom:14}}>
+                        <table style={{width:"100%",borderCollapse:"collapse",minWidth:600}}>
+                          <thead><tr>
+                            <th style={thS}>Line</th>
+                            {proforma.map(yr=><th key={yr.year} style={{...thS,textAlign:"center"}}>Yr {yr.year}</th>)}
+                          </tr></thead>
+                          <tbody>
+                            {expLines.map((l,li)=>(
+                              <tr key={li}>
+                                <td style={{...tdS,whiteSpace:"nowrap",fontSize:10}}>{l.category} — {l.line_type}</td>
+                                {proforma.map(yr=>{
+                                  const line=yr.expLines?.[li];
+                                  return <EditableCell key={yr.year} cellKey={`exp_${li}_${yr.year}`}
+                                    computedValue={line?.amount||0} style={{textAlign:"center",color:C.red}}/>;
+                                })}
+                              </tr>
+                            ))}
+                            <tr style={{borderTop:`1px solid ${C.gold}`}}>
+                              <td style={{...tdS,fontWeight:600,color:C.red}}>Total Expenses</td>
+                              {proforma.map(yr=>(
+                                <td key={yr.year} style={{...tdS,textAlign:"center",fontWeight:600,color:C.red}}>
+                                  {f.$(yr.totalExpenses)}</td>
+                              ))}
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Chart */}
                   <Card>
