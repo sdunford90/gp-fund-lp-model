@@ -402,8 +402,8 @@ export function analyzeDeal(deal, fundAssumptions = {}) {
 
   // Compute trailing averages
   const latestFinancial = sorted[sorted.length - 1]?.parsed || {};
-  const noi = latestFinancial.noi || 0;
-  const price = assumptions.overridePrice || deal.price || (noi / (assumptions.exitCapRate || 0.075));
+  const noi = assumptions.overrideNOI || latestFinancial.noi || 0;
+  const price = assumptions.overridePrice || deal.price || (noi > 0 ? noi / (assumptions.exitCapRate || 0.075) : 0);
   const capRate = assumptions.overrideGoingInCap || (price > 0 ? noi / price : 0);
 
   // Compute historical NOI growth (CAGR across available years)

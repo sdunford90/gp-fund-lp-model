@@ -3433,27 +3433,39 @@ function TabDeals({a}){
     try{
       // Merge fund-level assumptions with deal-level overrides
       const dealOvr={};
-      if(dealAssumptions.exitCapRate) dealOvr.exitCapRate=dealAssumptions.exitCapRate;
-      if(dealAssumptions.holdYears) dealOvr.fundTerm=dealAssumptions.holdYears;
-      if(dealAssumptions.debtPct!=null) dealOvr.debtPct=dealAssumptions.debtPct;
-      if(dealAssumptions.interestRate) dealOvr.interestRate=dealAssumptions.interestRate;
-      if(dealAssumptions.price) dealOvr.overridePrice=dealAssumptions.price;
-      if(dealAssumptions.noiGrowth!=null) dealOvr.overrideGrowth=dealAssumptions.noiGrowth;
+      dealOvr.exitCapRate=dealAssumptions.exitCapRate||0.075;
+      dealOvr.fundTerm=dealAssumptions.holdYears||a.fundTerm||7;
+      dealOvr.debtPct=dealAssumptions.debtPct!=null?dealAssumptions.debtPct:0.60;
+      dealOvr.interestRate=dealAssumptions.interestRate||0.065;
+      if(dealAssumptions.price) dealOvr.overridePrice=Number(dealAssumptions.price);
       if(dealAssumptions.goingInCap) dealOvr.overrideGoingInCap=dealAssumptions.goingInCap;
+
+      // Use proforma NOI growth if we have proforma data
+      if(proformaReturns&&proformaReturns.noiCAGR){
+        dealOvr.overrideGrowth=proformaReturns.noiCAGR;
+      } else if(dealAssumptions.noiGrowth!=null){
+        dealOvr.overrideGrowth=dealAssumptions.noiGrowth;
+      }
+
+      // If we have proforma data but no financials, send proforma NOI as override
+      if(proformaReturns&&proformaReturns.yr1Noi>0){
+        dealOvr.overrideNOI=proformaReturns.yr1Noi;
+      }
 
       const res=await fetch(`/api/deals/${selectedDeal.id}/analyze`,{method:'POST',
         headers:{'Content-Type':'application/json'},body:JSON.stringify({
           ...dealOvr,
-          prefReturn:a.prefReturn,carry:a.carry,gpPct:a.gpPct,
+          prefReturn:a.prefReturn||0.07,carry:a.carry||0.20,gpPct:a.gpPct||0.02,
           promoteTiers:a.promoteTiers})});
+      if(!res.ok){ console.error("Analyze failed:",res.status,await res.text()); return; }
       const data=await res.json();
       setAnalysis(data);
       // Save deal assumptions for next time
-      await fetch(`/api/deals/${selectedDeal.id}`,{method:'PUT',
+      fetch(`/api/deals/${selectedDeal.id}`,{method:'PUT',
         headers:{'Content-Type':'application/json'},body:JSON.stringify({
           ...selectedDeal,assumptions:{...(selectedDeal.assumptions||{}),deal_analysis:dealAssumptions}
-        })});
-    }catch(err){ console.error(err); }
+        })}).catch(()=>{});
+    }catch(err){ console.error("Analysis error:",err); }
     finally{ setAnalyzing(false); }
   };
 
@@ -3667,148 +3679,493 @@ function TabDeals({a}){
     boxSizing:"border-box",width:"100%"};
   const dealTabs=["financials","revenue","expenses","proforma","analysis","presentation"];
 
-  // ── PRESENTATION VIEW ──────────────────────────────────
+  // ── IC MEMO / PRESENTATION VIEW ──────────────────────────────────
   if(showPresentation&&selectedDeal){
     const today=new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});
     const fins=(selectedDeal.financials||[]).filter(f2=>f2.parsed?.noi).sort((a2,b2)=>(a2.year||0)-(b2.year||0));
+    const pr=proformaReturns;
+    const yr1Rev=totalRevLineRevenue;
+    const yr1Exp=totalExpLineAmount;
+    const yr1Noi=yr1Rev-yr1Exp;
+    const totalSlips=Number(selectedDeal.slips||selectedDeal.units)||0;
+    const acqPrice=dealAssumptions.price||Number(selectedDeal.price)||0;
+
+    // Revenue by category
+    const revByCat={};
+    revLines.forEach(l=>{
+      const annual=Number(l.rate_period==="monthly"?Number(l.rate)*12:Number(l.rate))*Number(l.unit_count)*(Number(l.occupancy)??1);
+      revByCat[l.category]=(revByCat[l.category]||0)+annual;
+    });
+
+    // Expense by category
+    const expByCat={};
+    expLines.forEach(l=>{
+      const annual=l.rate_period==="monthly"?Number(l.amount)*12:Number(l.amount);
+      expByCat[l.category]=(expByCat[l.category]||0)+annual;
+    });
+
+    const SectionHdr=({t})=>(
+      <div style={{fontSize:14,fontWeight:700,color:C.gold,marginBottom:12,marginTop:28,paddingBottom:6,
+        borderBottom:`1px solid ${C.gold}`,textTransform:"uppercase",letterSpacing:".12em"}}>{t}</div>
+    );
+
     return(
-      <div style={{background:C.dark,minHeight:"100vh",padding:40,fontFamily:"'DM Sans',sans-serif"}}>
-        <div style={{maxWidth:1000,margin:"0 auto"}}>
-          {/* Header */}
-          <div style={{textAlign:"center",marginBottom:40,paddingBottom:20,borderBottom:`2px solid ${C.gold}`}}>
-            <div style={{fontSize:11,color:C.gold,letterSpacing:".2em",textTransform:"uppercase",marginBottom:6}}>Investment Memorandum</div>
-            <div style={{fontSize:32,fontWeight:700,color:C.white,fontFamily:"'Playfair Display',serif"}}>{selectedDeal.name}</div>
-            <div style={{fontSize:13,color:C.goldDim,marginTop:6}}>
-              {[selectedDeal.property_type,selectedDeal.market,selectedDeal.address].filter(Boolean).join(" | ")}
+      <div style={{background:C.dark,minHeight:"100vh",fontFamily:"'DM Sans',sans-serif"}}>
+        {/* Print styles */}
+        <style>{`
+          @media print {
+            body { background: #0D1B2A !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .ic-no-print { display: none !important; }
+            @page { size: letter; margin: 0.5in; }
+          }
+        `}</style>
+
+        {/* Top bar */}
+        <div className="ic-no-print" style={{position:"sticky",top:0,zIndex:10,
+          background:"rgba(13,27,42,.97)",backdropFilter:"blur(12px)",
+          borderBottom:`1px solid ${C.gold}`,padding:"0 24px",
+          display:"flex",alignItems:"center",justifyContent:"space-between",height:48}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:13,fontWeight:800,color:C.white}}>IC Memo — {selectedDeal.name}</span>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>window.print()} style={{background:C.gold,color:C.navy,border:"none",
+              borderRadius:3,padding:"5px 16px",fontSize:10,fontWeight:800,letterSpacing:".07em",
+              textTransform:"uppercase",cursor:"pointer"}}>Print / PDF</button>
+            <button onClick={()=>setShowPresentation(false)} style={{background:"transparent",color:C.goldDim,
+              border:`1px solid rgba(201,168,76,.3)`,borderRadius:3,padding:"5px 16px",
+              fontSize:10,fontWeight:700,letterSpacing:".07em",textTransform:"uppercase",cursor:"pointer"}}>Close</button>
+          </div>
+        </div>
+
+        <div style={{maxWidth:900,margin:"0 auto",padding:"40px 24px"}}>
+
+          {/* ═══ COVER ═══ */}
+          <div style={{textAlign:"center",marginBottom:50,paddingBottom:24,borderBottom:`2px solid ${C.gold}`}}>
+            <div style={{fontSize:10,color:C.gold,letterSpacing:".25em",textTransform:"uppercase",marginBottom:8}}>
+              Investment Committee Memorandum — Confidential</div>
+            <div style={{fontSize:36,fontWeight:700,color:C.white,fontFamily:"'Playfair Display',serif",marginBottom:6}}>
+              {selectedDeal.name}</div>
+            <div style={{fontSize:14,color:C.goldDim,marginTop:6}}>
+              {[selectedDeal.property_type,selectedDeal.market,selectedDeal.address].filter(Boolean).join(" | ")}</div>
+            <div style={{fontSize:11,color:C.whDim,marginTop:8}}>{today}</div>
+          </div>
+
+          {/* ═══ EXECUTIVE SUMMARY ═══ */}
+          <SectionHdr t="Executive Summary"/>
+          <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap"}}>
+            {acqPrice>0&&<KPI label="Acquisition Price" value={f.$(acqPrice)} gold/>}
+            {totalSlips>0&&<KPI label="Total Slips" value={totalSlips}/>}
+            {yr1Noi>0&&<KPI label="Year 1 NOI" value={f.$(yr1Noi)} gold/>}
+            {pr&&<KPI label="Going-In Cap" value={f.p(pr.goingInCap)}/>}
+            {pr&&<KPI label="Levered IRR" value={f.p(pr.levIRR)} gold/>}
+            {pr&&<KPI label="Equity MOIC" value={f.x(pr.moic)}/>}
+            {pr&&<KPI label="Exit Value" value={f.$(pr.exitValue)}/>}
+            {analysis?.modelResult&&<KPI label="LP Net IRR" value={f.p(analysis.modelResult.lpIRR)} gold/>}
+          </div>
+          <Card style={{marginBottom:16}}>
+            <div style={{fontSize:12,color:C.whDim,lineHeight:1.7}}>
+              {selectedDeal.name} is a {selectedDeal.property_type||"marina"} located in {selectedDeal.market||"[Market]"}
+              {totalSlips>0?` comprising ${totalSlips} slips`:""}.
+              {acqPrice>0?` The proposed acquisition price is ${f.$(acqPrice)}`:""}{yr1Noi>0?`, implying a going-in cap rate of ${f.p(yr1Noi/acqPrice)}`:""}
+              {yr1Rev>0?`. Year 1 projected revenue is ${f.$(yr1Rev)} with operating expenses of ${f.$(yr1Exp)}, yielding NOI of ${f.$(yr1Noi)}`:""}
+              {yr1Rev>0?` (${f.p(yr1Noi/yr1Rev)} margin).`:"."}
+              {pr?` Over a ${pr.holdYrs}-year hold, the deal targets a levered IRR of ${f.p(pr.levIRR)} and ${f.x(pr.moic)} equity multiple.`:""}
             </div>
-            <div style={{fontSize:10,color:C.whDim,marginTop:8}}>{today}</div>
-          </div>
+          </Card>
 
-          {/* Deal Overview KPIs */}
-          <div style={{display:"flex",gap:12,marginBottom:30,flexWrap:"wrap"}}>
-            {selectedDeal.price&&<KPI label="Acquisition Price" value={f.$(Number(selectedDeal.price))} gold/>}
-            {(selectedDeal.slips||selectedDeal.units)&&<KPI label="Total Slips" value={selectedDeal.slips||selectedDeal.units}/>}
-            <KPI label="Revenue Lines" value={revLines.length}/>
-            <KPI label="Yr 1 Revenue" value={f.$(totalRevLineRevenue)}/>
-            {totalExpLineAmount>0&&<KPI label="Yr 1 Expenses" value={f.$(totalExpLineAmount)}/>}
-            {totalRevLineRevenue>0&&totalExpLineAmount>0&&<KPI label="Yr 1 NOI" value={f.$(totalRevLineRevenue-totalExpLineAmount)} gold/>}
-            {analysis?.modelResult&&<KPI label="LP IRR" value={f.p(analysis.modelResult.lpIRR)} gold/>}
-            {analysis?.modelResult&&<KPI label="LP MOIC" value={f.x(analysis.modelResult.lpMOIC)}/>}
-          </div>
-
-          {/* Historical Performance */}
-          {fins.length>0&&(
-            <Card style={{marginBottom:20}}>
-              <div style={{fontSize:13,fontWeight:700,color:C.gold,marginBottom:12,textTransform:"uppercase",letterSpacing:".1em"}}>
-                Historical Performance
+          {/* ═══ SOURCES & USES ═══ */}
+          {acqPrice>0&&pr&&(
+            <>
+              <SectionHdr t="Sources & Uses"/>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
+                <Card>
+                  <CT c="Sources"/>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                    <tbody>
+                      {[
+                        ["Senior Debt",f.$(pr.loanAmt),f.p(pr.debtPct)],
+                        ["Equity",f.$(pr.equity),f.p(1-pr.debtPct)],
+                      ].map(([k,v,pct],i)=>(
+                        <tr key={i} style={{borderBottom:`1px solid ${C.border}`}}>
+                          <td style={{padding:"8px 0",color:C.whDim}}>{k}</td>
+                          <td style={{padding:"8px 0",color:C.white,fontWeight:600,textAlign:"right"}}>{v}</td>
+                          <td style={{padding:"8px 0",color:C.goldDim,textAlign:"right",width:50}}>{pct}</td>
+                        </tr>
+                      ))}
+                      <tr style={{borderTop:`2px solid ${C.gold}`}}>
+                        <td style={{padding:"8px 0",color:C.gold,fontWeight:700}}>Total Sources</td>
+                        <td style={{padding:"8px 0",color:C.gold,fontWeight:700,textAlign:"right"}}>{f.$(acqPrice)}</td>
+                        <td style={{padding:"8px 0",color:C.gold,textAlign:"right"}}>100%</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </Card>
+                <Card>
+                  <CT c="Uses"/>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                    <tbody>
+                      {[
+                        ["Acquisition",f.$(acqPrice),"100.0%"],
+                        ["Closing Costs (est.)",f.$(acqPrice*0.02),"2.0%"],
+                      ].map(([k,v,pct],i)=>(
+                        <tr key={i} style={{borderBottom:`1px solid ${C.border}`}}>
+                          <td style={{padding:"8px 0",color:C.whDim}}>{k}</td>
+                          <td style={{padding:"8px 0",color:C.white,fontWeight:600,textAlign:"right"}}>{v}</td>
+                          <td style={{padding:"8px 0",color:C.goldDim,textAlign:"right",width:50}}>{pct}</td>
+                        </tr>
+                      ))}
+                      <tr style={{borderTop:`2px solid ${C.gold}`}}>
+                        <td style={{padding:"8px 0",color:C.gold,fontWeight:700}}>Total Uses</td>
+                        <td style={{padding:"8px 0",color:C.gold,fontWeight:700,textAlign:"right"}}>{f.$(acqPrice*1.02)}</td>
+                        <td></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </Card>
               </div>
-              <table style={{width:"100%",borderCollapse:"collapse"}}>
-                <thead><tr>
-                  <th style={thS}>Year</th><th style={thS}>Revenue</th><th style={thS}>NOI</th>
-                  <th style={thS}>Margin</th><th style={thS}>Occupancy</th>
-                </tr></thead>
-                <tbody>
-                  {fins.map(fin=>{
-                    const p=fin.parsed||{};
-                    return <tr key={fin.id}><td style={tdS}>{fin.year}</td>
-                      <td style={tdS}>{f.$(p.revenue||p.egi)}</td>
-                      <td style={{...tdS,color:C.green}}>{f.$(p.noi)}</td>
-                      <td style={tdS}>{p.noi_margin?f.p(p.noi_margin):"—"}</td>
-                      <td style={tdS}>{p.occupancy?f.p(p.occupancy):"—"}</td>
-                    </tr>;
-                  })}
-                </tbody>
-              </table>
-            </Card>
-          )}
-
-          {/* Revenue Lines */}
-          {revLines.length>0&&(
-            <Card style={{marginBottom:20}}>
-              <div style={{fontSize:13,fontWeight:700,color:C.gold,marginBottom:12,textTransform:"uppercase",letterSpacing:".1em"}}>
-                Revenue Breakdown
-              </div>
-              <table style={{width:"100%",borderCollapse:"collapse"}}>
-                <thead><tr>
-                  <th style={thS}>Category</th><th style={thS}>Type</th><th style={thS}>Count</th>
-                  <th style={thS}>Rate</th><th style={thS}>Occ</th><th style={thS}>Annual Rev</th><th style={thS}>Growth</th>
-                </tr></thead>
-                <tbody>
-                  {revLines.map((l,i)=>{
-                    const annual=l.rate_period==="monthly"?l.rate*12:l.rate;
-                    const rev=l.unit_count*annual*(l.occupancy??1);
-                    return <tr key={i}><td style={tdS}>{l.category}</td><td style={tdS}>{l.line_type}</td>
-                      <td style={tdS}>{l.unit_count}</td>
-                      <td style={tdS}>{f.$(l.rate)}/{l.rate_period==="monthly"?"mo":"yr"}</td>
-                      <td style={tdS}>{f.p(l.occupancy??1)}</td>
-                      <td style={{...tdS,color:C.green}}>{f.$(rev)}</td>
-                      <td style={tdS}>{f.p(l.growth_rate)}</td>
-                    </tr>;
-                  })}
-                  <tr style={{borderTop:`2px solid ${C.gold}`}}>
-                    <td colSpan={5} style={{...tdS,fontWeight:700,color:C.gold}}>Total</td>
-                    <td style={{...tdS,fontWeight:700,color:C.gold}}>{f.$(totalRevLineRevenue)}</td>
-                    <td style={tdS}></td>
-                  </tr>
-                </tbody>
-              </table>
-            </Card>
-          )}
-
-          {/* Proforma Projection */}
-          {proforma.length>0&&(
-            <Card style={{marginBottom:20}}>
-              <div style={{fontSize:13,fontWeight:700,color:C.gold,marginBottom:12,textTransform:"uppercase",letterSpacing:".1em"}}>
-                Proforma Projection
-              </div>
-              <table style={{width:"100%",borderCollapse:"collapse"}}>
-                <thead><tr>
-                  <th style={thS}>Year</th><th style={thS}>Revenue</th><th style={thS}>Expenses</th>
-                  <th style={thS}>NOI</th><th style={thS}>Margin</th>
-                </tr></thead>
-                <tbody>
-                  {proforma.map(yr=>(
-                    <tr key={yr.year}><td style={tdS}>Yr {yr.year}</td>
-                      <td style={tdS}>{f.$(yr.totalRevenue)}</td>
-                      <td style={{...tdS,color:C.red}}>{f.$(yr.totalExpenses)}</td>
-                      <td style={{...tdS,color:C.green,fontWeight:600}}>{f.$(yr.noi)}</td>
-                      <td style={tdS}>{yr.totalRevenue>0?f.p(yr.noi/yr.totalRevenue):"—"}</td>
-                    </tr>
+              <Card style={{marginBottom:16}}>
+                <CT c="Financing Terms"/>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,fontSize:12}}>
+                  {[
+                    ["Loan Amount",f.$(pr.loanAmt)],["LTV",f.p(pr.debtPct)],
+                    ["Interest Rate",f.p(pr.intRate)],["Amort","25 years"],
+                    ["Annual Debt Service",f.$(pr.annualDS)],["DSCR (Yr 1)",yr1Noi>0?(yr1Noi/pr.annualDS).toFixed(2)+"x":"—"],
+                    ["Loan Balance at Exit",f.$(pr.loanBal)],["Debt Yield (Yr 1)",pr.loanAmt>0?f.p(yr1Noi/pr.loanAmt):"—"],
+                  ].map(([k,v],i)=>(
+                    <div key={i}>
+                      <div style={{fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".06em"}}>{k}</div>
+                      <div style={{fontSize:13,color:C.white,fontWeight:600,marginTop:2}}>{v}</div>
+                    </div>
                   ))}
-                </tbody>
-              </table>
-              {/* Revenue + NOI chart */}
-              <div style={{marginTop:14}}>
-                <ResponsiveContainer width="100%" height={200}>
-                  <ComposedChart data={proforma} margin={{top:10,right:16,bottom:0,left:0}}>
-                    <XAxis dataKey="year" tickFormatter={v=>`Yr ${v}`} tick={{fill:C.whDim,fontSize:10}} axisLine={false} tickLine={false}/>
-                    <YAxis tickFormatter={v=>f.$(v)} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false} width={55}/>
-                    <Tooltip content={<TT/>}/>
-                    <Bar dataKey="totalRevenue" fill="rgba(41,128,185,.4)" radius={[3,3,0,0]} name="Revenue"/>
-                    <Line type="monotone" dataKey="noi" stroke={C.gold} strokeWidth={2.5} dot={{fill:C.gold,r:4}} name="NOI"/>
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </div>
-            </Card>
+                </div>
+              </Card>
+            </>
           )}
 
-          {/* Fund Returns */}
-          {analysis?.modelResult&&(
-            <Card style={{marginBottom:20}}>
-              <div style={{fontSize:13,fontWeight:700,color:C.gold,marginBottom:12,textTransform:"uppercase",letterSpacing:".1em"}}>
-                Fund Returns
+          {/* ═══ HISTORICAL PERFORMANCE ═══ */}
+          {fins.length>0&&(
+            <>
+              <SectionHdr t="Historical Performance"/>
+              <Card style={{marginBottom:16}}>
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr>
+                    <th style={thS}>Year</th><th style={thS}>Revenue</th><th style={thS}>Expenses</th>
+                    <th style={thS}>NOI</th><th style={thS}>Margin</th><th style={thS}>Occupancy</th>
+                  </tr></thead>
+                  <tbody>
+                    {fins.map(fin=>{
+                      const p=fin.parsed||{};
+                      return <tr key={fin.id}><td style={tdS}>{fin.year}</td>
+                        <td style={tdS}>{f.$(p.revenue||p.egi)}</td>
+                        <td style={{...tdS,color:"#E57373"}}>{f.$(p.expenses)}</td>
+                        <td style={{...tdS,color:C.green,fontWeight:600}}>{f.$(p.noi)}</td>
+                        <td style={tdS}>{p.noi_margin?f.p(p.noi_margin):"—"}</td>
+                        <td style={tdS}>{p.occupancy?f.p(p.occupancy):"—"}</td>
+                      </tr>;
+                    })}
+                  </tbody>
+                </table>
+                {fins.length>=2&&(
+                  <div style={{marginTop:12}}>
+                    <ResponsiveContainer width="100%" height={180}>
+                      <ComposedChart data={fins.map(fin=>({year:fin.year,noi:fin.parsed?.noi||0,revenue:fin.parsed?.revenue||0}))} margin={{top:10,right:16,bottom:0,left:0}}>
+                        <XAxis dataKey="year" tick={{fill:C.whDim,fontSize:10}} axisLine={false} tickLine={false}/>
+                        <YAxis tickFormatter={v=>`$${(v/1000).toFixed(0)}k`} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false} width={50}/>
+                        <Tooltip content={<TT/>}/>
+                        <Bar dataKey="revenue" fill="#5C9BD1" radius={[3,3,0,0]} name="Revenue"/>
+                        <Line type="monotone" dataKey="noi" stroke={C.gold} strokeWidth={2.5} dot={{fill:C.gold,r:4}} name="NOI"/>
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </Card>
+            </>
+          )}
+
+          {/* ═══ REVENUE BREAKDOWN ═══ */}
+          {revLines.length>0&&(
+            <>
+              <SectionHdr t="Revenue Breakdown"/>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
+                <Card>
+                  <table style={{width:"100%",borderCollapse:"collapse"}}>
+                    <thead><tr>
+                      <th style={thS}>Category</th><th style={thS}>Type</th><th style={thS}>Ct</th>
+                      <th style={thS}>Rate</th><th style={thS}>Occ</th><th style={thS}>Annual</th>
+                    </tr></thead>
+                    <tbody>
+                      {revLines.map((l,i)=>{
+                        const annual=Number(l.rate_period==="monthly"?Number(l.rate)*12:Number(l.rate))*Number(l.unit_count)*(Number(l.occupancy)??1);
+                        return <tr key={i}><td style={{...tdS,fontSize:10}}>{l.category}</td><td style={{...tdS,fontSize:10}}>{l.line_type}</td>
+                          <td style={{...tdS,fontSize:10,textAlign:"center"}}>{l.unit_count}</td>
+                          <td style={{...tdS,fontSize:10}}>{f.$(Number(l.rate))}/{l.rate_period==="monthly"?"mo":"yr"}</td>
+                          <td style={{...tdS,fontSize:10}}>{f.p(Number(l.occupancy)??1)}</td>
+                          <td style={{...tdS,fontSize:10,color:C.green,fontWeight:600}}>{f.$(annual)}</td>
+                        </tr>;
+                      })}
+                      <tr style={{borderTop:`2px solid ${C.gold}`}}>
+                        <td colSpan={5} style={{...tdS,fontWeight:700,color:C.gold}}>Total Revenue</td>
+                        <td style={{...tdS,fontWeight:700,color:C.gold}}>{f.$(yr1Rev)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </Card>
+                <Card>
+                  <CT c="Revenue by Category"/>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <BarChart data={Object.entries(revByCat).map(([cat,amt])=>({cat,amt}))} margin={{top:10,right:10,bottom:0,left:0}}>
+                      <XAxis dataKey="cat" tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false}/>
+                      <YAxis tickFormatter={v=>`$${(v/1000).toFixed(0)}k`} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false} width={45}/>
+                      <Tooltip content={<TT/>}/>
+                      <Bar dataKey="amt" fill="#5C9BD1" radius={[3,3,0,0]} name="Revenue"/>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </Card>
               </div>
-              <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
-                <KPI label="LP IRR" value={f.p(analysis.modelResult.lpIRR)} gold/>
+            </>
+          )}
+
+          {/* ═══ OPERATING EXPENSES ═══ */}
+          {expLines.length>0&&(
+            <>
+              <SectionHdr t="Operating Expenses"/>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
+                <Card>
+                  <table style={{width:"100%",borderCollapse:"collapse"}}>
+                    <thead><tr>
+                      <th style={thS}>Category</th><th style={thS}>Line Item</th><th style={thS}>Annual</th><th style={thS}>Growth</th>
+                    </tr></thead>
+                    <tbody>
+                      {expLines.map((l,i)=>{
+                        const annual=l.rate_period==="monthly"?Number(l.amount)*12:Number(l.amount);
+                        return <tr key={i}><td style={{...tdS,fontSize:10}}>{l.category}</td><td style={{...tdS,fontSize:10}}>{l.line_type}</td>
+                          <td style={{...tdS,fontSize:10,color:"#E57373"}}>{f.$(annual)}</td>
+                          <td style={{...tdS,fontSize:10}}>{f.p(Number(l.growth_rate)||0.03)}</td>
+                        </tr>;
+                      })}
+                      <tr style={{borderTop:`2px solid ${C.gold}`}}>
+                        <td colSpan={2} style={{...tdS,fontWeight:700,color:"#E57373"}}>Total Expenses</td>
+                        <td style={{...tdS,fontWeight:700,color:"#E57373"}}>{f.$(yr1Exp)}</td>
+                        <td></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </Card>
+                <Card>
+                  <CT c="Expenses by Category"/>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <BarChart data={Object.entries(expByCat).map(([cat,amt])=>({cat,amt}))} margin={{top:10,right:10,bottom:0,left:0}}>
+                      <XAxis dataKey="cat" tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false}/>
+                      <YAxis tickFormatter={v=>`$${(v/1000).toFixed(0)}k`} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false} width={45}/>
+                      <Tooltip content={<TT/>}/>
+                      <Bar dataKey="amt" fill="#E57373" radius={[3,3,0,0]} name="Expenses"/>
+                    </BarChart>
+                  </ResponsiveContainer>
+                  {yr1Rev>0&&(
+                    <div style={{marginTop:8,fontSize:11,color:C.whDim,textAlign:"center"}}>
+                      Expense Ratio: <span style={{color:C.white,fontWeight:600}}>{f.p(yr1Exp/yr1Rev)}</span>
+                      {" | "}NOI Margin: <span style={{color:C.green,fontWeight:600}}>{f.p(yr1Noi/yr1Rev)}</span>
+                    </div>
+                  )}
+                </Card>
+              </div>
+            </>
+          )}
+
+          {/* ═══ PROFORMA PROJECTION ═══ */}
+          {proforma.length>0&&(
+            <>
+              <SectionHdr t="Proforma Projection"/>
+              <Card style={{marginBottom:16}}>
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr>
+                    <th style={thS}>Metric</th>
+                    {proforma.map(yr=><th key={yr.year} style={{...thS,textAlign:"right"}}>Yr {yr.year}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    <tr>
+                      <td style={{...tdS,fontWeight:600}}>Revenue</td>
+                      {proforma.map(yr=><td key={yr.year} style={{...tdS,textAlign:"right"}}>{f.$(yr.totalRevenue)}</td>)}
+                    </tr>
+                    <tr>
+                      <td style={{...tdS,fontWeight:600,color:"#E57373"}}>Expenses</td>
+                      {proforma.map(yr=><td key={yr.year} style={{...tdS,textAlign:"right",color:"#E57373"}}>({f.$(yr.totalExpenses)})</td>)}
+                    </tr>
+                    <tr style={{borderTop:`2px solid ${C.gold}`}}>
+                      <td style={{...tdS,fontWeight:700,color:C.gold}}>NOI</td>
+                      {proforma.map(yr=><td key={yr.year} style={{...tdS,textAlign:"right",fontWeight:700,color:C.gold}}>{f.$(yr.noi)}</td>)}
+                    </tr>
+                    <tr>
+                      <td style={{...tdS,color:C.whDim}}>Margin</td>
+                      {proforma.map(yr=><td key={yr.year} style={{...tdS,textAlign:"right",color:C.whDim}}>{yr.totalRevenue>0?f.p(yr.noi/yr.totalRevenue):"—"}</td>)}
+                    </tr>
+                    {pr&&(
+                      <>
+                        <tr>
+                          <td style={{...tdS,color:C.whDim}}>Debt Service</td>
+                          {proforma.map(yr=><td key={yr.year} style={{...tdS,textAlign:"right",color:"#E57373"}}>({f.$(pr.annualDS)})</td>)}
+                        </tr>
+                        <tr style={{borderTop:`1px solid ${C.border}`}}>
+                          <td style={{...tdS,fontWeight:600,color:C.green}}>Cash Flow (Levered)</td>
+                          {proforma.map(yr=><td key={yr.year} style={{...tdS,textAlign:"right",fontWeight:600,color:yr.noi-pr.annualDS>0?C.green:C.red}}>{f.$(yr.noi-pr.annualDS)}</td>)}
+                        </tr>
+                      </>
+                    )}
+                  </tbody>
+                </table>
+                <div style={{marginTop:14}}>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <ComposedChart data={proforma} margin={{top:10,right:16,bottom:0,left:0}}>
+                      <XAxis dataKey="year" tickFormatter={v=>`Yr ${v}`} tick={{fill:C.whDim,fontSize:10}} axisLine={false} tickLine={false}/>
+                      <YAxis tickFormatter={v=>`$${(v/1000).toFixed(0)}k`} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false} width={55}/>
+                      <Tooltip formatter={(v,name)=>[f.$(v),name]} labelFormatter={v=>`Year ${v}`}
+                        contentStyle={{background:C.dark,border:`1px solid ${C.border}`,borderRadius:6,fontSize:11}}
+                        itemStyle={{color:C.white}} labelStyle={{color:C.gold,fontWeight:600}}/>
+                      <Bar dataKey="totalRevenue" fill="#5C9BD1" radius={[3,3,0,0]} name="Revenue"/>
+                      <Bar dataKey="totalExpenses" fill="#E57373" radius={[3,3,0,0]} name="Expenses"/>
+                      <Line type="monotone" dataKey="noi" stroke={C.gold} strokeWidth={2.5} dot={{fill:C.gold,r:4}} name="NOI"/>
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              </Card>
+            </>
+          )}
+
+          {/* ═══ RETURNS ANALYSIS ═══ */}
+          {pr&&(
+            <>
+              <SectionHdr t="Returns Analysis"/>
+              <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap"}}>
+                <KPI label="Levered IRR" value={f.p(pr.levIRR)} gold/>
+                <KPI label="Unlevered IRR" value={f.p(pr.unlvIRR)}/>
+                <KPI label="Equity Multiple" value={f.x(pr.moic)}/>
+                <KPI label="Going-In Cap" value={f.p(pr.goingInCap)}/>
+                <KPI label="Exit Cap" value={f.p(pr.exitCap)}/>
+                <KPI label="NOI CAGR" value={f.p(pr.noiCAGR)}/>
+                <KPI label="Exit Value" value={f.$(pr.exitValue)}/>
+                <KPI label="Sale Proceeds" value={f.$(pr.saleProceeds)}/>
+              </div>
+              <Card style={{marginBottom:16}}>
+                <CT c="Exit Analysis"/>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,fontSize:12}}>
+                  {[
+                    ["Exit Year NOI",f.$(pr.exitNoi)],["Exit Cap Rate",f.p(pr.exitCap)],["Gross Exit Value",f.$(pr.exitValue)],
+                    ["Sale Costs (2%)",f.$(pr.exitValue*0.02)],["Loan Balance",f.$(pr.loanBal)],["Net Sale Proceeds",f.$(pr.saleProceeds)],
+                    ["Total Equity Invested",f.$(pr.equity)],["Profit (Equity Basis)",f.$(pr.saleProceeds-pr.equity+proforma.reduce((s,yr)=>s+(yr.noi-pr.annualDS),0))],
+                    ["Hold Period",`${pr.holdYrs} years`],
+                  ].map(([k,v],i)=>(
+                    <div key={i}>
+                      <div style={{fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".06em"}}>{k}</div>
+                      <div style={{fontSize:13,color:C.white,fontWeight:600,marginTop:2}}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </>
+          )}
+
+          {/* ═══ FUND-LEVEL RETURNS ═══ */}
+          {analysis?.modelResult&&(
+            <>
+              <SectionHdr t="Fund-Level Returns"/>
+              <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap"}}>
+                <KPI label="LP Net IRR" value={f.p(analysis.modelResult.lpIRR)} gold/>
                 <KPI label="LP MOIC" value={f.x(analysis.modelResult.lpMOIC)}/>
                 <KPI label="GP Promote" value={f.$(analysis.modelResult.gpPromote)}/>
-                <KPI label="Exit Value" value={f.$(analysis.modelResult.totExitVal)}/>
+                <KPI label="Total Exit Value" value={f.$(analysis.modelResult.totExitVal)}/>
+                <KPI label="Total Op CF" value={f.$(analysis.modelResult.totOpCF)}/>
               </div>
-            </Card>
+              {analysis.modelResult.tierResults&&(
+                <Card style={{marginBottom:16}}>
+                  <CT c="Waterfall Distribution"/>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                    <thead><tr>
+                      <th style={thS}>Tier</th><th style={thS}>Hurdle</th><th style={thS}>LP Split</th>
+                      <th style={thS}>GP Split</th><th style={thS}>LP $</th><th style={thS}>GP $</th>
+                    </tr></thead>
+                    <tbody>
+                      <tr><td style={{...tdS,fontWeight:600}}>Return of Capital</td><td style={tdS}>—</td><td style={tdS}>—</td>
+                        <td style={tdS}>—</td><td style={{...tdS,color:"#5C9BD1"}}>{f.$(analysis.modelResult.lpROC)}</td><td style={tdS}>—</td></tr>
+                      <tr><td style={{...tdS,fontWeight:600}}>Preferred Return</td><td style={tdS}>—</td><td style={tdS}>—</td>
+                        <td style={tdS}>—</td><td style={{...tdS,color:"#5C9BD1"}}>{f.$(analysis.modelResult.lpPref)}</td><td style={tdS}>—</td></tr>
+                      {analysis.modelResult.tierResults.map((t,i)=>(
+                        <tr key={i}><td style={{...tdS,fontWeight:600}}>Tier {i+1}</td>
+                          <td style={tdS}>{t.irrHurdle!=null?f.p(t.irrHurdle):t.moicHurdle!=null?f.x(t.moicHurdle):"Residual"}</td>
+                          <td style={tdS}>{f.p(t.lpSplit)}</td><td style={tdS}>{f.p(t.gpSplit)}</td>
+                          <td style={{...tdS,color:"#5C9BD1"}}>{f.$(t.lp)}</td>
+                          <td style={{...tdS,color:C.gold}}>{f.$(t.gp)}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </Card>
+              )}
+            </>
           )}
 
-          <div style={{textAlign:"center",marginTop:30}}>
-            <button onClick={()=>setShowPresentation(false)} style={dimBtn}>Close Presentation</button>
+          {/* ═══ SENSITIVITY ═══ */}
+          {analysis?.sensitivity&&(
+            <>
+              <SectionHdr t="Sensitivity Analysis — LP IRR"/>
+              <Card style={{marginBottom:16}}>
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse"}}>
+                    <thead><tr>
+                      <th style={{...thS,textAlign:"left"}}>Exit Cap ↓ / Growth →</th>
+                      {analysis.sensitivity.growthRates.map(g=>(
+                        <th key={g} style={{...thS,textAlign:"center"}}>{(g*100).toFixed(0)}%</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>
+                      {analysis.sensitivity.grid.map(row=>(
+                        <tr key={row.exitCap}>
+                          <td style={{...tdS,color:C.goldDim,fontWeight:600}}>{(row.exitCap*100).toFixed(1)}%</td>
+                          {analysis.sensitivity.growthRates.map(g=>{
+                            const v=row.values[g]?.lpIRR;
+                            const bg=v>.18?"rgba(30,132,73,.25)":v>.14?"rgba(201,168,76,.12)":"rgba(192,57,43,.2)";
+                            const clr=v>.18?C.green:v>.14?C.white:C.red;
+                            return <td key={g} style={{...tdS,textAlign:"center",background:bg,color:clr,fontWeight:500}}>{v!=null?f.p(v):"—"}</td>;
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            </>
+          )}
+
+          {/* ═══ KEY RISKS ═══ */}
+          <SectionHdr t="Key Risks & Considerations"/>
+          <Card style={{marginBottom:30}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,fontSize:12}}>
+              {[
+                ["Market Risk","Marina valuations tied to local boating demand, economic conditions, and weather events."],
+                ["Environmental","Waterfront properties face flood, hurricane, and environmental compliance risks."],
+                ["Regulatory","Submerged land leases, dock permitting, and coastal development regulations may impact operations."],
+                ["Concentration","Revenue concentrated in slip rentals and seasonal boating activity."],
+                ["Capital Expenditure","Docks, seawalls, and lifts require significant ongoing maintenance capital."],
+                ["Insurance","Coastal properties face elevated property and liability insurance costs."],
+              ].map(([title,desc],i)=>(
+                <div key={i}>
+                  <div style={{fontWeight:700,color:C.gold,fontSize:11,marginBottom:3}}>{title}</div>
+                  <div style={{color:C.whDim,lineHeight:1.5}}>{desc}</div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* ═══ DISCLAIMER ═══ */}
+          <div style={{textAlign:"center",padding:"20px 0",borderTop:`1px solid ${C.border}`,marginTop:20}}>
+            <div style={{fontSize:9,color:"rgba(201,168,76,.3)",lineHeight:1.6,maxWidth:600,margin:"0 auto"}}>
+              This Investment Committee Memorandum is confidential and intended solely for the use of the investment committee.
+              Projections and forward-looking statements are based on assumptions that may not be realized.
+              Past performance is not indicative of future results. All figures are estimates subject to change.
+            </div>
+          </div>
+
+          <div className="ic-no-print" style={{textAlign:"center",marginTop:20,paddingBottom:40}}>
+            <button onClick={()=>setShowPresentation(false)} style={dimBtn}>Close IC Memo</button>
           </div>
         </div>
       </div>
@@ -3940,9 +4297,8 @@ function TabDeals({a}){
                 {uploading?"Uploading...":"Upload Financials"}
                 <input type="file" multiple accept=".xlsx,.xls,.xlsm,.csv" onChange={uploadFiles} style={{display:"none"}}/>
               </label>
-              <button onClick={runAnalysis} disabled={analyzing||!selectedDeal.financials?.length}
-                style={{...goldBtn,background:selectedDeal.financials?.length?C.gold:"rgba(201,168,76,.3)",
-                  cursor:selectedDeal.financials?.length?"pointer":"not-allowed"}}>
+              <button onClick={runAnalysis} disabled={analyzing}
+                style={{...goldBtn,cursor:analyzing?"not-allowed":"pointer"}}>
                 {analyzing?"Running Model...":"Analyze"}
               </button>
               <button onClick={()=>setShowPresentation(true)} style={dimBtn}>Presentation</button>
