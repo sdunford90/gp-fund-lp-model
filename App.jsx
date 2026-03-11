@@ -3171,38 +3171,48 @@ const REV_LINE_PRESETS = {
 
 // ── PROFORMA BUILDER ────────────────────────────────────────────────────
 // Accepts revenue lines, expense lines, per-year overrides, and hold period.
-// Any cell can be hard-coded via overrides: { "rev_0_3": 150000, "exp_2_5": 50000, "totalRevenue_3": 2000000 }
-// Rate schedule overrides: { "rev_0_rate_3": 1500 } = line 0 rate in year 3
+// Override keys:
+//   Annual: "rev_0_3": 150000, "exp_2_5": 50000, "totalRevenue_3": 2000000, "noi_3": 500000
+//   Monthly: "rev_0_3_m6": 12500 (line 0, year 3, month 6)
+//   Monthly total: "totalRevenue_3_m6": 200000
+//   Rate: "rev_0_rate_3": 1500 (override rate for line 0 in year 3)
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
 function buildProforma(revenueLines, expenseLines, holdYears = 7, overrides = {}) {
   const years = [];
   for (let yr = 1; yr <= holdYears; yr++) {
-    // Revenue lines
+    // Revenue lines with monthly breakdown
     const revLineResults = revenueLines.map((l, li) => {
-      // Check for rate override this year
       const rateOverrideKey = `rev_${li}_rate_${yr}`;
       const valueOverrideKey = `rev_${li}_${yr}`;
 
       const baseAnnualRate = l.rate_period === 'monthly' ? l.rate * 12 : l.rate;
       let annualRate;
       if (overrides[rateOverrideKey] != null) {
-        // Hard-coded rate for this year
         annualRate = l.rate_period === 'monthly' ? overrides[rateOverrideKey] * 12 : overrides[rateOverrideKey];
       } else {
         annualRate = baseAnnualRate * Math.pow(1 + (l.growth_rate || 0.03), yr - 1);
       }
 
-      const gross = l.unit_count * annualRate;
-      const effective = gross * (l.occupancy ?? 1.0);
+      const monthlyRate = annualRate / 12;
+      const months = [];
+      let annualTotal = 0;
+      for (let m = 0; m < 12; m++) {
+        const mKey = `rev_${li}_${yr}_m${m}`;
+        const computed = monthlyRate * l.unit_count * (l.occupancy ?? 1.0);
+        const val = overrides[mKey] != null ? overrides[mKey] : computed;
+        months.push({ month: m, value: val, isOverridden: overrides[mKey] != null });
+        annualTotal += val;
+      }
 
-      // Hard-coded total value override for this line+year
-      const finalValue = overrides[valueOverrideKey] != null ? overrides[valueOverrideKey] : effective;
-      const isOverridden = overrides[valueOverrideKey] != null;
-      const isRateOverridden = overrides[rateOverrideKey] != null;
+      const finalValue = overrides[valueOverrideKey] != null ? overrides[valueOverrideKey] : annualTotal;
 
-      return { ...l, year: yr, idx: li, annualRate, gross, effective: finalValue, isOverridden, isRateOverridden };
+      return { ...l, year: yr, idx: li, annualRate, effective: finalValue, months,
+        isOverridden: overrides[valueOverrideKey] != null,
+        isRateOverridden: overrides[rateOverrideKey] != null };
     });
 
-    // Expense lines
+    // Expense lines with monthly breakdown
     const expLineResults = expenseLines.map((l, li) => {
       const rateOverrideKey = `exp_${li}_rate_${yr}`;
       const valueOverrideKey = `exp_${li}_${yr}`;
@@ -3215,30 +3225,45 @@ function buildProforma(revenueLines, expenseLines, holdYears = 7, overrides = {}
         amount = baseAmount * Math.pow(1 + (l.growth_rate || 0.03), yr - 1);
       }
 
-      const finalValue = overrides[valueOverrideKey] != null ? overrides[valueOverrideKey] : amount;
-      const isOverridden = overrides[valueOverrideKey] != null;
-      const isRateOverridden = overrides[rateOverrideKey] != null;
+      const monthlyAmt = amount / 12;
+      const months = [];
+      let annualTotal = 0;
+      for (let m = 0; m < 12; m++) {
+        const mKey = `exp_${li}_${yr}_m${m}`;
+        const computed = monthlyAmt;
+        const val = overrides[mKey] != null ? overrides[mKey] : computed;
+        months.push({ month: m, value: val, isOverridden: overrides[mKey] != null });
+        annualTotal += val;
+      }
 
-      return { ...l, year: yr, idx: li, amount: finalValue, isOverridden, isRateOverridden };
+      const finalValue = overrides[valueOverrideKey] != null ? overrides[valueOverrideKey] : annualTotal;
+
+      return { ...l, year: yr, idx: li, amount: finalValue, months,
+        isOverridden: overrides[valueOverrideKey] != null,
+        isRateOverridden: overrides[rateOverrideKey] != null };
     });
 
     let totalRevenue = revLineResults.reduce((s, l) => s + l.effective, 0);
     let totalExpenses = expLineResults.reduce((s, l) => s + Math.abs(l.amount), 0);
-
-    // Total-level overrides
     if (overrides[`totalRevenue_${yr}`] != null) totalRevenue = overrides[`totalRevenue_${yr}`];
     if (overrides[`totalExpenses_${yr}`] != null) totalExpenses = overrides[`totalExpenses_${yr}`];
+
+    // Monthly totals
+    const monthlyTotals = [];
+    for (let m = 0; m < 12; m++) {
+      let mRev = revLineResults.reduce((s, l) => s + l.months[m].value, 0);
+      let mExp = expLineResults.reduce((s, l) => s + Math.abs(l.months[m].value), 0);
+      if (overrides[`totalRevenue_${yr}_m${m}`] != null) mRev = overrides[`totalRevenue_${yr}_m${m}`];
+      if (overrides[`totalExpenses_${yr}_m${m}`] != null) mExp = overrides[`totalExpenses_${yr}_m${m}`];
+      monthlyTotals.push({ month: m, revenue: mRev, expenses: mExp, noi: mRev - mExp });
+    }
 
     let noi = totalRevenue - totalExpenses;
     if (overrides[`noi_${yr}`] != null) noi = overrides[`noi_${yr}`];
 
     years.push({
-      year: yr,
-      revLines: revLineResults,
-      expLines: expLineResults,
-      totalRevenue,
-      totalExpenses,
-      noi,
+      year: yr, revLines: revLineResults, expLines: expLineResults,
+      totalRevenue, totalExpenses, noi, monthlyTotals,
       isRevOverridden: overrides[`totalRevenue_${yr}`] != null,
       isExpOverridden: overrides[`totalExpenses_${yr}`] != null,
       isNoiOverridden: overrides[`noi_${yr}`] != null,
@@ -3304,6 +3329,7 @@ function TabDeals({a}){
   const [proformaOverrides,setProformaOverrides]=useState({});
   const [revDirty,setRevDirty]=useState(false);
   const [editingCell,setEditingCell]=useState(null); // { key, currentValue }
+  const [expandedYears,setExpandedYears]=useState({}); // { 1: true, 3: true } = year 1 and 3 expanded to monthly
   const [dealTab,setDealTab]=useState("financials");
   const [showPresentation,setShowPresentation]=useState(false);
 
@@ -4090,12 +4116,12 @@ function TabDeals({a}){
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                 <SHdr t="Proforma Projection"/>
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                  <span style={{fontSize:9,color:C.whDim}}>Double-click any cell to hard-code. Right-click to reset.</span>
-                  {revDirty&&<button onClick={saveAllLines} style={{...goldBtn,fontSize:9,padding:"4px 10px",
-                    background:C.green}}>Save</button>}
+                  <span style={{fontSize:8,color:C.whDim}}>Dbl-click to edit. Right-click to reset.</span>
+                  {revDirty&&<button onClick={saveAllLines} style={{...goldBtn,fontSize:10,padding:"5px 14px",
+                    background:C.green}}>Save Changes</button>}
                   {Object.keys(proformaOverrides).length>0&&(
                     <button onClick={()=>{setProformaOverrides({});setRevDirty(true);}} style={{...dimBtn,fontSize:9,padding:"4px 10px"}}>
-                      Clear All Overrides ({Object.keys(proformaOverrides).length})
+                      Clear Overrides ({Object.keys(proformaOverrides).length})
                     </button>
                   )}
                 </div>
@@ -4106,33 +4132,56 @@ function TabDeals({a}){
                 </div>
               ):(
                 <div>
-                  {/* Summary table with editable cells */}
+                  {/* ── ANNUAL SUMMARY — click year to expand monthly ── */}
                   <div style={{overflowX:"auto",marginBottom:16}}>
                     <table style={{width:"100%",borderCollapse:"collapse"}}>
                       <thead><tr>
-                        <th style={thS}>Year</th><th style={thS}>Revenue</th><th style={thS}>Expenses</th>
+                        <th style={thS}></th><th style={thS}>Year</th><th style={thS}>Revenue</th><th style={thS}>Expenses</th>
                         <th style={thS}>NOI</th><th style={thS}>Margin</th><th style={thS}>NOI YoY</th>
                       </tr></thead>
                       <tbody>
                         {proforma.map((yr,i)=>{
                           const prevNoi=i>0?proforma[i-1].noi:null;
                           const yoy=prevNoi&&prevNoi>0?(yr.noi-prevNoi)/prevNoi:null;
-                          return(
-                            <tr key={yr.year}>
-                              <td style={{...tdS,fontWeight:600}}>Yr {yr.year}</td>
+                          const isExpanded=expandedYears[yr.year];
+                          return(<React.Fragment key={yr.year}>
+                            <tr style={{background:isExpanded?"rgba(201,168,76,.06)":"transparent"}}>
+                              <td style={{...tdS,width:24,cursor:"pointer",textAlign:"center",color:C.goldDim,fontSize:13}}
+                                onClick={()=>setExpandedYears(p=>({...p,[yr.year]:!p[yr.year]}))}>
+                                {isExpanded?"▾":"▸"}
+                              </td>
+                              <td style={{...tdS,fontWeight:600,cursor:"pointer"}}
+                                onClick={()=>setExpandedYears(p=>({...p,[yr.year]:!p[yr.year]}))}>
+                                Yr {yr.year}
+                              </td>
                               <EditableCell cellKey={`totalRevenue_${yr.year}`} computedValue={yr.totalRevenue} style={{color:C.white}}/>
-                              <EditableCell cellKey={`totalExpenses_${yr.year}`} computedValue={yr.totalExpenses} style={{color:C.red}}/>
-                              <EditableCell cellKey={`noi_${yr.year}`} computedValue={yr.noi} style={{color:C.green,fontWeight:600}}/>
+                              <EditableCell cellKey={`totalExpenses_${yr.year}`} computedValue={yr.totalExpenses} style={{color:"#E57373"}}/>
+                              <EditableCell cellKey={`noi_${yr.year}`} computedValue={yr.noi} style={{color:"#66BB6A",fontWeight:600}}/>
                               <td style={tdS}>{yr.totalRevenue>0?f.p(yr.noi/yr.totalRevenue):"—"}</td>
-                              <td style={{...tdS,color:yoy&&yoy>0?C.green:yoy&&yoy<0?C.red:C.whDim}}>
+                              <td style={{...tdS,color:yoy&&yoy>0?"#66BB6A":yoy&&yoy<0?"#E57373":C.whDim}}>
                                 {yoy!=null?f.p(yoy):"—"}</td>
-                            </tr>);
+                            </tr>
+                            {/* ── MONTHLY ROWS (expanded) ── */}
+                            {isExpanded&&yr.monthlyTotals.map(mt=>(
+                              <tr key={`${yr.year}_m${mt.month}`} style={{background:"rgba(255,255,255,.02)"}}>
+                                <td style={{...tdS,width:24}}></td>
+                                <td style={{...tdS,fontSize:10,color:C.whDim,paddingLeft:24}}>{MONTHS[mt.month]}</td>
+                                <EditableCell cellKey={`totalRevenue_${yr.year}_m${mt.month}`}
+                                  computedValue={mt.revenue} style={{fontSize:10}}/>
+                                <EditableCell cellKey={`totalExpenses_${yr.year}_m${mt.month}`}
+                                  computedValue={mt.expenses} style={{fontSize:10,color:"#E57373"}}/>
+                                <td style={{...tdS,fontSize:10,color:"#66BB6A"}}>{f.$(mt.noi)}</td>
+                                <td style={{...tdS,fontSize:10}}>{mt.revenue>0?f.p(mt.noi/mt.revenue):"—"}</td>
+                                <td style={tdS}></td>
+                              </tr>
+                            ))}
+                          </React.Fragment>);
                         })}
                       </tbody>
                     </table>
                   </div>
 
-                  {/* Revenue by line per year — editable */}
+                  {/* ── REVENUE BY LINE — with monthly expand ── */}
                   {revLines.length>0&&(
                     <div>
                       <SHdr t="Revenue by Line"/>
@@ -4140,18 +4189,41 @@ function TabDeals({a}){
                         <table style={{width:"100%",borderCollapse:"collapse",minWidth:600}}>
                           <thead><tr>
                             <th style={thS}>Line</th>
-                            {proforma.map(yr=><th key={yr.year} style={{...thS,textAlign:"center"}}>Yr {yr.year}</th>)}
+                            {proforma.map(yr=><th key={yr.year} style={{...thS,textAlign:"center"}}>
+                              <span style={{cursor:"pointer"}} onClick={()=>setExpandedYears(p=>({...p,[yr.year]:!p[yr.year]}))}>
+                                Yr {yr.year} {expandedYears[yr.year]?"▾":""}
+                              </span>
+                            </th>)}
                           </tr></thead>
                           <tbody>
                             {revLines.map((l,li)=>(
-                              <tr key={li}>
-                                <td style={{...tdS,whiteSpace:"nowrap",fontSize:10}}>{l.category} — {l.line_type}</td>
-                                {proforma.map(yr=>{
-                                  const line=yr.revLines?.[li];
-                                  return <EditableCell key={yr.year} cellKey={`rev_${li}_${yr.year}`}
-                                    computedValue={line?.effective||0} style={{textAlign:"center"}}/>;
-                                })}
-                              </tr>
+                              <React.Fragment key={li}>
+                                <tr>
+                                  <td style={{...tdS,whiteSpace:"nowrap",fontSize:10}}>{l.category} — {l.line_type}</td>
+                                  {proforma.map(yr=>{
+                                    const line=yr.revLines?.[li];
+                                    return <EditableCell key={yr.year} cellKey={`rev_${li}_${yr.year}`}
+                                      computedValue={line?.effective||0} style={{textAlign:"center"}}/>;
+                                  })}
+                                </tr>
+                                {/* Monthly detail for this rev line */}
+                                {proforma.some(yr=>expandedYears[yr.year])&&(
+                                  MONTHS.map((mName,mi)=>{
+                                    // Only show if at least one year is expanded
+                                    if(!proforma.some(yr=>expandedYears[yr.year])) return null;
+                                    return <tr key={`${li}_m${mi}`} style={{background:"rgba(255,255,255,.015)"}}>
+                                      <td style={{...tdS,fontSize:9,color:C.whDim,paddingLeft:20}}>{mName}</td>
+                                      {proforma.map(yr=>{
+                                        if(!expandedYears[yr.year]) return <td key={yr.year} style={{...tdS,textAlign:"center",fontSize:9,color:"rgba(255,255,255,.15)"}}>—</td>;
+                                        const line=yr.revLines?.[li];
+                                        const mVal=line?.months?.[mi]?.value||0;
+                                        return <EditableCell key={yr.year} cellKey={`rev_${li}_${yr.year}_m${mi}`}
+                                          computedValue={mVal} style={{textAlign:"center",fontSize:9}}/>;
+                                      })}
+                                    </tr>;
+                                  })
+                                )}
+                              </React.Fragment>
                             ))}
                             <tr style={{borderTop:`1px solid ${C.gold}`}}>
                               <td style={{...tdS,fontWeight:600,color:C.gold}}>Total Revenue</td>
@@ -4166,7 +4238,7 @@ function TabDeals({a}){
                     </div>
                   )}
 
-                  {/* Expenses by line per year — editable */}
+                  {/* ── EXPENSES BY LINE — with monthly expand ── */}
                   {expLines.length>0&&(
                     <div>
                       <SHdr t="Expenses by Line"/>
@@ -4174,23 +4246,42 @@ function TabDeals({a}){
                         <table style={{width:"100%",borderCollapse:"collapse",minWidth:600}}>
                           <thead><tr>
                             <th style={thS}>Line</th>
-                            {proforma.map(yr=><th key={yr.year} style={{...thS,textAlign:"center"}}>Yr {yr.year}</th>)}
+                            {proforma.map(yr=><th key={yr.year} style={{...thS,textAlign:"center"}}>
+                              Yr {yr.year}
+                            </th>)}
                           </tr></thead>
                           <tbody>
                             {expLines.map((l,li)=>(
-                              <tr key={li}>
-                                <td style={{...tdS,whiteSpace:"nowrap",fontSize:10}}>{l.category} — {l.line_type}</td>
-                                {proforma.map(yr=>{
-                                  const line=yr.expLines?.[li];
-                                  return <EditableCell key={yr.year} cellKey={`exp_${li}_${yr.year}`}
-                                    computedValue={line?.amount||0} style={{textAlign:"center",color:C.red}}/>;
-                                })}
-                              </tr>
+                              <React.Fragment key={li}>
+                                <tr>
+                                  <td style={{...tdS,whiteSpace:"nowrap",fontSize:10}}>{l.category} — {l.line_type}</td>
+                                  {proforma.map(yr=>{
+                                    const line=yr.expLines?.[li];
+                                    return <EditableCell key={yr.year} cellKey={`exp_${li}_${yr.year}`}
+                                      computedValue={line?.amount||0} style={{textAlign:"center",color:"#E57373"}}/>;
+                                  })}
+                                </tr>
+                                {proforma.some(yr=>expandedYears[yr.year])&&(
+                                  MONTHS.map((mName,mi)=>{
+                                    if(!proforma.some(yr=>expandedYears[yr.year])) return null;
+                                    return <tr key={`${li}_m${mi}`} style={{background:"rgba(255,255,255,.015)"}}>
+                                      <td style={{...tdS,fontSize:9,color:C.whDim,paddingLeft:20}}>{mName}</td>
+                                      {proforma.map(yr=>{
+                                        if(!expandedYears[yr.year]) return <td key={yr.year} style={{...tdS,textAlign:"center",fontSize:9,color:"rgba(255,255,255,.15)"}}>—</td>;
+                                        const line=yr.expLines?.[li];
+                                        const mVal=line?.months?.[mi]?.value||0;
+                                        return <EditableCell key={yr.year} cellKey={`exp_${li}_${yr.year}_m${mi}`}
+                                          computedValue={mVal} style={{textAlign:"center",fontSize:9,color:"#E57373"}}/>;
+                                      })}
+                                    </tr>;
+                                  })
+                                )}
+                              </React.Fragment>
                             ))}
                             <tr style={{borderTop:`1px solid ${C.gold}`}}>
-                              <td style={{...tdS,fontWeight:600,color:C.red}}>Total Expenses</td>
+                              <td style={{...tdS,fontWeight:600,color:"#E57373"}}>Total Expenses</td>
                               {proforma.map(yr=>(
-                                <td key={yr.year} style={{...tdS,textAlign:"center",fontWeight:600,color:C.red}}>
+                                <td key={yr.year} style={{...tdS,textAlign:"center",fontWeight:600,color:"#E57373"}}>
                                   {f.$(yr.totalExpenses)}</td>
                               ))}
                             </tr>
@@ -4200,23 +4291,52 @@ function TabDeals({a}){
                     </div>
                   )}
 
-                  {/* Chart */}
+                  {/* ── CHART — improved colors ── */}
                   <Card>
-                    <CT c="Revenue vs NOI Projection"/>
-                    <ResponsiveContainer width="100%" height={220}>
+                    <CT c="Annual Projection"/>
+                    <ResponsiveContainer width="100%" height={240}>
                       <ComposedChart data={proforma} margin={{top:10,right:16,bottom:0,left:0}}>
-                        <XAxis dataKey="year" tickFormatter={v=>`Yr ${v}`} tick={{fill:C.whDim,fontSize:10}}
+                        <XAxis dataKey="year" tickFormatter={v=>`Yr ${v}`} tick={{fill:C.white,fontSize:10}}
                           axisLine={false} tickLine={false}/>
-                        <YAxis tickFormatter={v=>f.$(v)} tick={{fill:C.whDim,fontSize:9}}
-                          axisLine={false} tickLine={false} width={55}/>
-                        <Tooltip content={<TT/>}/>
-                        <Bar dataKey="totalRevenue" fill="rgba(41,128,185,.4)" radius={[3,3,0,0]} name="Revenue"/>
-                        <Bar dataKey="totalExpenses" fill="rgba(192,57,43,.3)" radius={[3,3,0,0]} name="Expenses"/>
-                        <Line type="monotone" dataKey="noi" stroke={C.gold} strokeWidth={2.5}
-                          dot={{fill:C.gold,r:4}} name="NOI"/>
+                        <YAxis tickFormatter={v=>`$${(v/1000).toFixed(0)}k`} tick={{fill:C.whDim,fontSize:9}}
+                          axisLine={false} tickLine={false} width={50}/>
+                        <Tooltip formatter={(v,name)=>[f.$(v),name]} labelFormatter={v=>`Year ${v}`}
+                          contentStyle={{background:C.dark,border:`1px solid ${C.border}`,borderRadius:6,fontSize:11}}
+                          itemStyle={{color:C.white}} labelStyle={{color:C.gold,fontWeight:600}}/>
+                        <Bar dataKey="totalRevenue" fill="#5C9BD1" radius={[4,4,0,0]} name="Revenue"/>
+                        <Bar dataKey="totalExpenses" fill="#E57373" radius={[4,4,0,0]} name="Expenses"/>
+                        <Line type="monotone" dataKey="noi" stroke={C.gold} strokeWidth={3}
+                          dot={{fill:C.gold,r:5,stroke:C.dark,strokeWidth:2}} name="NOI"/>
                       </ComposedChart>
                     </ResponsiveContainer>
                   </Card>
+
+                  {/* ── MONTHLY CHART for expanded year ── */}
+                  {Object.entries(expandedYears).filter(([,v])=>v).map(([yrStr])=>{
+                    const yrNum=Number(yrStr);
+                    const yrData=proforma.find(y=>y.year===yrNum);
+                    if(!yrData) return null;
+                    const chartData=yrData.monthlyTotals.map(mt=>({
+                      month:MONTHS[mt.month], revenue:mt.revenue, expenses:mt.expenses, noi:mt.noi
+                    }));
+                    return <Card key={yrNum} style={{marginTop:12}}>
+                      <CT c={`Year ${yrNum} — Monthly Detail`}/>
+                      <ResponsiveContainer width="100%" height={200}>
+                        <ComposedChart data={chartData} margin={{top:10,right:16,bottom:0,left:0}}>
+                          <XAxis dataKey="month" tick={{fill:C.white,fontSize:9}} axisLine={false} tickLine={false}/>
+                          <YAxis tickFormatter={v=>`$${(v/1000).toFixed(0)}k`} tick={{fill:C.whDim,fontSize:9}}
+                            axisLine={false} tickLine={false} width={50}/>
+                          <Tooltip formatter={(v,name)=>[f.$(v),name]} labelFormatter={v=>v}
+                            contentStyle={{background:C.dark,border:`1px solid ${C.border}`,borderRadius:6,fontSize:11}}
+                            itemStyle={{color:C.white}} labelStyle={{color:C.gold,fontWeight:600}}/>
+                          <Bar dataKey="revenue" fill="#5C9BD1" radius={[3,3,0,0]} name="Revenue"/>
+                          <Bar dataKey="expenses" fill="#E57373" radius={[3,3,0,0]} name="Expenses"/>
+                          <Line type="monotone" dataKey="noi" stroke={C.gold} strokeWidth={2.5}
+                            dot={{fill:C.gold,r:4,stroke:C.dark,strokeWidth:1}} name="NOI"/>
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </Card>;
+                  })}
                 </div>
               )}
             </div>
