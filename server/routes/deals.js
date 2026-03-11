@@ -464,5 +464,104 @@ export default function dealRoutes(pool) {
     }
   });
 
+  // ── DEAL VERSIONS ──────────────────────────────────────────────────────
+  // List versions (metadata only, no snapshot body)
+  router.get('/deals/:id/versions', async (req, res) => {
+    try {
+      const result = await pool.query(
+        'SELECT id, deal_id, version_name, created_at FROM deal_versions WHERE deal_id=$1 ORDER BY created_at DESC',
+        [req.params.id]
+      );
+      res.json(result.rows);
+    } catch (err) {
+      console.error('Error listing versions:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Save a new named version snapshot of the deal's current state
+  router.post('/deals/:id/versions', async (req, res) => {
+    const dealId = req.params.id;
+    const { version_name } = req.body;
+    try {
+      const [deal, revLines, expLines] = await Promise.all([
+        pool.query('SELECT * FROM deals WHERE id=$1', [dealId]),
+        pool.query('SELECT * FROM deal_revenue_lines WHERE deal_id=$1 ORDER BY sort_order', [dealId]),
+        pool.query('SELECT * FROM deal_expense_lines WHERE deal_id=$1 ORDER BY sort_order', [dealId]),
+      ]);
+      if (deal.rows.length === 0) return res.status(404).json({ error: 'Deal not found' });
+      const snapshot = {
+        deal: deal.rows[0],
+        revenueLines: revLines.rows,
+        expenseLines: expLines.rows,
+      };
+      const result = await pool.query(
+        'INSERT INTO deal_versions (deal_id, version_name, snapshot) VALUES ($1,$2,$3) RETURNING id, deal_id, version_name, created_at',
+        [dealId, version_name || `Version ${new Date().toLocaleDateString()}`, JSON.stringify(snapshot)]
+      );
+      res.json(result.rows[0]);
+    } catch (err) {
+      console.error('Error saving version:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Restore a version — overwrites the deal record, revenue lines, and expense lines
+  router.post('/deals/:id/versions/:vid/restore', async (req, res) => {
+    const { id: dealId, vid } = req.params;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const vRow = await client.query('SELECT snapshot FROM deal_versions WHERE id=$1 AND deal_id=$2', [vid, dealId]);
+      if (vRow.rows.length === 0) return res.status(404).json({ error: 'Version not found' });
+      const snap = vRow.rows[0].snapshot;
+      const d = snap.deal;
+      await client.query(
+        `UPDATE deals SET name=$1, property_type=$2, market=$3, address=$4, units=$5, slips=$6,
+         price=$7, start_month=$8, status=$9, notes=$10, assumptions=$11, updated_at=NOW()
+         WHERE id=$12`,
+        [d.name, d.property_type, d.market, d.address, d.units, d.slips,
+         d.price, d.start_month, d.status, d.notes, JSON.stringify(d.assumptions||{}), dealId]
+      );
+      await client.query('DELETE FROM deal_revenue_lines WHERE deal_id=$1', [dealId]);
+      for (const [i, line] of (snap.revenueLines||[]).entries()) {
+        await client.query(
+          `INSERT INTO deal_revenue_lines (deal_id,category,line_type,unit_count,rate,rate_period,occupancy,growth_rate,start_year,notes,sort_order)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          [dealId,line.category,line.line_type,line.unit_count,line.rate,line.rate_period,
+           line.occupancy,line.growth_rate,line.start_year,line.notes,line.sort_order??i]
+        );
+      }
+      await client.query('DELETE FROM deal_expense_lines WHERE deal_id=$1', [dealId]);
+      for (const [i, line] of (snap.expenseLines||[]).entries()) {
+        await client.query(
+          `INSERT INTO deal_expense_lines (deal_id,category,line_type,amount,rate_period,growth_rate,pct_of_revenue,notes,sort_order)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [dealId,line.category,line.line_type,line.amount,line.rate_period,
+           line.growth_rate,line.pct_of_revenue,line.notes,line.sort_order??i]
+        );
+      }
+      await client.query('COMMIT');
+      res.json({ success: true });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Error restoring version:', err);
+      res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
+    }
+  });
+
+  // Delete a version
+  router.delete('/deals/:id/versions/:vid', async (req, res) => {
+    try {
+      await pool.query('DELETE FROM deal_versions WHERE id=$1 AND deal_id=$2', [req.params.vid, req.params.id]);
+      res.json({ success: true });
+    } catch (err) {
+      console.error('Error deleting version:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   return router;
 }

@@ -140,6 +140,17 @@ export async function ensureSchema(pool) {
       )
     `);
 
+    // Deal versions: named snapshots of a deal's full state
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS deal_versions (
+        id SERIAL PRIMARY KEY,
+        deal_id INTEGER REFERENCES deals(id) ON DELETE CASCADE,
+        version_name VARCHAR(255) NOT NULL,
+        snapshot JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
     // Migrations — add columns to existing tables safely
     await client.query(`ALTER TABLE deals ADD COLUMN IF NOT EXISTS slips INTEGER`);
 

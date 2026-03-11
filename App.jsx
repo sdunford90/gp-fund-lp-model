@@ -3390,6 +3390,8 @@ function TabDeals({a}){
       setSelectedDeal(d); setAnalysis(null); setSaveMsg("");
       setRevLines(d.revenueLines||[]); setRevDirty(false);
       setExpLines(d.expenseLines||[]);
+      setShowVersionPanel(false); setShowVersionInput(false); setVersionNameInput("");
+      loadVersions(id);
       setProformaOverrides(d.assumptions?.proforma_overrides||{});
       // Populate deal assumptions from saved analysis or defaults
       const saved=d.assumptions?.deal_analysis||{};
@@ -3580,6 +3582,45 @@ function TabDeals({a}){
 
   const [saving,setSaving2]=useState(false);
   const [saveMsg,setSaveMsg]=useState("");
+  const [versions,setVersions]=useState([]);
+  const [showVersionPanel,setShowVersionPanel]=useState(false);
+  const [savingVersion,setSavingVersion]=useState(false);
+  const [versionNameInput,setVersionNameInput]=useState("");
+  const [showVersionInput,setShowVersionInput]=useState(false);
+
+  const loadVersions=useCallback(async(id)=>{
+    try{ const r=await fetch(`/api/deals/${id}/versions`); setVersions(await r.json()); }
+    catch(e){ console.error(e); }
+  },[]);
+
+  const saveVersion=async()=>{
+    if(!selectedDeal) return;
+    setSavingVersion(true);
+    try{
+      await saveAllLines();
+      const name=versionNameInput.trim()||`Version – ${new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`;
+      const r=await fetch(`/api/deals/${selectedDeal.id}/versions`,{method:'POST',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({version_name:name})});
+      if(r.ok){ setVersionNameInput(""); setShowVersionInput(false); await loadVersions(selectedDeal.id); }
+    }catch(e){ console.error(e); }
+    finally{ setSavingVersion(false); }
+  };
+
+  const restoreVersion=async(vid)=>{
+    if(!selectedDeal||!confirm("Restore this version? Current deal data will be overwritten.")) return;
+    try{
+      const r=await fetch(`/api/deals/${selectedDeal.id}/versions/${vid}/restore`,{method:'POST'});
+      if(r.ok){ await selectDeal(selectedDeal.id); await loadVersions(selectedDeal.id); }
+    }catch(e){ console.error(e); }
+  };
+
+  const deleteVersion=async(vid)=>{
+    if(!selectedDeal||!confirm("Delete this saved version?")) return;
+    try{
+      const r=await fetch(`/api/deals/${selectedDeal.id}/versions/${vid}`,{method:'DELETE'});
+      if(r.ok){ await loadVersions(selectedDeal.id); }
+    }catch(e){ console.error(e); }
+  };
   const saveAllLines=async()=>{
     if(!selectedDeal) return;
     setSaving2(true); setSaveMsg("");
@@ -4414,7 +4455,7 @@ function TabDeals({a}){
                 ].filter(Boolean).join(" · ")}
               </div>
             </div>
-            <div style={{display:"flex",gap:8}}>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
               <label style={{...goldBtn,cursor:"pointer",display:"inline-block"}}>
                 {uploading?"Uploading...":"Upload Financials"}
                 <input type="file" multiple accept=".xlsx,.xls,.xlsm,.csv" onChange={uploadFiles} style={{display:"none"}}/>
@@ -4423,10 +4464,80 @@ function TabDeals({a}){
                 style={{...goldBtn,cursor:analyzing?"not-allowed":"pointer"}}>
                 {analyzing?"Running Model...":"Analyze"}
               </button>
+              <button onClick={()=>setShowVersionPanel(v=>!v)}
+                style={{...dimBtn,background:showVersionPanel?"rgba(201,168,76,.15)":"transparent",
+                  color:versions.length>0?C.gold:C.whDim}}>
+                Versions {versions.length>0?`(${versions.length})`:""}
+              </button>
               <button onClick={()=>setShowPresentation(true)} style={dimBtn}>Presentation</button>
               <button onClick={()=>deleteDeal(selectedDeal.id)} style={{...dimBtn,color:C.red}}>Delete</button>
             </div>
           </div>
+
+          {/* ── VERSIONS PANEL ─────────────────────────────── */}
+          {showVersionPanel&&(
+            <div style={{background:"rgba(201,168,76,.06)",border:`1px solid rgba(201,168,76,.2)`,
+              borderRadius:8,padding:14,marginBottom:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <div style={{fontSize:11,fontWeight:700,color:C.gold,textTransform:"uppercase",letterSpacing:".06em"}}>
+                  Saved Versions
+                </div>
+                <button onClick={()=>setShowVersionInput(v=>!v)}
+                  style={{...goldBtn,fontSize:9,padding:"4px 10px"}}>
+                  + Save Current
+                </button>
+              </div>
+              {showVersionInput&&(
+                <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center"}}>
+                  <input value={versionNameInput} onChange={e=>setVersionNameInput(e.target.value)}
+                    onKeyDown={e=>e.key==="Enter"&&saveVersion()}
+                    placeholder="Version name (e.g. Base Case, Bull Scenario)…"
+                    style={{flex:1,background:"rgba(255,255,255,.06)",border:`1px solid ${C.border}`,borderRadius:4,
+                      color:C.white,fontSize:11,padding:"5px 10px"}}/>
+                  <button onClick={saveVersion} disabled={savingVersion}
+                    style={{...goldBtn,fontSize:9,padding:"5px 12px"}}>
+                    {savingVersion?"Saving…":"Save"}
+                  </button>
+                  <button onClick={()=>setShowVersionInput(false)} style={{...dimBtn,fontSize:9,padding:"5px 10px"}}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+              {versions.length===0?(
+                <div style={{fontSize:11,color:C.whDim,textAlign:"center",padding:"10px 0"}}>
+                  No versions saved yet. Click "+ Save Current" to snapshot this deal.
+                </div>
+              ):(
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr>
+                    <th style={{...thS,textAlign:"left"}}>Name</th>
+                    <th style={thS}>Saved</th>
+                    <th style={{...thS,width:140}}></th>
+                  </tr></thead>
+                  <tbody>
+                    {versions.map(v=>(
+                      <tr key={v.id} style={{borderBottom:`1px solid rgba(255,255,255,.04)`}}>
+                        <td style={{...tdS,color:C.white,fontWeight:500}}>{v.version_name}</td>
+                        <td style={{...tdS,color:C.whDim,fontSize:10}}>
+                          {new Date(v.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'})}
+                        </td>
+                        <td style={{...tdS,textAlign:"right"}}>
+                          <button onClick={()=>restoreVersion(v.id)}
+                            style={{...dimBtn,fontSize:9,padding:"3px 10px",marginRight:6,color:C.gold}}>
+                            Restore
+                          </button>
+                          <button onClick={()=>deleteVersion(v.id)}
+                            style={{background:"transparent",border:"none",color:C.red,cursor:"pointer",fontSize:12,padding:"3px 6px"}}>
+                            ×
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
 
           {/* Sub-tabs */}
           <div style={{display:"flex",gap:0,marginBottom:16,borderBottom:`1px solid ${C.border}`}}>
