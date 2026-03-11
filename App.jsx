@@ -3428,60 +3428,69 @@ function TabDeals({a}){
     finally{ setUploading(false); e.target.value=''; }
   };
 
-  const runAnalysis=async()=>{
-    if(!selectedDeal) return;
+  const runAnalysis=()=>{
+    if(!selectedDeal||!proformaReturns) return;
     setAnalyzing(true);
     try{
-      // Build assumptions for server
-      const dealOvr={};
-      dealOvr.exitCapRate=dealAssumptions.exitCapRate||0.075;
-      dealOvr.fundTerm=dealAssumptions.holdYears||a.fundTerm||7;
-      dealOvr.debtPct=dealAssumptions.debtPct!=null?dealAssumptions.debtPct:0.60;
-      dealOvr.interestRate=dealAssumptions.interestRate||0.065;
-      if(dealAssumptions.price) dealOvr.overridePrice=Number(dealAssumptions.price);
-      else if(selectedDeal.price) dealOvr.overridePrice=Number(selectedDeal.price);
-      if(dealAssumptions.goingInCap) dealOvr.overrideGoingInCap=dealAssumptions.goingInCap;
+      const pr=proformaReturns;
+      const price=pr.price;
+      const capRate=pr.goingInCap;
+      const noiGrowth=dealAssumptions.noiGrowth||0.03;
+      const exitCap=dealAssumptions.exitCapRate||0.075;
+      const holdYrs=dealAssumptions.holdYears||a.fundTerm||7;
+      const debtPct2=dealAssumptions.debtPct!=null?dealAssumptions.debtPct:0.60;
+      const intRate2=dealAssumptions.interestRate||0.065;
 
-      // Use proforma NOI growth if we have proforma data
-      if(proformaReturns&&proformaReturns.noiCAGR){
-        dealOvr.overrideGrowth=proformaReturns.noiCAGR;
-      } else if(dealAssumptions.noiGrowth!=null){
-        dealOvr.overrideGrowth=dealAssumptions.noiGrowth;
-      }
+      // Build single-asset model input for run()
+      const asset={
+        name:selectedDeal.name||"Deal",
+        price:price,
+        cap:capRate,
+        growth:noiGrowth,
+        startMonth:1,
+        noiMargin:0.525,
+        scope:"scenario",
+      };
+      const modelInput={
+        assets:[asset],hires:[],overhead:[],oneTime:[],partnerSalaries:[],
+        fundTerm:holdYrs,debtPct:debtPct2,interestRate:intRate2,amortYears:25,
+        exitCapRate:exitCap,saleCosts:0.02,
+        carry:a.carry||0.20,prefReturn:a.prefReturn||0.07,
+        gpPct:a.gpPct||0.02,amFee:a.amFee||0.01,pmFee:a.pmFee||0.06,
+        benefitsRate:0.22,salaryGrowth:0.03,partners:a.partners||3,
+        compoundPref:a.compoundPref||false,catchUp:a.catchUp||false,
+        promoteTiers:a.promoteTiers||DEF_PROMOTE_TIERS,
+      };
+      const result=run(modelInput);
 
-      // NOI override: use T-12 if entered, else proforma yr1
-      if(dealAssumptions.t12Noi){
-        dealOvr.overrideNOI=dealAssumptions.t12Noi;
-      } else if(proformaReturns&&proformaReturns.yr1Noi>0){
-        dealOvr.overrideNOI=proformaReturns.yr1Noi;
-      }
-
-      const body={...dealOvr,prefReturn:a.prefReturn||0.07,carry:a.carry||0.20,
-        gpPct:a.gpPct||0.02,promoteTiers:a.promoteTiers};
-
-      const res=await fetch(`/api/deals/${selectedDeal.id}/analyze`,{method:'POST',
-        headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-      const data=await res.json();
-      if(res.ok&&data.modelResult){
-        setAnalysis(data);
-      } else {
-        // Server failed — build local analysis from proforma
-        if(proformaReturns){
-          setAnalysis({
-            asset:{price:proformaReturns.price,cap:proformaReturns.goingInCap,
-              growth:proformaReturns.noiCAGR,noiMargin:proformaReturns.yr1Noi/(proforma[0]?.totalRevenue||1)},
-            modelResult:{
-              lpIRR:proformaReturns.levIRR,lpMOIC:proformaReturns.moic,
-              gpPromote:0,totExitVal:proformaReturns.exitValue,
-              totSaleProc:proformaReturns.saleProceeds,totOpCF:proforma.reduce((s,yr)=>s+yr.noi,0),
-              lpROC:proformaReturns.equity,lpPref:proformaReturns.equity*0.07*(dealAssumptions.holdYears||7),
-              lpResid:0,lpTotal:0,tierResults:null,
-            },
-            historicalAnalysis:{yearsOfData:0,noiHistory:[]},
-            sensitivity:null,
-          });
+      // Build sensitivity grid client-side
+      const exitCaps=[0.055,0.060,0.065,0.070,0.075,0.080,0.085,0.090];
+      const growthRates=[0.02,0.03,0.04,0.05,0.06,0.07,0.08];
+      const grid=[];
+      for(const ec of exitCaps){
+        const row={exitCap:ec,values:{}};
+        for(const gr of growthRates){
+          const testAsset={...asset,growth:gr};
+          const testResult=run({...modelInput,exitCapRate:ec,assets:[testAsset]});
+          row.values[gr]={lpIRR:testResult.lpIRR,lpMOIC:testResult.lpMOIC,gpPromote:testResult.gpPromote};
         }
+        grid.push(row);
       }
+
+      setAnalysis({
+        asset:asset,
+        modelResult:{
+          lpIRR:result.lpIRR,lpMOIC:result.lpMOIC,
+          gpPromote:result.gpPromote,totExitVal:result.totExitVal,
+          totSaleProc:result.totSaleProc,totOpCF:result.totOpCF,
+          lpROC:result.lpROC,lpPref:result.lpPref,
+          lpResid:result.lpResid,lpTotal:result.lpTotal,
+          tierResults:result.tierResults,
+        },
+        historicalAnalysis:{yearsOfData:0,noiHistory:[]},
+        sensitivity:{exitCaps,growthRates,grid},
+      });
+
       // Save deal assumptions in background
       fetch(`/api/deals/${selectedDeal.id}`,{method:'PUT',
         headers:{'Content-Type':'application/json'},body:JSON.stringify({
@@ -3489,21 +3498,6 @@ function TabDeals({a}){
         })}).catch(()=>{});
     }catch(err){
       console.error("Analysis error:",err);
-      // Fallback to proforma-based analysis
-      if(proformaReturns){
-        setAnalysis({
-          asset:{price:proformaReturns.price,cap:proformaReturns.goingInCap,
-            growth:proformaReturns.noiCAGR,noiMargin:proformaReturns.yr1Noi/(proforma[0]?.totalRevenue||1)},
-          modelResult:{
-            lpIRR:proformaReturns.levIRR,lpMOIC:proformaReturns.moic,
-            gpPromote:0,totExitVal:proformaReturns.exitValue,
-            totSaleProc:proformaReturns.saleProceeds,totOpCF:proforma.reduce((s,yr)=>s+yr.noi,0),
-            lpROC:proformaReturns.equity,lpPref:0,lpResid:0,lpTotal:0,tierResults:null,
-          },
-          historicalAnalysis:{yearsOfData:0,noiHistory:[]},
-          sensitivity:null,
-        });
-      }
     }
     finally{ setAnalyzing(false); }
   };
@@ -3616,15 +3610,16 @@ function TabDeals({a}){
     const holdYrs=proforma.length||(dealAssumptions.holdYears||7);
     const noiGrowthRate=dealAssumptions.noiGrowth||0.03;
 
-    // NOI from proforma or T-12
+    // NOI from T-12 (highest priority), proforma, or implied
     let yr1Noi, exitNoi;
     const hasProforma=proforma.length>0;
-    if(hasProforma){
-      yr1Noi=proforma[0]?.noi||0;
-      exitNoi=proforma[proforma.length-1]?.noi||0;
-    } else if(dealAssumptions.t12Noi){
+    if(dealAssumptions.t12Noi){
+      // T-12 NOI takes priority — it's the actual trailing NOI
       yr1Noi=dealAssumptions.t12Noi;
       exitNoi=yr1Noi*Math.pow(1+noiGrowthRate,holdYrs-1);
+    } else if(hasProforma){
+      yr1Noi=proforma[0]?.noi||0;
+      exitNoi=proforma[proforma.length-1]?.noi||0;
     } else {
       // Imply from price and going-in cap or exit cap
       const impliedCap=dealAssumptions.goingInCap||exitCap;
