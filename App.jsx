@@ -3431,13 +3431,14 @@ function TabDeals({a}){
     if(!selectedDeal) return;
     setAnalyzing(true);
     try{
-      // Merge fund-level assumptions with deal-level overrides
+      // Build assumptions for server
       const dealOvr={};
       dealOvr.exitCapRate=dealAssumptions.exitCapRate||0.075;
       dealOvr.fundTerm=dealAssumptions.holdYears||a.fundTerm||7;
       dealOvr.debtPct=dealAssumptions.debtPct!=null?dealAssumptions.debtPct:0.60;
       dealOvr.interestRate=dealAssumptions.interestRate||0.065;
       if(dealAssumptions.price) dealOvr.overridePrice=Number(dealAssumptions.price);
+      else if(selectedDeal.price) dealOvr.overridePrice=Number(selectedDeal.price);
       if(dealAssumptions.goingInCap) dealOvr.overrideGoingInCap=dealAssumptions.goingInCap;
 
       // Use proforma NOI growth if we have proforma data
@@ -3447,25 +3448,60 @@ function TabDeals({a}){
         dealOvr.overrideGrowth=dealAssumptions.noiGrowth;
       }
 
-      // If we have proforma data but no financials, send proforma NOI as override
+      // If we have proforma data, send proforma NOI as override
       if(proformaReturns&&proformaReturns.yr1Noi>0){
         dealOvr.overrideNOI=proformaReturns.yr1Noi;
       }
 
+      const body={...dealOvr,prefReturn:a.prefReturn||0.07,carry:a.carry||0.20,
+        gpPct:a.gpPct||0.02,promoteTiers:a.promoteTiers};
+
       const res=await fetch(`/api/deals/${selectedDeal.id}/analyze`,{method:'POST',
-        headers:{'Content-Type':'application/json'},body:JSON.stringify({
-          ...dealOvr,
-          prefReturn:a.prefReturn||0.07,carry:a.carry||0.20,gpPct:a.gpPct||0.02,
-          promoteTiers:a.promoteTiers})});
-      if(!res.ok){ console.error("Analyze failed:",res.status,await res.text()); return; }
+        headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const data=await res.json();
-      setAnalysis(data);
-      // Save deal assumptions for next time
+      if(res.ok&&data.modelResult){
+        setAnalysis(data);
+      } else {
+        // Server failed — build local analysis from proforma
+        if(proformaReturns){
+          setAnalysis({
+            asset:{price:proformaReturns.price,cap:proformaReturns.goingInCap,
+              growth:proformaReturns.noiCAGR,noiMargin:proformaReturns.yr1Noi/(proforma[0]?.totalRevenue||1)},
+            modelResult:{
+              lpIRR:proformaReturns.levIRR,lpMOIC:proformaReturns.moic,
+              gpPromote:0,totExitVal:proformaReturns.exitValue,
+              totSaleProc:proformaReturns.saleProceeds,totOpCF:proforma.reduce((s,yr)=>s+yr.noi,0),
+              lpROC:proformaReturns.equity,lpPref:proformaReturns.equity*0.07*(dealAssumptions.holdYears||7),
+              lpResid:0,lpTotal:0,tierResults:null,
+            },
+            historicalAnalysis:{yearsOfData:0,noiHistory:[]},
+            sensitivity:null,
+          });
+        }
+      }
+      // Save deal assumptions in background
       fetch(`/api/deals/${selectedDeal.id}`,{method:'PUT',
         headers:{'Content-Type':'application/json'},body:JSON.stringify({
           ...selectedDeal,assumptions:{...(selectedDeal.assumptions||{}),deal_analysis:dealAssumptions}
         })}).catch(()=>{});
-    }catch(err){ console.error("Analysis error:",err); }
+    }catch(err){
+      console.error("Analysis error:",err);
+      // Fallback to proforma-based analysis
+      if(proformaReturns){
+        setAnalysis({
+          asset:{price:proformaReturns.price,cap:proformaReturns.goingInCap,
+            growth:proformaReturns.noiCAGR,noiMargin:proformaReturns.yr1Noi/(proforma[0]?.totalRevenue||1)},
+          modelResult:{
+            lpIRR:proformaReturns.levIRR,lpMOIC:proformaReturns.moic,
+            gpPromote:0,totExitVal:proformaReturns.exitValue,
+            totSaleProc:proformaReturns.saleProceeds,totOpCF:proforma.reduce((s,yr)=>s+yr.noi,0),
+            lpROC:proformaReturns.equity,lpPref:0,lpResid:0,lpTotal:0,tierResults:null,
+          },
+          historicalAnalysis:{yearsOfData:0,noiHistory:[]},
+          sensitivity:null,
+        });
+      }
+    }
     finally{ setAnalyzing(false); }
   };
 
@@ -5088,9 +5124,30 @@ function TabDeals({a}){
                   )}
                 </div>
               ):(
-                <div style={{textAlign:"center",padding:30,color:C.whDim,fontSize:11}}>
-                  Adjust assumptions above and click "Run Analysis" to model this deal.
-                  {selectedDeal.financials?.length>0?"":" Upload financials first on the Financials tab."}
+                <div>
+                  {/* Show proforma-based returns even before clicking Analyze */}
+                  {proformaReturns?(
+                    <div>
+                      <SHdr t="Returns Summary (from Proforma)"/>
+                      <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
+                        <KPI label="Levered IRR" value={f.p(proformaReturns.levIRR)} gold/>
+                        <KPI label="Unlevered IRR" value={f.p(proformaReturns.unlvIRR)}/>
+                        <KPI label="Equity MOIC" value={f.x(proformaReturns.moic)}/>
+                        <KPI label="Exit Value" value={f.$(proformaReturns.exitValue)}/>
+                        <KPI label="Going-In Cap" value={f.p(proformaReturns.goingInCap)}/>
+                        <KPI label="NOI Growth" value={f.p(proformaReturns.noiCAGR)} sub="From proforma"/>
+                        <KPI label="Sale Proceeds" value={f.$(proformaReturns.saleProceeds)}/>
+                        <KPI label="Debt Service" value={f.$(proformaReturns.annualDS)}/>
+                      </div>
+                      <div style={{fontSize:9,color:C.goldDim,textAlign:"center",marginTop:8}}>
+                        Click "Run Analysis" for full fund-level LP/GP waterfall and sensitivity grid.
+                      </div>
+                    </div>
+                  ):(
+                    <div style={{textAlign:"center",padding:30,color:C.whDim,fontSize:11}}>
+                      Set acquisition price and add revenue/expense lines to see returns.
+                    </div>
+                  )}
                 </div>
               )}
             </div>
