@@ -3186,12 +3186,25 @@ function buildProforma(revenueLines, expenseLines, holdYears = 7, overrides = {}
       const rateOverrideKey = `rev_${li}_rate_${yr}`;
       const valueOverrideKey = `rev_${li}_${yr}`;
 
-      const baseAnnualRate = l.rate_period === 'monthly' ? l.rate * 12 : l.rate;
+      const rate = Number(l.rate) || 0;
+      const unitCount = Number(l.unit_count) || 0;
+      const occupancy = Number(l.occupancy ?? 1.0);
+      const defaultGrowth = Number(l.growth_rate) || 0.03;
+      const growthKey = `rev_${li}_growth_${yr}`;
+      const yearGrowth = overrides[growthKey] != null ? Number(overrides[growthKey]) : defaultGrowth;
+      const baseAnnualRate = l.rate_period === 'monthly' ? rate * 12 : rate;
       let annualRate;
       if (overrides[rateOverrideKey] != null) {
-        annualRate = l.rate_period === 'monthly' ? overrides[rateOverrideKey] * 12 : overrides[rateOverrideKey];
+        annualRate = l.rate_period === 'monthly' ? Number(overrides[rateOverrideKey]) * 12 : Number(overrides[rateOverrideKey]);
       } else {
-        annualRate = baseAnnualRate * Math.pow(1 + (l.growth_rate || 0.03), yr - 1);
+        // Compound growth using per-year rates where overridden
+        let compounded = baseAnnualRate;
+        for (let y = 2; y <= yr; y++) {
+          const gKey = `rev_${li}_growth_${y}`;
+          const g = overrides[gKey] != null ? Number(overrides[gKey]) : defaultGrowth;
+          compounded *= (1 + g);
+        }
+        annualRate = compounded;
       }
 
       const monthlyRate = annualRate / 12;
@@ -3199,7 +3212,7 @@ function buildProforma(revenueLines, expenseLines, holdYears = 7, overrides = {}
       let annualTotal = 0;
       for (let m = 0; m < 12; m++) {
         const mKey = `rev_${li}_${yr}_m${m}`;
-        const computed = monthlyRate * l.unit_count * (l.occupancy ?? 1.0);
+        const computed = monthlyRate * unitCount * occupancy;
         const val = overrides[mKey] != null ? overrides[mKey] : computed;
         months.push({ month: m, value: val, isOverridden: overrides[mKey] != null });
         annualTotal += val;
@@ -3208,8 +3221,10 @@ function buildProforma(revenueLines, expenseLines, holdYears = 7, overrides = {}
       const finalValue = overrides[valueOverrideKey] != null ? overrides[valueOverrideKey] : annualTotal;
 
       return { ...l, year: yr, idx: li, annualRate, effective: finalValue, months,
+        growthRate: yearGrowth, defaultGrowth,
         isOverridden: overrides[valueOverrideKey] != null,
-        isRateOverridden: overrides[rateOverrideKey] != null };
+        isRateOverridden: overrides[rateOverrideKey] != null,
+        isGrowthOverridden: overrides[growthKey] != null };
     });
 
     // Expense lines with monthly breakdown
@@ -3217,12 +3232,21 @@ function buildProforma(revenueLines, expenseLines, holdYears = 7, overrides = {}
       const rateOverrideKey = `exp_${li}_rate_${yr}`;
       const valueOverrideKey = `exp_${li}_${yr}`;
 
-      const baseAmount = l.rate_period === 'monthly' ? l.amount * 12 : l.amount;
+      const baseAmount = l.rate_period === 'monthly' ? Number(l.amount) * 12 : Number(l.amount);
+      const defaultExpGrowth = Number(l.growth_rate) || 0.03;
+      const expGrowthKey = `exp_${li}_growth_${yr}`;
+      const expYearGrowth = overrides[expGrowthKey] != null ? Number(overrides[expGrowthKey]) : defaultExpGrowth;
       let amount;
       if (overrides[rateOverrideKey] != null) {
-        amount = l.rate_period === 'monthly' ? overrides[rateOverrideKey] * 12 : overrides[rateOverrideKey];
+        amount = l.rate_period === 'monthly' ? Number(overrides[rateOverrideKey]) * 12 : Number(overrides[rateOverrideKey]);
       } else {
-        amount = baseAmount * Math.pow(1 + (l.growth_rate || 0.03), yr - 1);
+        let compounded = baseAmount;
+        for (let y = 2; y <= yr; y++) {
+          const gKey = `exp_${li}_growth_${y}`;
+          const g = overrides[gKey] != null ? Number(overrides[gKey]) : defaultExpGrowth;
+          compounded *= (1 + g);
+        }
+        amount = compounded;
       }
 
       const monthlyAmt = amount / 12;
@@ -3239,8 +3263,10 @@ function buildProforma(revenueLines, expenseLines, holdYears = 7, overrides = {}
       const finalValue = overrides[valueOverrideKey] != null ? overrides[valueOverrideKey] : annualTotal;
 
       return { ...l, year: yr, idx: li, amount: finalValue, months,
+        growthRate: expYearGrowth, defaultGrowth: defaultExpGrowth,
         isOverridden: overrides[valueOverrideKey] != null,
-        isRateOverridden: overrides[rateOverrideKey] != null };
+        isRateOverridden: overrides[rateOverrideKey] != null,
+        isGrowthOverridden: overrides[expGrowthKey] != null };
     });
 
     let totalRevenue = revLineResults.reduce((s, l) => s + l.effective, 0);
@@ -3493,11 +3519,11 @@ function TabDeals({a}){
   },[revLines,expLines,a.fundTerm,proformaOverrides]);
 
   const totalRevLineRevenue=revLines.reduce((s,l)=>{
-    const annual=l.rate_period==="monthly"?l.rate*12:l.rate;
-    return s+l.unit_count*annual*(l.occupancy??1);
+    const annual=l.rate_period==="monthly"?Number(l.rate)*12:Number(l.rate);
+    return s+Number(l.unit_count)*annual*(Number(l.occupancy)??1);
   },0);
   const totalExpLineAmount=expLines.reduce((s,l)=>{
-    const annual=l.rate_period==="monthly"?l.amount*12:l.amount;
+    const annual=l.rate_period==="monthly"?Number(l.amount)*12:Number(l.amount);
     return s+annual;
   },0);
 
@@ -3989,8 +4015,8 @@ function TabDeals({a}){
                     </tr></thead>
                     <tbody>
                       {revLines.map((l,i)=>{
-                        const annual=l.rate_period==="monthly"?l.rate*12:l.rate;
-                        const rev=l.unit_count*annual*(l.occupancy??1);
+                        const annual=l.rate_period==="monthly"?Number(l.rate)*12:Number(l.rate);
+                        const rev=Number(l.unit_count)*annual*(Number(l.occupancy)??1);
                         return(
                           <tr key={i}>
                             <td style={tdS}><input value={l.category||""} onChange={e=>updateRevLine(i,"category",e.target.value)}
@@ -4206,10 +4232,33 @@ function TabDeals({a}){
                                       computedValue={line?.effective||0} style={{textAlign:"center"}}/>;
                                   })}
                                 </tr>
+                                {/* Growth rate row for this line */}
+                                <tr style={{background:"rgba(255,255,255,.02)"}}>
+                                  <td style={{...tdS,fontSize:9,color:C.whDim,paddingLeft:16,fontStyle:"italic"}}>↳ Growth %</td>
+                                  {proforma.map(yr=>{
+                                    const line=yr.revLines?.[li];
+                                    const growthKey=`rev_${li}_growth_${yr.year}`;
+                                    const isOvr=proformaOverrides[growthKey]!=null;
+                                    const pct=line?.growthRate||0;
+                                    if(yr.year===1) return <td key={yr.year} style={{...tdS,textAlign:"center",fontSize:9,color:C.whDim}}>—</td>;
+                                    if(editingCell?.key===growthKey){
+                                      return <td key={yr.year} style={{...tdS,padding:"2px 4px"}}><input type="number" autoFocus
+                                        defaultValue={(pct*100).toFixed(1)} step="0.5"
+                                        onBlur={e=>{const v=parseFloat(e.target.value);if(!isNaN(v)){setOverride(growthKey,v/100);}setEditingCell(null);}}
+                                        onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape")setEditingCell(null);}}
+                                        style={{...inputS,width:"100%",textAlign:"center",fontSize:10,padding:"2px 4px"}}/></td>;
+                                    }
+                                    return <td key={yr.year} style={{...tdS,textAlign:"center",fontSize:9,cursor:"pointer",
+                                      color:isOvr?"#5C9BD1":C.whDim,background:isOvr?"rgba(41,128,185,.08)":"transparent"}}
+                                      onDoubleClick={()=>setEditingCell({key:growthKey,currentValue:pct})}
+                                      onContextMenu={e=>{if(isOvr){e.preventDefault();clearOverride(growthKey);}}}>
+                                      {(pct*100).toFixed(1)}%{isOvr&&<span style={{fontSize:7,color:C.blue,marginLeft:2}}>HC</span>}
+                                    </td>;
+                                  })}
+                                </tr>
                                 {/* Monthly detail for this rev line */}
                                 {proforma.some(yr=>expandedYears[yr.year])&&(
                                   MONTHS.map((mName,mi)=>{
-                                    // Only show if at least one year is expanded
                                     if(!proforma.some(yr=>expandedYears[yr.year])) return null;
                                     return <tr key={`${li}_m${mi}`} style={{background:"rgba(255,255,255,.015)"}}>
                                       <td style={{...tdS,fontSize:9,color:C.whDim,paddingLeft:20}}>{mName}</td>
@@ -4259,6 +4308,30 @@ function TabDeals({a}){
                                     const line=yr.expLines?.[li];
                                     return <EditableCell key={yr.year} cellKey={`exp_${li}_${yr.year}`}
                                       computedValue={line?.amount||0} style={{textAlign:"center",color:"#E57373"}}/>;
+                                  })}
+                                </tr>
+                                {/* Growth rate row for this expense line */}
+                                <tr style={{background:"rgba(255,255,255,.02)"}}>
+                                  <td style={{...tdS,fontSize:9,color:C.whDim,paddingLeft:16,fontStyle:"italic"}}>↳ Growth %</td>
+                                  {proforma.map(yr=>{
+                                    const line=yr.expLines?.[li];
+                                    const growthKey=`exp_${li}_growth_${yr.year}`;
+                                    const isOvr=proformaOverrides[growthKey]!=null;
+                                    const pct=line?.growthRate||0;
+                                    if(yr.year===1) return <td key={yr.year} style={{...tdS,textAlign:"center",fontSize:9,color:C.whDim}}>—</td>;
+                                    if(editingCell?.key===growthKey){
+                                      return <td key={yr.year} style={{...tdS,padding:"2px 4px"}}><input type="number" autoFocus
+                                        defaultValue={(pct*100).toFixed(1)} step="0.5"
+                                        onBlur={e=>{const v=parseFloat(e.target.value);if(!isNaN(v)){setOverride(growthKey,v/100);}setEditingCell(null);}}
+                                        onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape")setEditingCell(null);}}
+                                        style={{...inputS,width:"100%",textAlign:"center",fontSize:10,padding:"2px 4px"}}/></td>;
+                                    }
+                                    return <td key={yr.year} style={{...tdS,textAlign:"center",fontSize:9,cursor:"pointer",
+                                      color:isOvr?"#E57373":C.whDim,background:isOvr?"rgba(229,115,115,.08)":"transparent"}}
+                                      onDoubleClick={()=>setEditingCell({key:growthKey,currentValue:pct})}
+                                      onContextMenu={e=>{if(isOvr){e.preventDefault();clearOverride(growthKey);}}}>
+                                      {(pct*100).toFixed(1)}%{isOvr&&<span style={{fontSize:7,color:"#E57373",marginLeft:2}}>HC</span>}
+                                    </td>;
                                   })}
                                 </tr>
                                 {proforma.some(yr=>expandedYears[yr.year])&&(
