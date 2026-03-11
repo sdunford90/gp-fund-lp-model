@@ -3360,7 +3360,7 @@ function TabDeals({a}){
   const [showPresentation,setShowPresentation]=useState(false);
   // Deal-level analysis assumptions (local overrides for this deal)
   const [dealAssumptions,setDealAssumptions]=useState({
-    price:null, exitCapRate:0.075, noiGrowth:0.03, holdYears:7,
+    price:null, t12Noi:null, exitCapRate:0.075, noiGrowth:0.03, holdYears:7,
     debtPct:0.60, interestRate:0.065, goingInCap:null, noiMargin:null,
   });
 
@@ -3396,6 +3396,7 @@ function TabDeals({a}){
       const pr=d.price?Number(d.price):null;
       setDealAssumptions({
         price:saved.price||pr||null,
+        t12Noi:saved.t12Noi||(noi>0?noi:null),
         exitCapRate:saved.exitCapRate||0.075,
         noiGrowth:saved.noiGrowth||0.03,
         holdYears:saved.holdYears||a.fundTerm||7,
@@ -3448,8 +3449,10 @@ function TabDeals({a}){
         dealOvr.overrideGrowth=dealAssumptions.noiGrowth;
       }
 
-      // If we have proforma data, send proforma NOI as override
-      if(proformaReturns&&proformaReturns.yr1Noi>0){
+      // NOI override: use T-12 if entered, else proforma yr1
+      if(dealAssumptions.t12Noi){
+        dealOvr.overrideNOI=dealAssumptions.t12Noi;
+      } else if(proformaReturns&&proformaReturns.yr1Noi>0){
         dealOvr.overrideNOI=proformaReturns.yr1Noi;
       }
 
@@ -3603,19 +3606,32 @@ function TabDeals({a}){
     return buildProforma(revLines, expLines, proformaHoldYears, proformaOverrides);
   },[revLines,expLines,proformaHoldYears,proformaOverrides]);
 
-  // Proforma-based deal returns (computed live from proforma data)
+  // Proforma-based deal returns (computed live from proforma data or T-12 NOI)
   const proformaReturns=useMemo(()=>{
-    if(proforma.length===0) return null;
     const price=dealAssumptions.price||Number(selectedDeal?.price)||0;
     if(!price) return null;
     const exitCap=dealAssumptions.exitCapRate||0.075;
     const debtPct=dealAssumptions.debtPct||0.60;
     const intRate=dealAssumptions.interestRate||0.065;
-    const holdYrs=proforma.length;
+    const holdYrs=proforma.length||(dealAssumptions.holdYears||7);
+    const noiGrowthRate=dealAssumptions.noiGrowth||0.03;
 
-    // NOI from proforma
-    const yr1Noi=proforma[0]?.noi||0;
-    const exitNoi=proforma[holdYrs-1]?.noi||0;
+    // NOI from proforma or T-12
+    let yr1Noi, exitNoi;
+    const hasProforma=proforma.length>0;
+    if(hasProforma){
+      yr1Noi=proforma[0]?.noi||0;
+      exitNoi=proforma[proforma.length-1]?.noi||0;
+    } else if(dealAssumptions.t12Noi){
+      yr1Noi=dealAssumptions.t12Noi;
+      exitNoi=yr1Noi*Math.pow(1+noiGrowthRate,holdYrs-1);
+    } else {
+      // Imply from price and going-in cap or exit cap
+      const impliedCap=dealAssumptions.goingInCap||exitCap;
+      yr1Noi=price*impliedCap;
+      exitNoi=yr1Noi*Math.pow(1+noiGrowthRate,holdYrs-1);
+    }
+    if(!yr1Noi) return null;
     const exitValue=exitNoi/exitCap;
     const saleCosts=exitValue*0.02;
 
@@ -3638,20 +3654,25 @@ function TabDeals({a}){
     }
     const saleProceeds=exitValue-saleCosts-loanBal;
 
+    // Build NOI schedule
+    const noiSchedule=[];
+    for(let y=0;y<holdYrs;y++){
+      if(hasProforma&&proforma[y]) noiSchedule.push(proforma[y].noi||0);
+      else noiSchedule.push(yr1Noi*Math.pow(1+noiGrowthRate,y));
+    }
+
     // Unlevered IRR (property-level)
     const unlevCF=[(-price)];
     for(let y=0;y<holdYrs;y++){
-      const noiY=proforma[y]?.noi||0;
-      if(y<holdYrs-1) unlevCF.push(noiY);
-      else unlevCF.push(noiY+exitValue-saleCosts);
+      if(y<holdYrs-1) unlevCF.push(noiSchedule[y]);
+      else unlevCF.push(noiSchedule[y]+exitValue-saleCosts);
     }
     const unlvIRR=irr(unlevCF);
 
     // Levered IRR (equity-level)
     const levCF=[(-equity)];
     for(let y=0;y<holdYrs;y++){
-      const noiY=proforma[y]?.noi||0;
-      const levCashFlow=noiY-annualDS;
+      const levCashFlow=noiSchedule[y]-annualDS;
       if(y<holdYrs-1) levCF.push(levCashFlow);
       else levCF.push(levCashFlow+saleProceeds);
     }
@@ -3661,9 +3682,8 @@ function TabDeals({a}){
     const totalCashToEquity=levCF.slice(1).reduce((s,v)=>s+v,0);
     const moic=equity>0?(totalCashToEquity+equity)/equity:0;
 
-    // NOI growth CAGR from proforma
-    const noiCAGR=(yr1Noi>0&&exitNoi>0&&holdYrs>1)?Math.pow(exitNoi/yr1Noi,1/(holdYrs-1))-1:0;
-    // Going-in cap from proforma
+    // NOI growth CAGR
+    const noiCAGR=(yr1Noi>0&&exitNoi>0&&holdYrs>1)?Math.pow(exitNoi/yr1Noi,1/(holdYrs-1))-1:noiGrowthRate;
     const goingInCap=price>0?yr1Noi/price:0;
 
     return {
@@ -4661,6 +4681,14 @@ function TabDeals({a}){
                   {dealAssumptions.price&&<div style={{fontSize:8,color:C.whDim,marginTop:1}}>{f.$(dealAssumptions.price)}</div>}
                 </div>
                 <div style={{background:C.whFaint,border:`1px solid ${C.border}`,borderRadius:4,padding:"8px 10px"}}>
+                  <div style={{fontSize:8,color:C.goldDim,textTransform:"uppercase",letterSpacing:".08em",marginBottom:3}}>Trailing 12 NOI</div>
+                  <input type="number" value={dealAssumptions.t12Noi||""} placeholder="T-12 NOI"
+                    onChange={e=>setDealAssumptions(p=>({...p,t12Noi:e.target.value?Number(e.target.value):null,
+                      goingInCap:e.target.value&&p.price?Number(e.target.value)/p.price:p.goingInCap}))}
+                    style={{...inputS,fontSize:12,fontWeight:600,padding:"4px 6px"}}/>
+                  {dealAssumptions.t12Noi&&dealAssumptions.price&&<div style={{fontSize:8,color:C.whDim,marginTop:1}}>{f.p(dealAssumptions.t12Noi/dealAssumptions.price)} cap</div>}
+                </div>
+                <div style={{background:C.whFaint,border:`1px solid ${C.border}`,borderRadius:4,padding:"8px 10px"}}>
                   <Sli label="Exit Cap" value={dealAssumptions.exitCapRate||0.075} min={0.04} max={0.12} step={0.001}
                     disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>setDealAssumptions(p=>({...p,exitCapRate:v}))}/>
                 </div>
@@ -4978,9 +5006,20 @@ function TabDeals({a}){
                       style={{...inputS,fontSize:13,fontWeight:600,padding:"6px 8px"}}/>
                     {dealAssumptions.price&&<div style={{fontSize:9,color:C.whDim,marginTop:2}}>{f.$(dealAssumptions.price)}</div>}
                   </div>
+                  {/* T-12 NOI */}
+                  <div style={{background:C.whFaint,border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 12px"}}>
+                    <div style={{fontSize:8,color:C.goldDim,textTransform:"uppercase",letterSpacing:".08em",marginBottom:4}}>Trailing 12 NOI</div>
+                    <input type="number" value={dealAssumptions.t12Noi||""} placeholder="e.g. 1750000"
+                      onChange={e=>setDealAssumptions(p=>({...p,t12Noi:e.target.value?Number(e.target.value):null,
+                        goingInCap:e.target.value&&p.price?Number(e.target.value)/p.price:p.goingInCap}))}
+                      style={{...inputS,fontSize:13,fontWeight:600,padding:"6px 8px"}}/>
+                    {dealAssumptions.t12Noi&&<div style={{fontSize:9,color:C.whDim,marginTop:2}}>
+                      {f.$(dealAssumptions.t12Noi)}{dealAssumptions.price?` | ${f.p(dealAssumptions.t12Noi/dealAssumptions.price)} cap`:""}
+                    </div>}
+                  </div>
                   {/* Going-In Cap */}
                   <div style={{background:C.whFaint,border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 12px"}}>
-                    <Sli label="Going-In Cap Rate" value={dealAssumptions.goingInCap||0.07} min={0.03} max={0.12} step={0.001}
+                    <Sli label="Going-In Cap Rate" value={dealAssumptions.goingInCap||(dealAssumptions.t12Noi&&dealAssumptions.price?dealAssumptions.t12Noi/dealAssumptions.price:0.07)} min={0.03} max={0.12} step={0.001}
                       disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>setDealAssumptions(p=>({...p,goingInCap:v}))}/>
                   </div>
                   {/* Exit Cap Rate */}
