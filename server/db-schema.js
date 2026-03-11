@@ -140,6 +140,9 @@ export async function ensureSchema(pool) {
       )
     `);
 
+    // Migrations — add columns to existing tables safely
+    await client.query(`ALTER TABLE deals ADD COLUMN IF NOT EXISTS slips INTEGER`);
+
     await client.query('COMMIT');
     console.log('Database schema ready');
   } catch (err) {
