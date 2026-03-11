@@ -3383,9 +3383,11 @@ function TabDeals({a}){
   };
 
   const selectDeal=async(id)=>{
+    // Auto-save unsaved changes before switching deals
+    if(revDirty&&selectedDeal) await saveAllLines();
     try{
       const res=await fetch(`/api/deals/${id}`); const d=await res.json();
-      setSelectedDeal(d); setAnalysis(null); // don't load stale cached analysis — require fresh Run Analysis
+      setSelectedDeal(d); setAnalysis(null); setSaveMsg("");
       setRevLines(d.revenueLines||[]); setRevDirty(false);
       setExpLines(d.expenseLines||[]);
       setProformaOverrides(d.assumptions?.proforma_overrides||{});
@@ -3576,21 +3578,43 @@ function TabDeals({a}){
     const next={...proformaOverrides}; delete next[key]; setProformaOverrides(next); setRevDirty(true);
   };
 
+  const [saving,setSaving2]=useState(false);
+  const [saveMsg,setSaveMsg]=useState("");
   const saveAllLines=async()=>{
     if(!selectedDeal) return;
+    setSaving2(true); setSaveMsg("");
     try{
-      await Promise.all([
+      const [r1,r2,r3]=await Promise.all([
         fetch(`/api/deals/${selectedDeal.id}/revenue-lines`,{method:'PUT',
           headers:{'Content-Type':'application/json'},body:JSON.stringify({lines:revLines})}),
         fetch(`/api/deals/${selectedDeal.id}/expense-lines`,{method:'PUT',
           headers:{'Content-Type':'application/json'},body:JSON.stringify({lines:expLines})}),
         fetch(`/api/deals/${selectedDeal.id}`,{method:'PUT',
           headers:{'Content-Type':'application/json'},body:JSON.stringify({
-            ...selectedDeal,assumptions:{...(selectedDeal.assumptions||{}),proforma_overrides:proformaOverrides}
+            name:selectedDeal.name,property_type:selectedDeal.property_type,market:selectedDeal.market,
+            address:selectedDeal.address,units:selectedDeal.units,slips:selectedDeal.slips,
+            price:dealAssumptions.price||selectedDeal.price,start_month:selectedDeal.start_month,
+            status:selectedDeal.status,notes:selectedDeal.notes,
+            assumptions:{...(selectedDeal.assumptions||{}),proforma_overrides:proformaOverrides,deal_analysis:dealAssumptions}
           })}),
       ]);
-      setRevDirty(false);
-    }catch(e){ console.error(e); }
+      if(!r1.ok||!r2.ok||!r3.ok){
+        const errs=[];
+        if(!r1.ok) errs.push("revenue lines");
+        if(!r2.ok) errs.push("expense lines");
+        if(!r3.ok) errs.push("deal settings");
+        setSaveMsg("Failed to save: "+errs.join(", "));
+      } else {
+        setRevDirty(false);
+        setSaveMsg("Saved!");
+        // Update selectedDeal with saved assumptions
+        setSelectedDeal(prev=>({...prev,
+          assumptions:{...(prev.assumptions||{}),proforma_overrides:proformaOverrides,deal_analysis:dealAssumptions}
+        }));
+        setTimeout(()=>setSaveMsg(""),3000);
+      }
+    }catch(e){ console.error(e); setSaveMsg("Save error: "+e.message); }
+    finally{ setSaving2(false); }
   };
 
   // Proforma computation
@@ -3755,23 +3779,75 @@ function TabDeals({a}){
       expByCat[l.category]=(expByCat[l.category]||0)+annual;
     });
 
-    const SectionHdr=({t})=>(
-      <div style={{fontSize:14,fontWeight:700,color:C.gold,marginBottom:12,marginTop:28,paddingBottom:6,
+    const SectionHdr=({t,pageBreak})=>(
+      <div className={`ic-section-hdr${pageBreak?" ic-page-break":""}`} style={{fontSize:14,fontWeight:700,color:C.gold,marginBottom:12,marginTop:pageBreak?0:28,paddingTop:pageBreak?8:0,paddingBottom:6,
         borderBottom:`1px solid ${C.gold}`,textTransform:"uppercase",letterSpacing:".12em"}}>{t}</div>
+    );
+    const IcKPI=({label,value,sub,gold})=>(
+      <div className={`ic-kpi${gold?" ic-kpi-gold":""}`} style={{background:C.whFaint,border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 14px",minWidth:100,flex:1}}>
+        <div className="ic-kpi-label" style={{fontSize:8,color:C.goldDim,textTransform:"uppercase",letterSpacing:".08em",marginBottom:3}}>{label}</div>
+        <div className="ic-kpi-value" style={{fontSize:15,fontWeight:700,color:gold?C.gold:C.white}}>{value}</div>
+        {sub&&<div className="ic-kpi-sub" style={{fontSize:8,color:C.whDim,marginTop:2}}>{sub}</div>}
+      </div>
+    );
+    const IcCard=({children,style})=>(
+      <div className="ic-card" style={{background:"rgba(255,255,255,.03)",border:`1px solid ${C.border}`,
+        borderRadius:6,padding:"16px 18px",...style}}>{children}</div>
     );
 
     return(
-      <div style={{background:C.dark,minHeight:"100vh",fontFamily:"'DM Sans',sans-serif"}}>
-        {/* Print styles */}
+      <div id="ic-memo-overlay" style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:9999,
+        background:C.dark,overflowY:"auto",fontFamily:"'DM Sans',sans-serif"}}>
+        {/* Print styles — hides everything except the memo */}
         <style>{`
           @media print {
-            body { background: #0D1B2A !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            body > * { visibility: hidden !important; }
+            #ic-memo-overlay, #ic-memo-overlay * { visibility: visible !important; }
+            #ic-memo-overlay {
+              position: absolute !important; top: 0 !important; left: 0 !important;
+              width: 100% !important; overflow: visible !important;
+              background: white !important; color: #1a1a2e !important;
+            }
             .ic-no-print { display: none !important; }
-            @page { size: letter; margin: 0.5in; }
+            .ic-page-break { page-break-before: always; }
+            @page { size: letter; margin: 0.6in 0.7in; }
+            * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+
+            /* Light theme overrides for print */
+            #ic-memo-overlay .ic-card {
+              background: #f8f7f4 !important; border: 1px solid #d4c99e !important;
+              box-shadow: none !important; color: #1a1a2e !important;
+            }
+            #ic-memo-overlay .ic-kpi { background: #f0efe8 !important; border: 1px solid #d4c99e !important; }
+            #ic-memo-overlay .ic-kpi-label { color: #8b7536 !important; }
+            #ic-memo-overlay .ic-kpi-value { color: #1a1a2e !important; }
+            #ic-memo-overlay .ic-kpi-gold .ic-kpi-value { color: #8b7536 !important; }
+            #ic-memo-overlay .ic-kpi-sub { color: #666 !important; }
+            #ic-memo-overlay .ic-section-hdr {
+              color: #8b7536 !important; border-bottom-color: #8b7536 !important;
+            }
+            #ic-memo-overlay .ic-cover-title { color: #1a1a2e !important; }
+            #ic-memo-overlay .ic-cover-sub { color: #8b7536 !important; }
+            #ic-memo-overlay .ic-cover-date { color: #666 !important; }
+            #ic-memo-overlay .ic-cover-line { border-color: #8b7536 !important; }
+            #ic-memo-overlay .ic-body-text { color: #333 !important; }
+            #ic-memo-overlay .ic-dim-text { color: #666 !important; }
+            #ic-memo-overlay .ic-green { color: #1e7d34 !important; }
+            #ic-memo-overlay .ic-red { color: #c0392b !important; }
+            #ic-memo-overlay .ic-gold-text { color: #8b7536 !important; }
+            #ic-memo-overlay th { color: #8b7536 !important; border-bottom: 1px solid #d4c99e !important; }
+            #ic-memo-overlay td { color: #333 !important; border-bottom: 1px solid #e8e4d8 !important; }
+            #ic-memo-overlay .ic-confidential { color: #8b7536 !important; }
+            #ic-memo-overlay .ic-risk-title { color: #8b7536 !important; }
+            #ic-memo-overlay .ic-risk-desc { color: #555 !important; }
+            #ic-memo-overlay .ic-disclaimer { color: #999 !important; border-top-color: #ddd !important; }
+            #ic-memo-overlay .ic-sens-green { background: rgba(30,125,52,.12) !important; color: #1e7d34 !important; }
+            #ic-memo-overlay .ic-sens-yellow { background: rgba(139,117,54,.1) !important; color: #8b7536 !important; }
+            #ic-memo-overlay .ic-sens-red { background: rgba(192,57,43,.08) !important; color: #c0392b !important; }
           }
         `}</style>
 
-        {/* Top bar */}
+        {/* Top bar — hidden in print */}
         <div className="ic-no-print" style={{position:"sticky",top:0,zIndex:10,
           background:"rgba(13,27,42,.97)",backdropFilter:"blur(12px)",
           borderBottom:`1px solid ${C.gold}`,padding:"0 24px",
@@ -3792,45 +3868,45 @@ function TabDeals({a}){
         <div style={{maxWidth:900,margin:"0 auto",padding:"40px 24px"}}>
 
           {/* ═══ COVER ═══ */}
-          <div style={{textAlign:"center",marginBottom:50,paddingBottom:24,borderBottom:`2px solid ${C.gold}`}}>
-            <div style={{fontSize:10,color:C.gold,letterSpacing:".25em",textTransform:"uppercase",marginBottom:8}}>
+          <div style={{textAlign:"center",marginBottom:50,paddingBottom:24,borderBottom:`2px solid ${C.gold}`}} className="ic-cover-line">
+            <div className="ic-confidential" style={{fontSize:10,color:C.gold,letterSpacing:".25em",textTransform:"uppercase",marginBottom:8}}>
               Investment Committee Memorandum — Confidential</div>
-            <div style={{fontSize:36,fontWeight:700,color:C.white,fontFamily:"'Playfair Display',serif",marginBottom:6}}>
+            <div className="ic-cover-title" style={{fontSize:36,fontWeight:700,color:C.white,fontFamily:"'Playfair Display',serif",marginBottom:6}}>
               {selectedDeal.name}</div>
-            <div style={{fontSize:14,color:C.goldDim,marginTop:6}}>
+            <div className="ic-cover-sub" style={{fontSize:14,color:C.goldDim,marginTop:6}}>
               {[selectedDeal.property_type,selectedDeal.market,selectedDeal.address].filter(Boolean).join(" | ")}</div>
-            <div style={{fontSize:11,color:C.whDim,marginTop:8}}>{today}</div>
+            <div className="ic-cover-date" style={{fontSize:11,color:C.whDim,marginTop:8}}>{today}</div>
           </div>
 
           {/* ═══ EXECUTIVE SUMMARY ═══ */}
           <SectionHdr t="Executive Summary"/>
           <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap"}}>
-            {acqPrice>0&&<KPI label="Acquisition Price" value={f.$(acqPrice)} gold/>}
-            {totalSlips>0&&<KPI label="Total Slips" value={totalSlips}/>}
-            {yr1Noi>0&&<KPI label="Year 1 NOI" value={f.$(yr1Noi)} gold/>}
-            {pr&&<KPI label="Going-In Cap" value={f.p(pr.goingInCap)}/>}
-            {pr&&<KPI label="Levered IRR" value={f.p(pr.levIRR)} gold/>}
-            {pr&&<KPI label="Equity MOIC" value={f.x(pr.moic)}/>}
-            {pr&&<KPI label="Exit Value" value={f.$(pr.exitValue)}/>}
-            {analysis?.modelResult&&<KPI label="LP Net IRR" value={f.p(analysis.modelResult.lpIRR)} gold/>}
+            {acqPrice>0&&<IcKPI label="Acquisition Price" value={f.$(acqPrice)} gold/>}
+            {totalSlips>0&&<IcKPI label="Total Slips" value={totalSlips}/>}
+            {(pr?.yr1Noi||yr1Noi)>0&&<IcKPI label="Year 1 NOI" value={f.$(pr?.yr1Noi||yr1Noi)} gold/>}
+            {pr&&<IcKPI label="Going-In Cap" value={f.p(pr.goingInCap)}/>}
+            {pr&&<IcKPI label="Levered IRR" value={f.p(pr.levIRR)} gold/>}
+            {pr&&<IcKPI label="Equity MOIC" value={f.x(pr.moic)}/>}
+            {pr&&<IcKPI label="Exit Value" value={f.$(pr.exitValue)}/>}
           </div>
-          <Card style={{marginBottom:16}}>
-            <div style={{fontSize:12,color:C.whDim,lineHeight:1.7}}>
+          <IcCard style={{marginBottom:16}}>
+            <div className="ic-body-text" style={{fontSize:12,color:C.whDim,lineHeight:1.7}}>
               {selectedDeal.name} is a {selectedDeal.property_type||"marina"} located in {selectedDeal.market||"[Market]"}
               {totalSlips>0?` comprising ${totalSlips} slips`:""}.
-              {acqPrice>0?` The proposed acquisition price is ${f.$(acqPrice)}`:""}{yr1Noi>0?`, implying a going-in cap rate of ${f.p(yr1Noi/acqPrice)}`:""}
+              {acqPrice>0?` The proposed acquisition price is ${f.$(acqPrice)}`:""}
+              {(pr?.yr1Noi||yr1Noi)>0?`, implying a going-in cap rate of ${f.p((pr?.yr1Noi||yr1Noi)/acqPrice)}`:""}
               {yr1Rev>0?`. Year 1 projected revenue is ${f.$(yr1Rev)} with operating expenses of ${f.$(yr1Exp)}, yielding NOI of ${f.$(yr1Noi)}`:""}
               {yr1Rev>0?` (${f.p(yr1Noi/yr1Rev)} margin).`:"."}
               {pr?` Over a ${pr.holdYrs}-year hold, the deal targets a levered IRR of ${f.p(pr.levIRR)} and ${f.x(pr.moic)} equity multiple.`:""}
             </div>
-          </Card>
+          </IcCard>
 
           {/* ═══ SOURCES & USES ═══ */}
           {acqPrice>0&&pr&&(
             <>
-              <SectionHdr t="Sources & Uses"/>
+              <SectionHdr t="Sources & Uses" pageBreak/>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
-                <Card>
+                <IcCard>
                   <CT c="Sources"/>
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                     <tbody>
@@ -3838,21 +3914,18 @@ function TabDeals({a}){
                         ["Senior Debt",f.$(pr.loanAmt),f.p(pr.debtPct)],
                         ["Equity",f.$(pr.equity),f.p(1-pr.debtPct)],
                       ].map(([k,v,pct],i)=>(
-                        <tr key={i} style={{borderBottom:`1px solid ${C.border}`}}>
-                          <td style={{padding:"8px 0",color:C.whDim}}>{k}</td>
-                          <td style={{padding:"8px 0",color:C.white,fontWeight:600,textAlign:"right"}}>{v}</td>
-                          <td style={{padding:"8px 0",color:C.goldDim,textAlign:"right",width:50}}>{pct}</td>
-                        </tr>
+                        <tr key={i}><td className="ic-dim-text" style={{padding:"8px 0"}}>{k}</td>
+                          <td style={{padding:"8px 0",fontWeight:600,textAlign:"right"}}>{v}</td>
+                          <td className="ic-gold-text" style={{padding:"8px 0",color:C.goldDim,textAlign:"right",width:50}}>{pct}</td></tr>
                       ))}
                       <tr style={{borderTop:`2px solid ${C.gold}`}}>
-                        <td style={{padding:"8px 0",color:C.gold,fontWeight:700}}>Total Sources</td>
-                        <td style={{padding:"8px 0",color:C.gold,fontWeight:700,textAlign:"right"}}>{f.$(acqPrice)}</td>
-                        <td style={{padding:"8px 0",color:C.gold,textAlign:"right"}}>100%</td>
-                      </tr>
+                        <td className="ic-gold-text" style={{padding:"8px 0",color:C.gold,fontWeight:700}}>Total Sources</td>
+                        <td className="ic-gold-text" style={{padding:"8px 0",color:C.gold,fontWeight:700,textAlign:"right"}}>{f.$(acqPrice)}</td>
+                        <td className="ic-gold-text" style={{padding:"8px 0",color:C.gold,textAlign:"right"}}>100%</td></tr>
                     </tbody>
                   </table>
-                </Card>
-                <Card>
+                </IcCard>
+                <IcCard>
                   <CT c="Uses"/>
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                     <tbody>
@@ -3860,45 +3933,42 @@ function TabDeals({a}){
                         ["Acquisition",f.$(acqPrice),"100.0%"],
                         ["Closing Costs (est.)",f.$(acqPrice*0.02),"2.0%"],
                       ].map(([k,v,pct],i)=>(
-                        <tr key={i} style={{borderBottom:`1px solid ${C.border}`}}>
-                          <td style={{padding:"8px 0",color:C.whDim}}>{k}</td>
-                          <td style={{padding:"8px 0",color:C.white,fontWeight:600,textAlign:"right"}}>{v}</td>
-                          <td style={{padding:"8px 0",color:C.goldDim,textAlign:"right",width:50}}>{pct}</td>
-                        </tr>
+                        <tr key={i}><td className="ic-dim-text" style={{padding:"8px 0"}}>{k}</td>
+                          <td style={{padding:"8px 0",fontWeight:600,textAlign:"right"}}>{v}</td>
+                          <td className="ic-gold-text" style={{padding:"8px 0",color:C.goldDim,textAlign:"right",width:50}}>{pct}</td></tr>
                       ))}
                       <tr style={{borderTop:`2px solid ${C.gold}`}}>
-                        <td style={{padding:"8px 0",color:C.gold,fontWeight:700}}>Total Uses</td>
-                        <td style={{padding:"8px 0",color:C.gold,fontWeight:700,textAlign:"right"}}>{f.$(acqPrice*1.02)}</td>
-                        <td></td>
-                      </tr>
+                        <td className="ic-gold-text" style={{padding:"8px 0",color:C.gold,fontWeight:700}}>Total Uses</td>
+                        <td className="ic-gold-text" style={{padding:"8px 0",color:C.gold,fontWeight:700,textAlign:"right"}}>{f.$(acqPrice*1.02)}</td>
+                        <td></td></tr>
                     </tbody>
                   </table>
-                </Card>
+                </IcCard>
               </div>
-              <Card style={{marginBottom:16}}>
+              <IcCard style={{marginBottom:16}}>
                 <CT c="Financing Terms"/>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,fontSize:12}}>
                   {[
                     ["Loan Amount",f.$(pr.loanAmt)],["LTV",f.p(pr.debtPct)],
                     ["Interest Rate",f.p(pr.intRate)],["Amort","25 years"],
-                    ["Annual Debt Service",f.$(pr.annualDS)],["DSCR (Yr 1)",yr1Noi>0?(yr1Noi/pr.annualDS).toFixed(2)+"x":"—"],
-                    ["Loan Balance at Exit",f.$(pr.loanBal)],["Debt Yield (Yr 1)",pr.loanAmt>0?f.p(yr1Noi/pr.loanAmt):"—"],
+                    ["Annual Debt Service",f.$(pr.annualDS)],["DSCR (Yr 1)",(pr.yr1Noi||yr1Noi)>0?((pr.yr1Noi||yr1Noi)/pr.annualDS).toFixed(2)+"x":"—"],
+                    ["Loan Balance at Exit",f.$(pr.loanBal)],["Debt Yield (Yr 1)",pr.loanAmt>0?f.p((pr.yr1Noi||yr1Noi)/pr.loanAmt):"—"],
                   ].map(([k,v],i)=>(
                     <div key={i}>
-                      <div style={{fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".06em"}}>{k}</div>
-                      <div style={{fontSize:13,color:C.white,fontWeight:600,marginTop:2}}>{v}</div>
+                      <div className="ic-kpi-label" style={{fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".06em"}}>{k}</div>
+                      <div style={{fontSize:13,fontWeight:600,marginTop:2}}>{v}</div>
                     </div>
                   ))}
                 </div>
-              </Card>
+              </IcCard>
             </>
           )}
 
           {/* ═══ HISTORICAL PERFORMANCE ═══ */}
           {fins.length>0&&(
             <>
-              <SectionHdr t="Historical Performance"/>
-              <Card style={{marginBottom:16}}>
+              <SectionHdr t="Historical Performance" pageBreak/>
+              <IcCard style={{marginBottom:16}}>
                 <table style={{width:"100%",borderCollapse:"collapse"}}>
                   <thead><tr>
                     <th style={thS}>Year</th><th style={thS}>Revenue</th><th style={thS}>Expenses</th>
@@ -3930,16 +4000,16 @@ function TabDeals({a}){
                     </ResponsiveContainer>
                   </div>
                 )}
-              </Card>
+              </IcCard>
             </>
           )}
 
           {/* ═══ REVENUE BREAKDOWN ═══ */}
           {revLines.length>0&&(
             <>
-              <SectionHdr t="Revenue Breakdown"/>
+              <SectionHdr t="Revenue Breakdown" pageBreak/>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
-                <Card>
+                <IcCard>
                   <table style={{width:"100%",borderCollapse:"collapse"}}>
                     <thead><tr>
                       <th style={thS}>Category</th><th style={thS}>Type</th><th style={thS}>Ct</th>
@@ -3952,17 +4022,17 @@ function TabDeals({a}){
                           <td style={{...tdS,fontSize:10,textAlign:"center"}}>{l.unit_count}</td>
                           <td style={{...tdS,fontSize:10}}>{f.$(Number(l.rate))}/{l.rate_period==="monthly"?"mo":"yr"}</td>
                           <td style={{...tdS,fontSize:10}}>{f.p(Number(l.occupancy)??1)}</td>
-                          <td style={{...tdS,fontSize:10,color:C.green,fontWeight:600}}>{f.$(annual)}</td>
+                          <td className="ic-green" style={{...tdS,fontSize:10,color:C.green,fontWeight:600}}>{f.$(annual)}</td>
                         </tr>;
                       })}
                       <tr style={{borderTop:`2px solid ${C.gold}`}}>
-                        <td colSpan={5} style={{...tdS,fontWeight:700,color:C.gold}}>Total Revenue</td>
-                        <td style={{...tdS,fontWeight:700,color:C.gold}}>{f.$(yr1Rev)}</td>
+                        <td colSpan={5} className="ic-gold-text" style={{...tdS,fontWeight:700,color:C.gold}}>Total Revenue</td>
+                        <td className="ic-gold-text" style={{...tdS,fontWeight:700,color:C.gold}}>{f.$(yr1Rev)}</td>
                       </tr>
                     </tbody>
                   </table>
-                </Card>
-                <Card>
+                </IcCard>
+                <IcCard>
                   <CT c="Revenue by Category"/>
                   <ResponsiveContainer width="100%" height={200}>
                     <BarChart data={Object.entries(revByCat).map(([cat,amt])=>({cat,amt}))} margin={{top:10,right:10,bottom:0,left:0}}>
@@ -3972,7 +4042,7 @@ function TabDeals({a}){
                       <Bar dataKey="amt" fill="#5C9BD1" radius={[3,3,0,0]} name="Revenue"/>
                     </BarChart>
                   </ResponsiveContainer>
-                </Card>
+                </IcCard>
               </div>
             </>
           )}
@@ -3982,7 +4052,7 @@ function TabDeals({a}){
             <>
               <SectionHdr t="Operating Expenses"/>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
-                <Card>
+                <IcCard>
                   <table style={{width:"100%",borderCollapse:"collapse"}}>
                     <thead><tr>
                       <th style={thS}>Category</th><th style={thS}>Line Item</th><th style={thS}>Annual</th><th style={thS}>Growth</th>
@@ -3991,19 +4061,19 @@ function TabDeals({a}){
                       {expLines.map((l,i)=>{
                         const annual=l.rate_period==="monthly"?Number(l.amount)*12:Number(l.amount);
                         return <tr key={i}><td style={{...tdS,fontSize:10}}>{l.category}</td><td style={{...tdS,fontSize:10}}>{l.line_type}</td>
-                          <td style={{...tdS,fontSize:10,color:"#E57373"}}>{f.$(annual)}</td>
+                          <td className="ic-red" style={{...tdS,fontSize:10,color:"#E57373"}}>{f.$(annual)}</td>
                           <td style={{...tdS,fontSize:10}}>{f.p(Number(l.growth_rate)||0.03)}</td>
                         </tr>;
                       })}
                       <tr style={{borderTop:`2px solid ${C.gold}`}}>
-                        <td colSpan={2} style={{...tdS,fontWeight:700,color:"#E57373"}}>Total Expenses</td>
-                        <td style={{...tdS,fontWeight:700,color:"#E57373"}}>{f.$(yr1Exp)}</td>
+                        <td colSpan={2} className="ic-red" style={{...tdS,fontWeight:700,color:"#E57373"}}>Total Expenses</td>
+                        <td className="ic-red" style={{...tdS,fontWeight:700,color:"#E57373"}}>{f.$(yr1Exp)}</td>
                         <td></td>
                       </tr>
                     </tbody>
                   </table>
-                </Card>
-                <Card>
+                </IcCard>
+                <IcCard>
                   <CT c="Expenses by Category"/>
                   <ResponsiveContainer width="100%" height={200}>
                     <BarChart data={Object.entries(expByCat).map(([cat,amt])=>({cat,amt}))} margin={{top:10,right:10,bottom:0,left:0}}>
@@ -4014,12 +4084,12 @@ function TabDeals({a}){
                     </BarChart>
                   </ResponsiveContainer>
                   {yr1Rev>0&&(
-                    <div style={{marginTop:8,fontSize:11,color:C.whDim,textAlign:"center"}}>
-                      Expense Ratio: <span style={{color:C.white,fontWeight:600}}>{f.p(yr1Exp/yr1Rev)}</span>
-                      {" | "}NOI Margin: <span style={{color:C.green,fontWeight:600}}>{f.p(yr1Noi/yr1Rev)}</span>
+                    <div className="ic-dim-text" style={{marginTop:8,fontSize:11,color:C.whDim,textAlign:"center"}}>
+                      Expense Ratio: <span className="ic-red" style={{fontWeight:600}}>{f.p(yr1Exp/yr1Rev)}</span>
+                      {" | "}NOI Margin: <span className="ic-green" style={{color:C.green,fontWeight:600}}>{f.p(yr1Noi/yr1Rev)}</span>
                     </div>
                   )}
-                </Card>
+                </IcCard>
               </div>
             </>
           )}
@@ -4027,8 +4097,8 @@ function TabDeals({a}){
           {/* ═══ PROFORMA PROJECTION ═══ */}
           {proforma.length>0&&(
             <>
-              <SectionHdr t="Proforma Projection"/>
-              <Card style={{marginBottom:16}}>
+              <SectionHdr t="Proforma Projection" pageBreak/>
+              <IcCard style={{marginBottom:16}}>
                 <table style={{width:"100%",borderCollapse:"collapse"}}>
                   <thead><tr>
                     <th style={thS}>Metric</th>
@@ -4040,32 +4110,32 @@ function TabDeals({a}){
                       {proforma.map(yr=><td key={yr.year} style={{...tdS,textAlign:"right"}}>{f.$(yr.totalRevenue)}</td>)}
                     </tr>
                     <tr>
-                      <td style={{...tdS,fontWeight:600,color:"#E57373"}}>Expenses</td>
-                      {proforma.map(yr=><td key={yr.year} style={{...tdS,textAlign:"right",color:"#E57373"}}>({f.$(yr.totalExpenses)})</td>)}
+                      <td className="ic-red" style={{...tdS,fontWeight:600,color:"#E57373"}}>Expenses</td>
+                      {proforma.map(yr=><td key={yr.year} className="ic-red" style={{...tdS,textAlign:"right",color:"#E57373"}}>({f.$(yr.totalExpenses)})</td>)}
                     </tr>
                     <tr style={{borderTop:`2px solid ${C.gold}`}}>
-                      <td style={{...tdS,fontWeight:700,color:C.gold}}>NOI</td>
-                      {proforma.map(yr=><td key={yr.year} style={{...tdS,textAlign:"right",fontWeight:700,color:C.gold}}>{f.$(yr.noi)}</td>)}
+                      <td className="ic-gold-text" style={{...tdS,fontWeight:700,color:C.gold}}>NOI</td>
+                      {proforma.map(yr=><td key={yr.year} className="ic-gold-text" style={{...tdS,textAlign:"right",fontWeight:700,color:C.gold}}>{f.$(yr.noi)}</td>)}
                     </tr>
                     <tr>
-                      <td style={{...tdS,color:C.whDim}}>Margin</td>
-                      {proforma.map(yr=><td key={yr.year} style={{...tdS,textAlign:"right",color:C.whDim}}>{yr.totalRevenue>0?f.p(yr.noi/yr.totalRevenue):"—"}</td>)}
+                      <td className="ic-dim-text" style={{...tdS,color:C.whDim}}>Margin</td>
+                      {proforma.map(yr=><td key={yr.year} className="ic-dim-text" style={{...tdS,textAlign:"right",color:C.whDim}}>{yr.totalRevenue>0?f.p(yr.noi/yr.totalRevenue):"—"}</td>)}
                     </tr>
                     {pr&&(
                       <>
                         <tr>
-                          <td style={{...tdS,color:C.whDim}}>Debt Service</td>
-                          {proforma.map(yr=><td key={yr.year} style={{...tdS,textAlign:"right",color:"#E57373"}}>({f.$(pr.annualDS)})</td>)}
+                          <td className="ic-dim-text" style={{...tdS,color:C.whDim}}>Debt Service</td>
+                          {proforma.map(yr=><td key={yr.year} className="ic-red" style={{...tdS,textAlign:"right",color:"#E57373"}}>({f.$(pr.annualDS)})</td>)}
                         </tr>
                         <tr style={{borderTop:`1px solid ${C.border}`}}>
-                          <td style={{...tdS,fontWeight:600,color:C.green}}>Cash Flow (Levered)</td>
-                          {proforma.map(yr=><td key={yr.year} style={{...tdS,textAlign:"right",fontWeight:600,color:yr.noi-pr.annualDS>0?C.green:C.red}}>{f.$(yr.noi-pr.annualDS)}</td>)}
+                          <td className="ic-green" style={{...tdS,fontWeight:600,color:C.green}}>Cash Flow (Levered)</td>
+                          {proforma.map(yr=><td key={yr.year} className={yr.noi-pr.annualDS>0?"ic-green":"ic-red"} style={{...tdS,textAlign:"right",fontWeight:600,color:yr.noi-pr.annualDS>0?C.green:C.red}}>{f.$(yr.noi-pr.annualDS)}</td>)}
                         </tr>
                       </>
                     )}
                   </tbody>
                 </table>
-                <div style={{marginTop:14}}>
+                <div className="ic-no-print" style={{marginTop:14}}>
                   <ResponsiveContainer width="100%" height={200}>
                     <ComposedChart data={proforma} margin={{top:10,right:16,bottom:0,left:0}}>
                       <XAxis dataKey="year" tickFormatter={v=>`Yr ${v}`} tick={{fill:C.whDim,fontSize:10}} axisLine={false} tickLine={false}/>
@@ -4079,56 +4149,56 @@ function TabDeals({a}){
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
-              </Card>
+              </IcCard>
             </>
           )}
 
           {/* ═══ RETURNS ANALYSIS ═══ */}
           {pr&&(
             <>
-              <SectionHdr t="Returns Analysis"/>
+              <SectionHdr t="Returns Analysis" pageBreak/>
               <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap"}}>
-                <KPI label="Levered IRR" value={f.p(pr.levIRR)} gold/>
-                <KPI label="Unlevered IRR" value={f.p(pr.unlvIRR)}/>
-                <KPI label="Equity Multiple" value={f.x(pr.moic)}/>
-                <KPI label="Going-In Cap" value={f.p(pr.goingInCap)}/>
-                <KPI label="Exit Cap" value={f.p(pr.exitCap)}/>
-                <KPI label="NOI CAGR" value={f.p(pr.noiCAGR)}/>
-                <KPI label="Exit Value" value={f.$(pr.exitValue)}/>
-                <KPI label="Sale Proceeds" value={f.$(pr.saleProceeds)}/>
+                <IcKPI label="Levered IRR" value={f.p(pr.levIRR)} gold/>
+                <IcKPI label="Unlevered IRR" value={f.p(pr.unlvIRR)}/>
+                <IcKPI label="Equity Multiple" value={f.x(pr.moic)}/>
+                <IcKPI label="Going-In Cap" value={f.p(pr.goingInCap)}/>
+                <IcKPI label="Exit Cap" value={f.p(pr.exitCap)}/>
+                <IcKPI label="NOI CAGR" value={f.p(pr.noiCAGR)}/>
+                <IcKPI label="Exit Value" value={f.$(pr.exitValue)}/>
+                <IcKPI label="Sale Proceeds" value={f.$(pr.saleProceeds)}/>
               </div>
-              <Card style={{marginBottom:16}}>
+              <IcCard style={{marginBottom:16}}>
                 <CT c="Exit Analysis"/>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,fontSize:12}}>
                   {[
                     ["Exit Year NOI",f.$(pr.exitNoi)],["Exit Cap Rate",f.p(pr.exitCap)],["Gross Exit Value",f.$(pr.exitValue)],
                     ["Sale Costs (2%)",f.$(pr.exitValue*0.02)],["Loan Balance",f.$(pr.loanBal)],["Net Sale Proceeds",f.$(pr.saleProceeds)],
-                    ["Total Equity Invested",f.$(pr.equity)],["Profit (Equity Basis)",f.$(pr.saleProceeds-pr.equity+proforma.reduce((s,yr)=>s+(yr.noi-pr.annualDS),0))],
+                    ["Total Equity Invested",f.$(pr.equity)],["Profit (Equity Basis)",f.$(pr.saleProceeds-pr.equity+(proforma.length>0?proforma.reduce((s,yr)=>s+(yr.noi-pr.annualDS),0):(pr.yr1Noi-pr.annualDS)*pr.holdYrs))],
                     ["Hold Period",`${pr.holdYrs} years`],
                   ].map(([k,v],i)=>(
                     <div key={i}>
-                      <div style={{fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".06em"}}>{k}</div>
-                      <div style={{fontSize:13,color:C.white,fontWeight:600,marginTop:2}}>{v}</div>
+                      <div className="ic-kpi-label" style={{fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".06em"}}>{k}</div>
+                      <div style={{fontSize:13,fontWeight:600,marginTop:2}}>{v}</div>
                     </div>
                   ))}
                 </div>
-              </Card>
+              </IcCard>
             </>
           )}
 
           {/* ═══ FUND-LEVEL RETURNS ═══ */}
           {analysis?.modelResult&&(
             <>
-              <SectionHdr t="Fund-Level Returns"/>
+              <SectionHdr t="Fund-Level Returns" pageBreak/>
               <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap"}}>
-                <KPI label="LP Net IRR" value={f.p(analysis.modelResult.lpIRR)} gold/>
-                <KPI label="LP MOIC" value={f.x(analysis.modelResult.lpMOIC)}/>
-                <KPI label="GP Promote" value={f.$(analysis.modelResult.gpPromote)}/>
-                <KPI label="Total Exit Value" value={f.$(analysis.modelResult.totExitVal)}/>
-                <KPI label="Total Op CF" value={f.$(analysis.modelResult.totOpCF)}/>
+                <IcKPI label="LP Net IRR" value={f.p(analysis.modelResult.lpIRR)} gold/>
+                <IcKPI label="LP MOIC" value={f.x(analysis.modelResult.lpMOIC)}/>
+                <IcKPI label="GP Promote" value={f.$(analysis.modelResult.gpPromote)}/>
+                <IcKPI label="Total Exit Value" value={f.$(analysis.modelResult.totExitVal)}/>
+                <IcKPI label="Total Op CF" value={f.$(analysis.modelResult.totOpCF)}/>
               </div>
               {analysis.modelResult.tierResults&&(
-                <Card style={{marginBottom:16}}>
+                <IcCard style={{marginBottom:16}}>
                   <CT c="Waterfall Distribution"/>
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                     <thead><tr>
@@ -4145,11 +4215,11 @@ function TabDeals({a}){
                           <td style={tdS}>{t.irrHurdle!=null?f.p(t.irrHurdle):t.moicHurdle!=null?f.x(t.moicHurdle):"Residual"}</td>
                           <td style={tdS}>{f.p(t.lpSplit)}</td><td style={tdS}>{f.p(t.gpSplit)}</td>
                           <td style={{...tdS,color:"#5C9BD1"}}>{f.$(t.lp)}</td>
-                          <td style={{...tdS,color:C.gold}}>{f.$(t.gp)}</td></tr>
+                          <td className="ic-gold-text" style={{...tdS,color:C.gold}}>{f.$(t.gp)}</td></tr>
                       ))}
                     </tbody>
                   </table>
-                </Card>
+                </IcCard>
               )}
             </>
           )}
@@ -4158,7 +4228,7 @@ function TabDeals({a}){
           {analysis?.sensitivity&&(
             <>
               <SectionHdr t="Sensitivity Analysis — LP IRR"/>
-              <Card style={{marginBottom:16}}>
+              <IcCard style={{marginBottom:16}}>
                 <div style={{overflowX:"auto"}}>
                   <table style={{width:"100%",borderCollapse:"collapse"}}>
                     <thead><tr>
@@ -4170,25 +4240,26 @@ function TabDeals({a}){
                     <tbody>
                       {analysis.sensitivity.grid.map(row=>(
                         <tr key={row.exitCap}>
-                          <td style={{...tdS,color:C.goldDim,fontWeight:600}}>{(row.exitCap*100).toFixed(1)}%</td>
+                          <td className="ic-gold-text" style={{...tdS,color:C.goldDim,fontWeight:600}}>{(row.exitCap*100).toFixed(1)}%</td>
                           {analysis.sensitivity.growthRates.map(g=>{
                             const v=row.values[g]?.lpIRR;
                             const bg=v>.18?"rgba(30,132,73,.25)":v>.14?"rgba(201,168,76,.12)":"rgba(192,57,43,.2)";
                             const clr=v>.18?C.green:v>.14?C.white:C.red;
-                            return <td key={g} style={{...tdS,textAlign:"center",background:bg,color:clr,fontWeight:500}}>{v!=null?f.p(v):"—"}</td>;
+                            const cls=v>.18?"ic-sens-green":v>.14?"ic-sens-yellow":"ic-sens-red";
+                            return <td key={g} className={cls} style={{...tdS,textAlign:"center",background:bg,color:clr,fontWeight:500}}>{v!=null?f.p(v):"—"}</td>;
                           })}
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-              </Card>
+              </IcCard>
             </>
           )}
 
           {/* ═══ KEY RISKS ═══ */}
-          <SectionHdr t="Key Risks & Considerations"/>
-          <Card style={{marginBottom:30}}>
+          <SectionHdr t="Key Risks & Considerations" pageBreak/>
+          <IcCard style={{marginBottom:30}}>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,fontSize:12}}>
               {[
                 ["Market Risk","Marina valuations tied to local boating demand, economic conditions, and weather events."],
@@ -4199,15 +4270,15 @@ function TabDeals({a}){
                 ["Insurance","Coastal properties face elevated property and liability insurance costs."],
               ].map(([title,desc],i)=>(
                 <div key={i}>
-                  <div style={{fontWeight:700,color:C.gold,fontSize:11,marginBottom:3}}>{title}</div>
-                  <div style={{color:C.whDim,lineHeight:1.5}}>{desc}</div>
+                  <div className="ic-risk-title" style={{fontWeight:700,color:C.gold,fontSize:11,marginBottom:3}}>{title}</div>
+                  <div className="ic-risk-desc" style={{color:C.whDim,lineHeight:1.5}}>{desc}</div>
                 </div>
               ))}
             </div>
-          </Card>
+          </IcCard>
 
           {/* ═══ DISCLAIMER ═══ */}
-          <div style={{textAlign:"center",padding:"20px 0",borderTop:`1px solid ${C.border}`,marginTop:20}}>
+          <div className="ic-disclaimer" style={{textAlign:"center",padding:"20px 0",borderTop:`1px solid ${C.border}`,marginTop:20}}>
             <div style={{fontSize:9,color:"rgba(201,168,76,.3)",lineHeight:1.6,maxWidth:600,margin:"0 auto"}}>
               This Investment Committee Memorandum is confidential and intended solely for the use of the investment committee.
               Projections and forward-looking statements are based on assumptions that may not be realized.
@@ -4510,8 +4581,9 @@ function TabDeals({a}){
                     </button>
                   ))}
                   <button onClick={addRevLine} style={{...goldBtn,fontSize:9,padding:"4px 10px"}}>+ Add Line</button>
-                  {revDirty&&<button onClick={saveAllLines} style={{...goldBtn,fontSize:9,padding:"4px 10px",
-                    background:C.green}}>Save</button>}
+                  <button onClick={saveAllLines} disabled={saving} style={{...goldBtn,fontSize:9,padding:"4px 10px",
+                    background:revDirty?C.green:saving?"rgba(201,168,76,.4)":"rgba(201,168,76,.3)"}}>{saving?"Saving...":revDirty?"Save":"Saved"}</button>
+                  {saveMsg&&<span style={{fontSize:9,color:saveMsg.startsWith("Saved")?C.green:C.red,marginLeft:6}}>{saveMsg}</span>}
                 </div>
               </div>
 
@@ -4585,8 +4657,9 @@ function TabDeals({a}){
                     </button>
                   ))}
                   <button onClick={addExpLine} style={{...goldBtn,fontSize:9,padding:"4px 10px"}}>+ Add Line</button>
-                  {revDirty&&<button onClick={saveAllLines} style={{...goldBtn,fontSize:9,padding:"4px 10px",
-                    background:C.green}}>Save</button>}
+                  <button onClick={saveAllLines} disabled={saving} style={{...goldBtn,fontSize:9,padding:"4px 10px",
+                    background:revDirty?C.green:saving?"rgba(201,168,76,.4)":"rgba(201,168,76,.3)"}}>{saving?"Saving...":revDirty?"Save":"Saved"}</button>
+                  {saveMsg&&<span style={{fontSize:9,color:saveMsg.startsWith("Saved")?C.green:C.red,marginLeft:6}}>{saveMsg}</span>}
                 </div>
               </div>
 
@@ -4657,8 +4730,9 @@ function TabDeals({a}){
                 <SHdr t="Proforma Projection"/>
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
                   <span style={{fontSize:8,color:C.whDim}}>Dbl-click to edit. Right-click to reset.</span>
-                  {revDirty&&<button onClick={saveAllLines} style={{...goldBtn,fontSize:10,padding:"5px 14px",
-                    background:C.green}}>Save Changes</button>}
+                  <button onClick={saveAllLines} disabled={saving} style={{...goldBtn,fontSize:10,padding:"5px 14px",
+                    background:revDirty?C.green:saving?"rgba(201,168,76,.4)":"rgba(201,168,76,.3)"}}>{saving?"Saving...":revDirty?"Save Changes":"Saved"}</button>
+                  {saveMsg&&<span style={{fontSize:9,color:saveMsg.startsWith("Saved")?C.green:C.red,marginLeft:6}}>{saveMsg}</span>}
                   {Object.keys(proformaOverrides).length>0&&(
                     <button onClick={()=>{setProformaOverrides({});setRevDirty(true);}} style={{...dimBtn,fontSize:9,padding:"4px 10px"}}>
                       Clear Overrides ({Object.keys(proformaOverrides).length})
