@@ -3385,7 +3385,7 @@ function TabDeals({a}){
   const selectDeal=async(id)=>{
     try{
       const res=await fetch(`/api/deals/${id}`); const d=await res.json();
-      setSelectedDeal(d); setAnalysis(d.latestResult?.result||null);
+      setSelectedDeal(d); setAnalysis(null); // don't load stale cached analysis — require fresh Run Analysis
       setRevLines(d.revenueLines||[]); setRevDirty(false);
       setExpLines(d.expenseLines||[]);
       setProformaOverrides(d.assumptions?.proforma_overrides||{});
@@ -5053,28 +5053,43 @@ function TabDeals({a}){
                 </div>
               </div>
 
+              {/* ── LIVE RETURNS (updates instantly with slider changes) ── */}
+              {proformaReturns?(
+                <div>
+                  <SHdr t="Returns Summary"/>
+                  <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
+                    <KPI label="Levered IRR" value={f.p(proformaReturns.levIRR)} gold/>
+                    <KPI label="Unlevered IRR" value={f.p(proformaReturns.unlvIRR)}/>
+                    <KPI label="Equity MOIC" value={f.x(proformaReturns.moic)}/>
+                    <KPI label="Exit Value" value={f.$(proformaReturns.exitValue)}/>
+                    <KPI label="Sale Proceeds" value={f.$(proformaReturns.saleProceeds)}/>
+                    <KPI label="Yr1 NOI" value={f.$(proformaReturns.yr1Noi)}/>
+                  </div>
+                  <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
+                    <KPI label="Going-In Cap" value={f.p(proformaReturns.goingInCap)} sub="NOI / Price"/>
+                    <KPI label="NOI Growth" value={f.p(proformaReturns.noiCAGR)} sub="Applied to model"/>
+                    <KPI label="Debt Service" value={f.$(proformaReturns.annualDS)} sub="Annual"/>
+                    <KPI label="Price" value={f.$(proformaReturns.price)}/>
+                  </div>
+                </div>
+              ):(
+                <div style={{textAlign:"center",padding:20,color:C.whDim,fontSize:11,marginBottom:10}}>
+                  Set acquisition price and T-12 NOI (or add revenue lines) to see live returns.
+                </div>
+              )}
+
+              {/* ── SERVER ANALYSIS (waterfall, sensitivity, historical) ── */}
               {analysis&&analysis.modelResult?(
                 <div>
-                  {/* ── KPI ROW ── */}
-                  <SHdr t="Returns Summary"/>
+                  {/* LP/GP Fund-Level Returns */}
+                  <SHdr t="Fund-Level LP/GP Returns"/>
                   <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
                     <KPI label="LP IRR" value={f.p(analysis.modelResult.lpIRR)} gold/>
                     <KPI label="LP MOIC" value={f.x(analysis.modelResult.lpMOIC)}/>
                     <KPI label="GP Promote" value={f.$(analysis.modelResult.gpPromote)}/>
-                    <KPI label="Exit Value" value={f.$(analysis.modelResult.totExitVal)}/>
-                    <KPI label="Sale Proceeds" value={f.$(analysis.modelResult.totSaleProc)}/>
-                    <KPI label="Op CF" value={f.$(analysis.modelResult.totOpCF)}/>
+                    <KPI label="Total Exit Value" value={f.$(analysis.modelResult.totExitVal)}/>
+                    <KPI label="Total Op CF" value={f.$(analysis.modelResult.totOpCF)}/>
                   </div>
-
-                  {/* ── DEAL METRICS ── */}
-                  {analysis.asset&&(
-                    <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
-                      <KPI label="Going-In Cap" value={f.p(analysis.asset.cap)} sub="NOI / Price"/>
-                      <KPI label="NOI Growth" value={f.p(analysis.asset.growth)} sub="Applied to model"/>
-                      <KPI label="NOI Margin" value={f.p(analysis.asset.noiMargin)}/>
-                      <KPI label="Price" value={f.$(analysis.asset.price)}/>
-                    </div>
-                  )}
 
                   {analysis.historicalAnalysis&&analysis.historicalAnalysis.yearsOfData>0&&(
                     <div style={{marginBottom:14}}>
@@ -5163,30 +5178,8 @@ function TabDeals({a}){
                   )}
                 </div>
               ):(
-                <div>
-                  {/* Show proforma-based returns even before clicking Analyze */}
-                  {proformaReturns?(
-                    <div>
-                      <SHdr t="Returns Summary (from Proforma)"/>
-                      <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
-                        <KPI label="Levered IRR" value={f.p(proformaReturns.levIRR)} gold/>
-                        <KPI label="Unlevered IRR" value={f.p(proformaReturns.unlvIRR)}/>
-                        <KPI label="Equity MOIC" value={f.x(proformaReturns.moic)}/>
-                        <KPI label="Exit Value" value={f.$(proformaReturns.exitValue)}/>
-                        <KPI label="Going-In Cap" value={f.p(proformaReturns.goingInCap)}/>
-                        <KPI label="NOI Growth" value={f.p(proformaReturns.noiCAGR)} sub="From proforma"/>
-                        <KPI label="Sale Proceeds" value={f.$(proformaReturns.saleProceeds)}/>
-                        <KPI label="Debt Service" value={f.$(proformaReturns.annualDS)}/>
-                      </div>
-                      <div style={{fontSize:9,color:C.goldDim,textAlign:"center",marginTop:8}}>
-                        Click "Run Analysis" for full fund-level LP/GP waterfall and sensitivity grid.
-                      </div>
-                    </div>
-                  ):(
-                    <div style={{textAlign:"center",padding:30,color:C.whDim,fontSize:11}}>
-                      Set acquisition price and add revenue/expense lines to see returns.
-                    </div>
-                  )}
+                <div style={{fontSize:9,color:C.goldDim,textAlign:"center",marginTop:8}}>
+                  Click "Run Analysis" for full fund-level LP/GP waterfall and sensitivity grid.
                 </div>
               )}
             </div>
