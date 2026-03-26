@@ -3,13 +3,13 @@ import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContai
   ReferenceLine, Cell, AreaChart, Area, ComposedChart } from "recharts";
 
 const C = {
-  navy:"#1F3864", dark:"#0D1B2A", mid:"#2C4A7C",
-  gold:"#C9A84C", goldDim:"rgba(201,168,76,0.45)", goldFaint:"rgba(201,168,76,0.09)",
-  white:"#E8E4DA", whDim:"rgba(232,228,218,0.5)", whFaint:"rgba(232,228,218,0.06)",
-  green:"#1E8449", greenL:"rgba(30,132,73,0.15)",
-  red:"#C0392B",   redL:"rgba(192,57,43,0.15)",
-  blue:"#2980B9",  blueL:"rgba(41,128,185,0.15)",
-  border:"rgba(201,168,76,0.12)",
+  navy:"#160D3C", dark:"#09060F", mid:"#261870",
+  gold:"#FF5EAA", goldDim:"rgba(255,94,170,0.45)", goldFaint:"rgba(255,94,170,0.09)",
+  white:"#FFFFFF", whDim:"rgba(255,255,255,0.55)", whFaint:"rgba(255,255,255,0.07)",
+  green:"#00E5A0", greenL:"rgba(0,229,160,0.14)",
+  red:"#FF5470",   redL:"rgba(255,84,112,0.14)",
+  blue:"#4FC3F7",  blueL:"rgba(79,195,247,0.14)",
+  border:"rgba(255,94,170,0.18)",
 };
 
 // ── DEFAULT STATE ─────────────────────────────────────────────────────────────
@@ -564,7 +564,7 @@ const Sli=({label,value,min,max,step,disp,onChange,sub})=>{
           onChange={e=>onChange(Number(e.target.value))}
           style={{position:"absolute",top:-7,left:0,width:"100%",height:17,opacity:0,cursor:"pointer",margin:0,padding:0}}/>
       </div>
-      {sub&&<div style={{fontSize:9,color:"rgba(201,168,76,.3)",marginTop:2}}>{sub}</div>}
+      {sub&&<div style={{fontSize:9,color:"rgba(255,94,170,.3)",marginTop:2}}>{sub}</div>}
     </div>
   );
 };
@@ -611,7 +611,7 @@ const CT=({c})=>(
 const TT=({active,payload,label})=>{
   if(!active||!payload?.length)return null;
   return(
-    <div style={{background:"rgba(13,27,42,.97)",border:`1px solid ${C.gold}`,
+    <div style={{background:"rgba(9,6,15,.97)",border:`1px solid ${C.gold}`,
       borderRadius:4,padding:"9px 13px",fontSize:11,fontFamily:"'DM Sans',sans-serif"}}>
       {label&&<div style={{color:C.gold,marginBottom:4,fontWeight:600}}>{label}</div>}
       {payload.map((p,i)=>(
@@ -701,7 +701,7 @@ function GlobalAddModal({type, onConfirm, onClose}){
         <input ref={inputRef} value={name} onChange={e=>setName(e.target.value)}
           placeholder={`Enter ${(nameLabel[type]||"name").toLowerCase()}...`}
           onKeyDown={e=>{if(e.key==="Enter"&&name.trim()){e.preventDefault();onConfirm(name.trim());}}}
-          style={{width:"100%",background:"rgba(255,255,255,.06)",border:`1px solid rgba(201,168,76,.3)`,
+          style={{width:"100%",background:"rgba(255,255,255,.06)",border:`1px solid rgba(255,94,170,.3)`,
             borderRadius:4,padding:"10px 12px",color:C.white,fontSize:13,outline:"none",
             fontFamily:"'DM Sans',sans-serif",boxSizing:"border-box",marginBottom:18}}/>
         <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
@@ -710,7 +710,7 @@ function GlobalAddModal({type, onConfirm, onClose}){
               color:C.whDim,borderRadius:4,fontSize:11,cursor:"pointer"}}>Cancel</button>
           <button onClick={()=>{if(name.trim())onConfirm(name.trim());}}
             disabled={!name.trim()}
-            style={{padding:"7px 18px",background:name.trim()?C.gold:"rgba(201,168,76,.3)",
+            style={{padding:"7px 18px",background:name.trim()?C.gold:"rgba(255,94,170,.3)",
               border:"none",color:C.navy,borderRadius:4,fontSize:11,fontWeight:700,
               cursor:name.trim()?"pointer":"not-allowed",letterSpacing:".04em"}}>
             Add &amp; Save
@@ -872,8 +872,8 @@ export default function Portal(){
     <div style={{minHeight:"100vh",background:C.dark,fontFamily:"'DM Sans',sans-serif",color:C.white}}>
       {globalModal && <GlobalAddModal type={globalModal} onConfirm={confirmGlobalAdd} onClose={()=>setGlobalModal(null)}/>}
       {/* NAV */}
-      <div style={{background:"rgba(13,27,42,.97)",backdropFilter:"blur(12px)",
-        borderBottom:`1px solid rgba(201,168,76,.2)`,padding:"0 24px",
+      <div style={{background:"rgba(9,6,15,.97)",backdropFilter:"blur(12px)",
+        borderBottom:`1px solid rgba(255,94,170,.2)`,padding:"0 24px",
         display:"flex",alignItems:"center",justifyContent:"space-between",
         height:58,position:"sticky",top:0,zIndex:100,gap:16}}>
 
@@ -901,10 +901,10 @@ export default function Portal(){
                 gap:2,padding:"6px 14px",cursor:"pointer",border:"none",
                 borderBottom:active?`2px solid ${C.gold}`:"2px solid transparent",
                 borderTop:"2px solid transparent",
-                background:active?"rgba(201,168,76,.1)":"transparent",
+                background:active?"rgba(255,94,170,.1)":"transparent",
                 transition:"background .15s",
                 minWidth:72,whiteSpace:"nowrap",flexShrink:0}}>
-                <span style={{fontSize:15,color:active?C.gold:"rgba(201,168,76,.5)",lineHeight:1}}>
+                <span style={{fontSize:15,color:active?C.gold:"rgba(255,94,170,.5)",lineHeight:1}}>
                   {icons[t]||"·"}
                 </span>
                 <span style={{fontSize:11,fontWeight:active?800:600,letterSpacing:"0.05em",
@@ -917,14 +917,14 @@ export default function Portal(){
         </div>
 
         {/* Badge */}
-        <div style={{flexShrink:0,fontSize:8,color:"rgba(201,168,76,.3)",
+        <div style={{flexShrink:0,fontSize:8,color:"rgba(255,94,170,.3)",
           letterSpacing:"0.08em",textTransform:"uppercase",textAlign:"right",lineHeight:1.6}}>
           CONFIDENTIAL<br/>DRAFT
         </div>
       </div>
 
       {/* SCENARIO BAR */}
-      <div style={{background:"rgba(201,168,76,.07)",borderBottom:"1px solid rgba(201,168,76,.15)",
+      <div style={{background:"rgba(255,94,170,.07)",borderBottom:"1px solid rgba(255,94,170,.15)",
         padding:"0 24px",display:"flex",alignItems:"center",gap:8,height:38,position:"sticky",top:58,zIndex:99}}>
         <span style={{fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".1em",flexShrink:0}}>Scenario:</span>
         {editingName
@@ -933,11 +933,11 @@ export default function Portal(){
               style={{background:"transparent",border:"none",borderBottom:`1px solid ${C.gold}`,
                 color:C.white,fontSize:11,fontWeight:700,outline:"none",width:140,padding:"1px 0"}}/>
           : <span onClick={()=>setEditingName(true)} style={{fontSize:11,fontWeight:700,color:C.white,
-              cursor:"pointer",borderBottom:"1px dashed rgba(201,168,76,.3)",paddingBottom:1,minWidth:80}}>
+              cursor:"pointer",borderBottom:"1px dashed rgba(255,94,170,.3)",paddingBottom:1,minWidth:80}}>
               {scenName}
             </span>
         }
-        <button onClick={saveScenario} disabled={saving} style={{background:saving?"rgba(201,168,76,0.5)":C.gold,color:C.navy,border:"none",
+        <button onClick={saveScenario} disabled={saving} style={{background:saving?"rgba(255,94,170,0.5)":C.gold,color:C.navy,border:"none",
           borderRadius:3,padding:"3px 10px",fontSize:9,fontWeight:800,letterSpacing:".07em",
           textTransform:"uppercase",cursor:saving?"wait":"pointer",flexShrink:0}}>{saving?"Saving...":"Save"}</button>
         <button onClick={()=>setPresenting(true)} style={{background:"transparent",
@@ -946,7 +946,7 @@ export default function Portal(){
           textTransform:"uppercase",cursor:"pointer",flexShrink:0}}>Presentation</button>
         <div style={{position:"relative"}}>
           <button onClick={()=>setShowScen(v=>!v)} style={{background:"transparent",
-            color:C.goldDim,border:`1px solid rgba(201,168,76,.25)`,borderRadius:3,
+            color:C.goldDim,border:`1px solid rgba(255,94,170,.25)`,borderRadius:3,
             padding:"3px 10px",fontSize:9,fontWeight:700,letterSpacing:".07em",
             textTransform:"uppercase",cursor:"pointer",flexShrink:0}}>
             Load ▾ {Object.keys(scenarios).length>0&&`(${Object.keys(scenarios).length})`}
@@ -960,14 +960,14 @@ export default function Portal(){
                 : Object.entries(scenarios).map(([name,s])=>(
                     <div key={name} style={{display:"flex",alignItems:"center",gap:6,
                       padding:"8px 12px",borderBottom:"1px solid rgba(255,255,255,.05)",
-                      background:name===scenName?"rgba(201,168,76,.08)":"transparent"}}>
+                      background:name===scenName?"rgba(255,94,170,.08)":"transparent"}}>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{fontSize:11,fontWeight:600,color:name===scenName?C.gold:C.white,
                           overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</div>
                         <div style={{fontSize:8,color:C.whDim}}>{s._savedAt||""}</div>
                       </div>
                       <button onClick={()=>loadScenario(name)}
-                        style={{background:"rgba(201,168,76,.15)",color:C.gold,border:"none",
+                        style={{background:"rgba(255,94,170,.15)",color:C.gold,border:"none",
                           borderRadius:3,padding:"2px 8px",fontSize:9,cursor:"pointer",flexShrink:0}}>Load</button>
                       <button onClick={()=>duplicateScenario(name)}
                         style={{background:"rgba(41,128,185,.15)",color:"#5DADE2",border:"none",
@@ -993,9 +993,9 @@ export default function Portal(){
           <div style={{display:"flex",gap:4,overflowX:"auto",scrollbarWidth:"none"}}>
             {Object.keys(scenarios).map(name=>(
               <button key={name} onClick={()=>loadScenario(name)} style={{
-                background:name===scenName?"rgba(201,168,76,.2)":"rgba(255,255,255,.04)",
+                background:name===scenName?"rgba(255,94,170,.2)":"rgba(255,255,255,.04)",
                 color:name===scenName?C.gold:C.whDim,
-                border:`1px solid ${name===scenName?"rgba(201,168,76,.4)":"rgba(255,255,255,.08)"}`,
+                border:`1px solid ${name===scenName?"rgba(255,94,170,.4)":"rgba(255,255,255,.08)"}`,
                 borderRadius:3,padding:"2px 10px",fontSize:9,fontWeight:600,
                 cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
                 {name}
@@ -1034,10 +1034,10 @@ export default function Portal(){
                   style={{flex:1,padding:"4px 0",fontSize:9,fontWeight:700,letterSpacing:".06em",
                     textTransform:"uppercase",cursor:"pointer",borderRadius:3,
                     background:active?C.gold:"transparent",color:active?C.navy:C.goldDim,
-                    border:`1px solid ${active?C.gold:"rgba(201,168,76,.2)"}`}}>{lbl}</button>);
+                    border:`1px solid ${active?C.gold:"rgba(255,94,170,.2)"}`}}>{lbl}</button>);
               })}
             </div>
-            <div style={{fontSize:8,color:"rgba(201,168,76,.3)",marginTop:3}}>
+            <div style={{fontSize:8,color:"rgba(255,94,170,.3)",marginTop:3}}>
               {a.compoundPref?"Compound: capital*(1+r)^n — institutional standard":"Simple: capital*rate*years"}
             </div>
           </div>
@@ -1051,10 +1051,10 @@ export default function Portal(){
                   style={{flex:1,padding:"4px 0",fontSize:9,fontWeight:700,letterSpacing:".06em",
                     textTransform:"uppercase",cursor:"pointer",borderRadius:3,
                     background:active?C.gold:"transparent",color:active?C.navy:C.goldDim,
-                    border:`1px solid ${active?C.gold:"rgba(201,168,76,.2)"}`}}>{lbl}</button>);
+                    border:`1px solid ${active?C.gold:"rgba(255,94,170,.2)"}`}}>{lbl}</button>);
               })}
             </div>
-            <div style={{fontSize:8,color:"rgba(201,168,76,.3)",marginTop:3}}>
+            <div style={{fontSize:8,color:"rgba(255,94,170,.3)",marginTop:3}}>
               {a.catchUp?"GP takes 100% above pref until carry% of total, then splits":"GP takes carry% of all proceeds above pref"}
             </div>
           </div>
@@ -1073,10 +1073,10 @@ export default function Portal(){
                   style={{flex:1,padding:"4px 0",fontSize:9,fontWeight:700,letterSpacing:".06em",
                     textTransform:"uppercase",cursor:"pointer",borderRadius:3,
                     background:active?C.gold:"transparent",color:active?C.navy:C.goldDim,
-                    border:`1px solid ${active?C.gold:"rgba(201,168,76,.2)"}`}}>{lbl}</button>);
+                    border:`1px solid ${active?C.gold:"rgba(255,94,170,.2)"}`}}>{lbl}</button>);
               })}
             </div>
-            <div style={{fontSize:8,color:"rgba(201,168,76,.3)",marginTop:3}}>
+            <div style={{fontSize:8,color:"rgba(255,94,170,.3)",marginTop:3}}>
               {a.refiEnabled?"Refi at month "+a.refiMonth+" — cash returned to LP":"No mid-hold refinancing"}
             </div>
           </div>
@@ -1148,7 +1148,7 @@ function PresentationView({m,a,scenName,onClose}){
         fontFamily:"'Playfair Display',serif",marginBottom:sub?4:20}}>{title}</div>}
       {sub&&<div style={{fontSize:13,color:C.goldDim,marginBottom:24}}>{sub}</div>}
       {children}
-      <div style={{position:"absolute",bottom:16,right:56,fontSize:8,color:"rgba(201,168,76,.3)",
+      <div style={{position:"absolute",bottom:16,right:56,fontSize:8,color:"rgba(255,94,170,.3)",
         letterSpacing:".1em",textTransform:"uppercase"}}>CONFIDENTIAL — {scenName}</div>
     </div>
   );
@@ -1170,7 +1170,7 @@ function PresentationView({m,a,scenName,onClose}){
 
       {/* Top bar — hidden in print */}
       <div className="pres-no-print" style={{position:"sticky",top:0,zIndex:10,
-        background:"rgba(13,27,42,.97)",backdropFilter:"blur(12px)",
+        background:"rgba(9,6,15,.97)",backdropFilter:"blur(12px)",
         borderBottom:`1px solid ${C.gold}`,padding:"0 24px",
         display:"flex",alignItems:"center",justifyContent:"space-between",height:48}}>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -1188,7 +1188,7 @@ function PresentationView({m,a,scenName,onClose}){
             borderRadius:3,padding:"5px 16px",fontSize:10,fontWeight:800,letterSpacing:".07em",
             textTransform:"uppercase",cursor:"pointer"}}>Print / PDF</button>
           <button onClick={onClose} style={{background:"transparent",color:C.goldDim,
-            border:`1px solid rgba(201,168,76,.3)`,borderRadius:3,padding:"5px 16px",
+            border:`1px solid rgba(255,94,170,.3)`,borderRadius:3,padding:"5px 16px",
             fontSize:10,fontWeight:700,letterSpacing:".07em",textTransform:"uppercase",cursor:"pointer"}}>
             Exit</button>
         </div>
@@ -1348,7 +1348,7 @@ function PresentationView({m,a,scenName,onClose}){
                   <td style={{padding:"9px 10px",color:C.green,textAlign:"right"}}>{f.$(r.saleNet)}</td>
                 </tr>
               ))}
-              <tr style={{borderTop:`2px solid ${C.border}`,background:"rgba(201,168,76,.06)"}}>
+              <tr style={{borderTop:`2px solid ${C.border}`,background:"rgba(255,94,170,.06)"}}>
                 <td style={{padding:"9px 10px",color:C.gold,fontWeight:700}}>TOTAL</td>
                 <td style={{padding:"9px 10px",color:C.gold,textAlign:"right",fontWeight:700}}>{f.$(a.assets.reduce((s,x)=>s+x.price,0))}</td>
                 <td style={{padding:"9px 10px",color:C.goldDim,textAlign:"right"}}>{f.p(a.assets.reduce((s,x)=>s+x.cap*x.price,0)/a.assets.reduce((s,x)=>s+x.price,0))}</td>
@@ -1390,7 +1390,7 @@ function PresentationView({m,a,scenName,onClose}){
                     <div style={{fontSize:9,color:"rgba(41,128,185,.7)",textTransform:"uppercase"}}>LP</div>
                     <div style={{fontSize:16,color:"#5DADE2",fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(row.lp)}</div>
                   </div>
-                  <div style={{background:"rgba(201,168,76,.08)",borderRadius:3,padding:"7px 10px"}}>
+                  <div style={{background:"rgba(255,94,170,.08)",borderRadius:3,padding:"7px 10px"}}>
                     <div style={{fontSize:9,color:C.goldDim,textTransform:"uppercase"}}>GP</div>
                     <div style={{fontSize:16,color:C.gold,fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(row.gp)}</div>
                   </div>
@@ -1564,11 +1564,11 @@ function PresentationView({m,a,scenName,onClose}){
                           const r2=run({...a,exitCapRate:ec,assets:a.assets.map(x=>({...x,growth:g}))});
                           const v=r2.lpIRR;
                           const isCur=Math.abs(ec-a.exitCapRate)<.001&&Math.abs(g-a.assets[0].growth)<.001;
-                          const bg=v>.18?"rgba(30,132,73,.25)":v>.14?"rgba(201,168,76,.12)":"rgba(192,57,43,.2)";
+                          const bg=v>.18?"rgba(30,132,73,.25)":v>.14?"rgba(255,94,170,.12)":"rgba(192,57,43,.2)";
                           const clr=v>.18?C.green:v>.14?C.white:C.red;
                           return(
                             <td key={g} style={{padding:"10px 16px",textAlign:"center",fontSize:13,
-                              background:isCur?"rgba(201,168,76,.22)":bg,color:clr,fontWeight:isCur?700:500,
+                              background:isCur?"rgba(255,94,170,.22)":bg,color:clr,fontWeight:isCur?700:500,
                               border:isCur?`1px solid ${C.gold}`:"none"}}>
                               {f.p(v)}
                             </td>
@@ -1580,7 +1580,7 @@ function PresentationView({m,a,scenName,onClose}){
                 </table>
               </div>
               <div style={{display:"flex",gap:14,marginTop:12,fontSize:11}}>
-                {[["rgba(30,132,73,.3)","> 18%"],["rgba(201,168,76,.15)","14-18%"],["rgba(192,57,43,.25)","< 14%"]].map(([bg,l])=>(
+                {[["rgba(30,132,73,.3)","> 18%"],["rgba(255,94,170,.15)","14-18%"],["rgba(192,57,43,.25)","< 14%"]].map(([bg,l])=>(
                   <div key={l} style={{display:"flex",alignItems:"center",gap:5}}>
                     <div style={{width:14,height:14,background:bg,borderRadius:2}}/>
                     <span style={{color:C.whDim}}>{l}</span>
@@ -1710,7 +1710,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset,addGlobalWithModal}){
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <input value={asset.name} onChange={e=>setAsset(idx,"name",e.target.value)}
-                  style={{background:"transparent",border:"none",borderBottom:`1px solid rgba(201,168,76,.3)`,
+                  style={{background:"transparent",border:"none",borderBottom:`1px solid rgba(255,94,170,.3)`,
                     color:C.white,fontSize:12,fontWeight:700,outline:"none",width:140,padding:"1px 0"}}/>
               </div>
               <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -1720,9 +1720,9 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset,addGlobalWithModal}){
                 <button onClick={()=>setAsset(idx,"scope",asset.scope==="global"?"scenario":"global")}
                   title={asset.scope==="global"?"Global: applies to all scenarios":"Scenario: current scenario only"}
                   style={{padding:"2px 7px",borderRadius:3,fontSize:8,fontWeight:700,cursor:"pointer",
-                    background:asset.scope==="global"?"rgba(201,168,76,.2)":"rgba(255,255,255,.06)",
+                    background:asset.scope==="global"?"rgba(255,94,170,.2)":"rgba(255,255,255,.06)",
                     color:asset.scope==="global"?C.gold:C.whDim,
-                    border:`1px solid ${asset.scope==="global"?"rgba(201,168,76,.4)":"rgba(255,255,255,.1)"}`}}>
+                    border:`1px solid ${asset.scope==="global"?"rgba(255,94,170,.4)":"rgba(255,255,255,.1)"}`}}>
                   {asset.scope==="global"?"Global":"Scen."}
                 </button>
                 {a.assets.length>1&&(
@@ -1748,11 +1748,11 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset,addGlobalWithModal}){
                   <div key={fi.k}>
                     <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
                       <span style={{fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".06em"}}>{fi.l}</span>
-                      <span style={{fontSize:10,color:fi.readOnly?"rgba(201,168,76,.5)":C.gold}}>{fi.d(val)}</span>
+                      <span style={{fontSize:10,color:fi.readOnly?"rgba(255,94,170,.5)":C.gold}}>{fi.d(val)}</span>
                     </div>
                     {fi.readOnly?(
                       <div style={{height:6,background:"rgba(255,255,255,.04)",borderRadius:2,marginTop:5}}>
-                        <div style={{height:"100%",borderRadius:2,background:"rgba(201,168,76,.3)",
+                        <div style={{height:"100%",borderRadius:2,background:"rgba(255,94,170,.3)",
                           width:`${impliedCap?Math.min(100,Math.max(0,((impliedCap-.04)/(.12-.04))*100)):0}%`}}/>
                       </div>
                     ):(
@@ -1769,8 +1769,8 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset,addGlobalWithModal}){
             {/* ── REVENUE BUILD-UP ── */}
             <div style={{marginBottom:5}}>
               <button onClick={()=>toggle(idx,"rev")}
-                style={{width:"100%",textAlign:"left",background:"rgba(201,168,76,.06)",
-                  border:`1px solid rgba(201,168,76,.15)`,borderRadius:4,padding:"5px 10px",
+                style={{width:"100%",textAlign:"left",background:"rgba(255,94,170,.06)",
+                  border:`1px solid rgba(255,94,170,.15)`,borderRadius:4,padding:"5px 10px",
                   cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <span style={{fontSize:9,fontWeight:700,color:C.gold,textTransform:"uppercase",letterSpacing:".06em"}}>
                   ▸ Revenue Build-Up
@@ -1779,7 +1779,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset,addGlobalWithModal}){
                 <span style={{fontSize:9,color:C.goldDim}}>{exp.rev?"▴":"▾"}</span>
               </button>
               {exp.rev&&(
-                <div style={{background:"rgba(201,168,76,.025)",border:`1px solid rgba(201,168,76,.1)`,
+                <div style={{background:"rgba(255,94,170,.025)",border:`1px solid rgba(255,94,170,.1)`,
                   borderRadius:"0 0 4px 4px",padding:"10px 12px"}}>
 
                   {/* SLIPS */}
@@ -2030,11 +2030,11 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset,addGlobalWithModal}){
 
       <div style={{display:"flex",gap:6,marginBottom:12,marginTop:4}}>
         <button onClick={()=>addAsset("scenario")} style={{flex:1,padding:"10px",
-          background:"rgba(201,168,76,.07)",border:`1px dashed rgba(201,168,76,.3)`,
+          background:"rgba(255,94,170,.07)",border:`1px dashed rgba(255,94,170,.3)`,
           color:C.goldDim,borderRadius:5,fontSize:11,fontWeight:600,cursor:"pointer",
           letterSpacing:".05em"}}>+ Add Scenario Asset</button>
         <button onClick={()=>addGlobalWithModal("assets")} style={{flex:1,padding:"10px",
-          background:"rgba(201,168,76,.15)",border:`1px dashed rgba(201,168,76,.5)`,
+          background:"rgba(255,94,170,.15)",border:`1px dashed rgba(255,94,170,.5)`,
           color:C.gold,borderRadius:5,fontSize:11,fontWeight:600,cursor:"pointer",
           letterSpacing:".05em"}}>+ Add Global Asset</button>
       </div>
@@ -2081,7 +2081,7 @@ function TabWaterfall({m,a,setTier,addTier,removeTier,setTierPreset}){
         sub={`${displayTiers.length}-tier${isMultiTier?" multi-tier":""} · ${f.$(m.pool)} total pool · ${f.$(m.totSaleProc)} sale proceeds + ${f.$(m.totOpCF)} op CF`}/>
 
       {/* G&A shortfall explainer */}
-      <div style={{background:"rgba(201,168,76,.06)",border:`1px solid rgba(201,168,76,.25)`,
+      <div style={{background:"rgba(255,94,170,.06)",border:`1px solid rgba(255,94,170,.25)`,
         borderRadius:5,padding:"11px 15px",marginBottom:16,fontSize:11,color:C.whDim}}>
         <span style={{color:C.gold,fontWeight:700}}>How the G&A shortfall works: </span>
         When GP G&A exceeds fee income (AM+PM fees), the gap is funded by the LP as an additional capital contribution.
@@ -2100,17 +2100,17 @@ function TabWaterfall({m,a,setTier,addTier,removeTier,setTierPreset}){
             <button onClick={()=>setTierPreset(DEF_PROMOTE_TIERS)}
               style={{padding:"3px 10px",borderRadius:3,fontSize:8,fontWeight:700,cursor:"pointer",
                 letterSpacing:".06em",textTransform:"uppercase",
-                background:!isMultiTier?"rgba(201,168,76,.2)":"rgba(255,255,255,.06)",
+                background:!isMultiTier?"rgba(255,94,170,.2)":"rgba(255,255,255,.06)",
                 color:!isMultiTier?C.gold:C.whDim,
-                border:`1px solid ${!isMultiTier?"rgba(201,168,76,.4)":"rgba(255,255,255,.1)"}`}}>
+                border:`1px solid ${!isMultiTier?"rgba(255,94,170,.4)":"rgba(255,255,255,.1)"}`}}>
               Simple
             </button>
             <button onClick={()=>setTierPreset(MULTI_TIER_PRESET)}
               style={{padding:"3px 10px",borderRadius:3,fontSize:8,fontWeight:700,cursor:"pointer",
                 letterSpacing:".06em",textTransform:"uppercase",
-                background:isMultiTier?"rgba(201,168,76,.2)":"rgba(255,255,255,.06)",
+                background:isMultiTier?"rgba(255,94,170,.2)":"rgba(255,255,255,.06)",
                 color:isMultiTier?C.gold:C.whDim,
-                border:`1px solid ${isMultiTier?"rgba(201,168,76,.4)":"rgba(255,255,255,.1)"}`}}>
+                border:`1px solid ${isMultiTier?"rgba(255,94,170,.4)":"rgba(255,255,255,.1)"}`}}>
               Multi-Tier PE
             </button>
           </div>
@@ -2152,7 +2152,7 @@ function TabWaterfall({m,a,setTier,addTier,removeTier,setTierPreset}){
               <td/>
             </tr>
             {a.catchUp&&(
-              <tr style={{borderBottom:"1px solid rgba(255,255,255,.04)",background:"rgba(201,168,76,.04)"}}>
+              <tr style={{borderBottom:"1px solid rgba(255,255,255,.04)",background:"rgba(255,94,170,.04)"}}>
                 <td style={{padding:"6px 8px",color:C.gold,fontWeight:600}}>3 — Catch-Up</td>
                 <td style={{padding:"6px 8px",textAlign:"center",color:C.whDim}}>—</td>
                 <td style={{padding:"6px 8px",textAlign:"center",color:C.whDim}}>—</td>
@@ -2222,7 +2222,7 @@ function TabWaterfall({m,a,setTier,addTier,removeTier,setTierPreset}){
               );
             })}
             {/* Totals row */}
-            <tr style={{borderTop:`2px solid ${C.border}`,background:"rgba(201,168,76,.06)"}}>
+            <tr style={{borderTop:`2px solid ${C.border}`,background:"rgba(255,94,170,.06)"}}>
               <td colSpan={5} style={{padding:"7px 8px",color:C.gold,fontWeight:700}}>TOTALS</td>
               <td style={{padding:"7px 8px",textAlign:"center",color:"#5DADE2",fontWeight:700}}>{f.$(m.lpTotal)}</td>
               <td style={{padding:"7px 8px",textAlign:"center",color:C.gold,fontWeight:700}}>{f.$(m.gpFundTotal)}</td>
@@ -2232,7 +2232,7 @@ function TabWaterfall({m,a,setTier,addTier,removeTier,setTierPreset}){
         </table>
         <button onClick={addTier} style={{
           width:"100%",marginTop:8,padding:"8px",
-          background:"rgba(201,168,76,.06)",border:`1px dashed rgba(201,168,76,.3)`,
+          background:"rgba(255,94,170,.06)",border:`1px dashed rgba(255,94,170,.3)`,
           color:C.goldDim,borderRadius:4,fontSize:10,fontWeight:600,cursor:"pointer"}}>
           + Add Promote Tier
         </button>
@@ -2271,7 +2271,7 @@ function TabWaterfall({m,a,setTier,addTier,removeTier,setTierPreset}){
                   <div style={{fontSize:8,color:"rgba(41,128,185,.7)",textTransform:"uppercase"}}>LP</div>
                   <div style={{fontSize:14,color:"#5DADE2",fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(row.lp)}</div>
                 </div>
-                <div style={{background:"rgba(201,168,76,.08)",borderRadius:3,padding:"5px 8px"}}>
+                <div style={{background:"rgba(255,94,170,.08)",borderRadius:3,padding:"5px 8px"}}>
                   <div style={{fontSize:8,color:C.goldDim,textTransform:"uppercase"}}>GP</div>
                   <div style={{fontSize:14,color:C.gold,fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(row.gp)}</div>
                 </div>
@@ -2370,7 +2370,7 @@ function TabFundCF({m,a}){
         {[["charts","Charts"],["quarterly","Quarterly"],["monthly","Monthly Detail"]].map(([v,l])=>(
           <button key={v} onClick={()=>setView(v)} style={{
             background:view===v?C.gold:"transparent",color:view===v?C.navy:C.goldDim,
-            border:`1px solid ${view===v?C.gold:"rgba(201,168,76,.2)"}`,
+            border:`1px solid ${view===v?C.gold:"rgba(255,94,170,.2)"}`,
             borderRadius:3,padding:"4px 14px",fontSize:9,fontWeight:700,
             textTransform:"uppercase",letterSpacing:".08em",cursor:"pointer"}}>
             {l}
@@ -2491,8 +2491,8 @@ function TabFundCF({m,a}){
                     const isYrEnd=(i+1)%4===0;
                     return(
                       <tr key={i} style={{
-                        borderBottom:isYrEnd?`1px solid rgba(201,168,76,.2)`:"1px solid rgba(255,255,255,.04)",
-                        background:isYrEnd?"rgba(201,168,76,.04)":i%2===0?"transparent":"rgba(255,255,255,.015)"}}>
+                        borderBottom:isYrEnd?`1px solid rgba(255,94,170,.2)`:"1px solid rgba(255,255,255,.04)",
+                        background:isYrEnd?"rgba(255,94,170,.04)":i%2===0?"transparent":"rgba(255,255,255,.015)"}}>
                         <td style={{padding:"5px 10px",color:isYrEnd?C.gold:C.white,
                           fontWeight:isYrEnd?700:400}}>{row.label}</td>
                         <td style={{padding:"5px 10px",textAlign:"right",
@@ -2505,7 +2505,7 @@ function TabFundCF({m,a}){
                     );
                   });
                 })()}
-                <tr style={{borderTop:`2px solid ${C.border}`,background:"rgba(201,168,76,.06)"}}>
+                <tr style={{borderTop:`2px solid ${C.border}`,background:"rgba(255,94,170,.06)"}}>
                   <td style={{padding:"7px 10px",color:C.gold,fontWeight:700}}>7-YR TOTAL</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:C.green,fontWeight:700}}>{f.$(m.totNetOpCF)}</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:"#E8D5A3",fontWeight:700}}>{f.$(m.totAMFee)}</td>
@@ -2577,7 +2577,7 @@ function TabFundCF({m,a}){
                     <td style={{padding:"5px 10px",textAlign:"right",color:C.whDim}}>{f.$(row.cumLPCall)}</td>
                   </tr>
                 ))}
-                <tr style={{borderTop:`2px solid ${C.border}`,background:"rgba(201,168,76,.06)"}}>
+                <tr style={{borderTop:`2px solid ${C.border}`,background:"rgba(255,94,170,.06)"}}>
                   <td style={{padding:"7px 10px",color:C.gold,fontWeight:700}}>7-YR TOTAL</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:C.green,fontWeight:700}}>{f.$(m.totNetOpCF)}</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:"#E8D5A3",fontWeight:700}}>{f.$(m.totAMFee)}</td>
@@ -2646,7 +2646,7 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
       </div>
 
       {/* AM fee explainer */}
-      <div style={{background:"rgba(201,168,76,.06)",border:`1px solid rgba(201,168,76,.25)`,
+      <div style={{background:"rgba(255,94,170,.06)",border:`1px solid rgba(255,94,170,.25)`,
         borderRadius:5,padding:"11px 15px",marginBottom:16,display:"flex",gap:20,flexWrap:"wrap"}}>
         <div style={{fontSize:11,color:C.whDim}}>
           <span style={{color:C.gold,fontWeight:700}}>Where does the AM fee go? </span>
@@ -2664,7 +2664,7 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
           <button key={v} onClick={()=>setGaView(v)} style={{
             background:gaView===v?C.gold:"transparent",
             color:gaView===v?C.navy:C.goldDim,
-            border:`1px solid ${gaView===v?C.gold:"rgba(201,168,76,.2)"}`,
+            border:`1px solid ${gaView===v?C.gold:"rgba(255,94,170,.2)"}`,
             borderRadius:3,padding:"4px 14px",fontSize:9,fontWeight:700,
             textTransform:"uppercase",letterSpacing:".08em",cursor:"pointer"}}>
             {l}
@@ -2810,8 +2810,8 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
 
         const renderRow = (row, key, label, isYrEnd=false, isTotals=false) => (
           <tr key={key} style={{
-            borderBottom: isYrEnd?`1px solid rgba(201,168,76,.25)`:"1px solid rgba(255,255,255,.04)",
-            background: isTotals?"rgba(201,168,76,.07)":isYrEnd?"rgba(201,168,76,.04)":
+            borderBottom: isYrEnd?`1px solid rgba(255,94,170,.25)`:"1px solid rgba(255,255,255,.04)",
+            background: isTotals?"rgba(255,94,170,.07)":isYrEnd?"rgba(255,94,170,.04)":
               (key%2===0?"transparent":"rgba(255,255,255,.015)")}}>
             <td style={{padding:"5px 8px",color:isTotals||isYrEnd?C.gold:C.white,
               fontWeight:isTotals||isYrEnd?700:400}}>{label}</td>
@@ -2936,7 +2936,7 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
           </button>
           <button onClick={()=>addGlobalWithModal("hires")} style={{
             flex:1,padding:"9px",
-            background:"rgba(201,168,76,.1)",border:`1px dashed rgba(201,168,76,.4)`,
+            background:"rgba(255,94,170,.1)",border:`1px dashed rgba(255,94,170,.4)`,
             color:C.gold,borderRadius:5,fontSize:10,fontWeight:600,cursor:"pointer"}}>
             + Add Global Hire
           </button>
@@ -2975,9 +2975,9 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
                       <button onClick={()=>setHire(idx,"scope",h.scope==="global"?"scenario":"global")}
                         title={h.scope==="global"?"Global: change applies to all scenarios":"Scenario: change only affects current scenario"}
                         style={{padding:"1px 5px",borderRadius:3,fontSize:7,fontWeight:700,cursor:"pointer",
-                          background:h.scope==="global"?"rgba(201,168,76,.2)":"rgba(255,255,255,.06)",
+                          background:h.scope==="global"?"rgba(255,94,170,.2)":"rgba(255,255,255,.06)",
                           color:h.scope==="global"?C.gold:C.whDim,
-                          border:`1px solid ${h.scope==="global"?"rgba(201,168,76,.4)":"rgba(255,255,255,.1)"}`}}>
+                          border:`1px solid ${h.scope==="global"?"rgba(255,94,170,.4)":"rgba(255,255,255,.1)"}`}}>
                         {h.scope==="global"?"G":"S"}
                       </button>
                     </div>
@@ -3016,7 +3016,7 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
           </button>
           <button onClick={()=>addGlobalWithModal("hires")} style={{
             flex:1,padding:"9px",
-            background:"rgba(201,168,76,.1)",border:`1px dashed rgba(201,168,76,.4)`,
+            background:"rgba(255,94,170,.1)",border:`1px dashed rgba(255,94,170,.4)`,
             color:C.gold,borderRadius:5,fontSize:10,fontWeight:600,cursor:"pointer"}}>
             + Add Global Hire
           </button>
@@ -3097,9 +3097,9 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
                     <button onClick={()=>setOhead(idx,"scope",o.scope==="global"?"scenario":"global")}
                       title={o.scope==="global"?"Global: change applies to all scenarios":"Scenario: change only affects current scenario"}
                       style={{padding:"2px 5px",borderRadius:3,fontSize:7,fontWeight:700,cursor:"pointer",
-                        background:o.scope==="global"?"rgba(201,168,76,.2)":"rgba(255,255,255,.06)",
+                        background:o.scope==="global"?"rgba(255,94,170,.2)":"rgba(255,255,255,.06)",
                         color:o.scope==="global"?C.gold:C.whDim,
-                        border:`1px solid ${o.scope==="global"?"rgba(201,168,76,.4)":"rgba(255,255,255,.1)"}`}}>
+                        border:`1px solid ${o.scope==="global"?"rgba(255,94,170,.4)":"rgba(255,255,255,.1)"}`}}>
                       {o.scope==="global"?"G":"S"}
                     </button>
                   </td>
@@ -3118,13 +3118,13 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
         <div style={{display:"flex",gap:6,marginTop:8}}>
           <button onClick={()=>addOhead("scenario")} style={{
             flex:1,padding:"9px",
-            background:"rgba(201,168,76,.06)",border:`1px dashed rgba(201,168,76,.25)`,
+            background:"rgba(255,94,170,.06)",border:`1px dashed rgba(255,94,170,.25)`,
             color:C.goldDim,borderRadius:5,fontSize:10,fontWeight:600,cursor:"pointer"}}>
             + Add Scenario Overhead
           </button>
           <button onClick={()=>addGlobalWithModal("overhead")} style={{
             flex:1,padding:"9px",
-            background:"rgba(201,168,76,.15)",border:`1px dashed rgba(201,168,76,.5)`,
+            background:"rgba(255,94,170,.15)",border:`1px dashed rgba(255,94,170,.5)`,
             color:C.gold,borderRadius:5,fontSize:10,fontWeight:600,cursor:"pointer"}}>
             + Add Global Overhead
           </button>
@@ -3196,9 +3196,9 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
                     <button onClick={()=>setOneTime(idx,"scope",e.scope==="global"?"scenario":"global")}
                       style={{padding:"2px 7px",borderRadius:3,fontSize:8,fontWeight:700,cursor:"pointer",
                         letterSpacing:".06em",textTransform:"uppercase",
-                        background:e.scope==="global"?"rgba(201,168,76,.2)":"rgba(255,255,255,.06)",
+                        background:e.scope==="global"?"rgba(255,94,170,.2)":"rgba(255,255,255,.06)",
                         color:e.scope==="global"?C.gold:C.whDim,
-                        border:`1px solid ${e.scope==="global"?"rgba(201,168,76,.4)":"rgba(255,255,255,.1)"}`}}>
+                        border:`1px solid ${e.scope==="global"?"rgba(255,94,170,.4)":"rgba(255,255,255,.1)"}`}}>
                       {e.scope==="global"?"Global":"Scen."}
                     </button>
                   </td>
@@ -3211,7 +3211,7 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
               );
             })}
             {(a.oneTime||[]).length>0&&(
-              <tr style={{borderTop:`1px solid ${C.border}`,background:"rgba(201,168,76,.05)"}}>
+              <tr style={{borderTop:`1px solid ${C.border}`,background:"rgba(255,94,170,.05)"}}>
                 <td style={{padding:"7px 8px",color:C.gold,fontWeight:700,fontSize:11}}>Total One-Time</td>
                 <td style={{padding:"7px 8px",color:C.gold,fontWeight:700,textAlign:"center"}}>
                   {f.$((a.oneTime||[]).reduce((s,e)=>s+e.amount,0))}
@@ -3238,7 +3238,7 @@ function TabGPPartners({m,a}){
       <PHdr title="GP Partner Economics"
         sub={`${n} equal partners · ${f.p(1/n)} each · all figures shown per partner`}/>
 
-      <div style={{background:"rgba(201,168,76,.06)",border:`1px solid rgba(201,168,76,.2)`,
+      <div style={{background:"rgba(255,94,170,.06)",border:`1px solid rgba(255,94,170,.2)`,
         borderRadius:5,padding:"10px 14px",marginBottom:14,fontSize:11,color:C.whDim}}>
         <span style={{color:C.gold,fontWeight:700}}>Partner compensation stack: </span>
         Base salary (G&A expense, paid monthly from fee income) +
@@ -3326,7 +3326,7 @@ function TabGPPartners({m,a}){
               </tr>
             ))}
             {/* Totals row */}
-            <tr style={{borderTop:`1px solid ${C.border}`,background:"rgba(201,168,76,.06)"}}>
+            <tr style={{borderTop:`1px solid ${C.border}`,background:"rgba(255,94,170,.06)"}}>
               <td style={{padding:"9px 9px",color:C.gold,fontWeight:700}}>TOTAL</td>
               <td style={{padding:"9px 9px",color:C.gold,textAlign:"right",fontWeight:700}}>100%</td>
               <td style={{padding:"9px 9px",color:C.red,textAlign:"right",fontWeight:700}}>({f.$(m.totGPCalled)})</td>
@@ -3399,11 +3399,11 @@ function TabSensitivity({m,a}){
                     const r2=run({...a,exitCapRate:ec,assets:a.assets.map(x=>({...x,growth:g}))});
                     const v=r2.lpIRR;
                     const isCur=Math.abs(ec-a.exitCapRate)<.001&&Math.abs(g-a.assets[0].growth)<.001;
-                    const bg=v>.18?"rgba(30,132,73,.25)":v>.14?"rgba(201,168,76,.12)":"rgba(192,57,43,.2)";
+                    const bg=v>.18?"rgba(30,132,73,.25)":v>.14?"rgba(255,94,170,.12)":"rgba(192,57,43,.2)";
                     const clr=v>.18?C.green:v>.14?C.white:C.red;
                     return(
                       <td key={g} style={{padding:"9px 14px",textAlign:"center",fontSize:12,
-                        background:isCur?"rgba(201,168,76,.22)":bg,color:clr,fontWeight:isCur?700:500,
+                        background:isCur?"rgba(255,94,170,.22)":bg,color:clr,fontWeight:isCur?700:500,
                         border:isCur?`1px solid ${C.gold}`:"none"}}>
                         {f.p(v)}
                       </td>
@@ -3415,7 +3415,7 @@ function TabSensitivity({m,a}){
           </table>
         </div>
         <div style={{display:"flex",gap:14,marginTop:10,fontSize:10}}>
-          {[["rgba(30,132,73,.3)","> 18%"],["rgba(201,168,76,.15)","14–18%"],["rgba(192,57,43,.25)","< 14%"]].map(([bg,l])=>(
+          {[["rgba(30,132,73,.3)","> 18%"],["rgba(255,94,170,.15)","14–18%"],["rgba(192,57,43,.25)","< 14%"]].map(([bg,l])=>(
             <div key={l} style={{display:"flex",alignItems:"center",gap:5}}>
               <div style={{width:12,height:12,background:bg,borderRadius:2}}/>
               <span style={{color:C.whDim}}>{l}</span>
@@ -3438,7 +3438,7 @@ function TabSensitivity({m,a}){
                   return(
                     <div key={d.rate} style={{
                       padding:"4px 10px",borderRadius:3,fontSize:10,flex:1,
-                      background:isCur?"rgba(201,168,76,.18)":"rgba(255,255,255,.04)",
+                      background:isCur?"rgba(255,94,170,.18)":"rgba(255,255,255,.04)",
                       border:`1px solid ${isCur?C.gold:"transparent"}`,textAlign:"center"}}>
                       <div style={{color:C.whDim,fontSize:8,marginBottom:1}}>{d.rate}</div>
                       <div style={{color:isCur?C.gold:C.white,fontWeight:isCur?700:400}}>
@@ -4242,7 +4242,7 @@ function TabDeals({a}){
 
         {/* Top bar — hidden in print */}
         <div className="ic-no-print" style={{position:"sticky",top:0,zIndex:10,
-          background:"rgba(13,27,42,.97)",backdropFilter:"blur(12px)",
+          background:"rgba(9,6,15,.97)",backdropFilter:"blur(12px)",
           borderBottom:`1px solid ${C.gold}`,padding:"0 24px",
           display:"flex",alignItems:"center",justifyContent:"space-between",height:48}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -4253,7 +4253,7 @@ function TabDeals({a}){
               borderRadius:3,padding:"5px 16px",fontSize:10,fontWeight:800,letterSpacing:".07em",
               textTransform:"uppercase",cursor:"pointer"}}>Print / PDF</button>
             <button onClick={()=>setShowPresentation(false)} style={{background:"transparent",color:C.goldDim,
-              border:`1px solid rgba(201,168,76,.3)`,borderRadius:3,padding:"5px 16px",
+              border:`1px solid rgba(255,94,170,.3)`,borderRadius:3,padding:"5px 16px",
               fontSize:10,fontWeight:700,letterSpacing:".07em",textTransform:"uppercase",cursor:"pointer"}}>Close</button>
           </div>
         </div>
@@ -4636,7 +4636,7 @@ function TabDeals({a}){
                           <td className="ic-gold-text" style={{...tdS,color:C.goldDim,fontWeight:600}}>{(row.exitCap*100).toFixed(1)}%</td>
                           {analysis.sensitivity.growthRates.map(g=>{
                             const v=row.values[g]?.lpIRR;
-                            const bg=v>.18?"rgba(30,132,73,.25)":v>.14?"rgba(201,168,76,.12)":"rgba(192,57,43,.2)";
+                            const bg=v>.18?"rgba(30,132,73,.25)":v>.14?"rgba(255,94,170,.12)":"rgba(192,57,43,.2)";
                             const clr=v>.18?C.green:v>.14?C.white:C.red;
                             const cls=v>.18?"ic-sens-green":v>.14?"ic-sens-yellow":"ic-sens-red";
                             return <td key={g} className={cls} style={{...tdS,textAlign:"center",background:bg,color:clr,fontWeight:500}}>{v!=null?f.p(v):"—"}</td>;
@@ -4672,7 +4672,7 @@ function TabDeals({a}){
 
           {/* ═══ DISCLAIMER ═══ */}
           <div className="ic-disclaimer" style={{textAlign:"center",padding:"20px 0",borderTop:`1px solid ${C.border}`,marginTop:20}}>
-            <div style={{fontSize:9,color:"rgba(201,168,76,.3)",lineHeight:1.6,maxWidth:600,margin:"0 auto"}}>
+            <div style={{fontSize:9,color:"rgba(255,94,170,.3)",lineHeight:1.6,maxWidth:600,margin:"0 auto"}}>
               This Investment Committee Memorandum is confidential and intended solely for the use of the investment committee.
               Projections and forward-looking statements are based on assumptions that may not be realized.
               Past performance is not indicative of future results. All figures are estimates subject to change.
@@ -4706,7 +4706,7 @@ function TabDeals({a}){
         </div>
 
         {creating&&(
-          <div style={{background:"rgba(201,168,76,.06)",border:`1px solid ${C.border}`,borderRadius:6,
+          <div style={{background:"rgba(255,94,170,.06)",border:`1px solid ${C.border}`,borderRadius:6,
             padding:16,marginBottom:14}}>
             <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:10}}>
               {[["name","Marina Name","text",""],["property_type","Marina Type","text","Full-Service Marina"],
@@ -4744,7 +4744,7 @@ function TabDeals({a}){
                 const isComp=compareIds.includes(d.id);
                 return(
                   <tr key={d.id} onClick={()=>selectDeal(d.id)} style={{cursor:"pointer",
-                    background:isSel?"rgba(201,168,76,.1)":"transparent"}}>
+                    background:isSel?"rgba(255,94,170,.1)":"transparent"}}>
                     <td style={tdS}><input type="checkbox" checked={isComp}
                       onChange={e=>{e.stopPropagation();toggleCompare(d.id);}} style={{cursor:"pointer"}}/></td>
                     <td style={{...tdS,color:isSel?C.gold:C.white,fontWeight:isSel?700:400}}>{d.name}</td>
@@ -4752,7 +4752,7 @@ function TabDeals({a}){
                     <td style={tdS}>{d.price?f.$(Number(d.price)):"—"}</td><td style={tdS}>{d.slips||d.units||"—"}</td>
                     <td style={tdS}>{d.financial_count||0}</td>
                     <td style={tdS}><span style={{padding:"2px 8px",borderRadius:10,fontSize:9,fontWeight:600,
-                      background:d.status==="active"?"rgba(30,132,73,.2)":d.status==="closed"?"rgba(41,128,185,.2)":"rgba(201,168,76,.12)",
+                      background:d.status==="active"?"rgba(30,132,73,.2)":d.status==="closed"?"rgba(41,128,185,.2)":"rgba(255,94,170,.12)",
                       color:d.status==="active"?C.green:d.status==="closed"?C.blue:C.gold}}>
                       {(d.status||"pipeline").toUpperCase()}</span></td>
                   </tr>);
@@ -4817,7 +4817,7 @@ function TabDeals({a}){
                 {analyzing?"Running Model...":"Analyze"}
               </button>
               <button onClick={()=>setShowVersionPanel(v=>!v)}
-                style={{...dimBtn,background:showVersionPanel?"rgba(201,168,76,.15)":"transparent",
+                style={{...dimBtn,background:showVersionPanel?"rgba(255,94,170,.15)":"transparent",
                   color:versions.length>0?C.gold:C.whDim}}>
                 Versions {versions.length>0?`(${versions.length})`:""}
               </button>
@@ -4828,7 +4828,7 @@ function TabDeals({a}){
 
           {/* ── VERSIONS PANEL ─────────────────────────────── */}
           {showVersionPanel&&(
-            <div style={{background:"rgba(201,168,76,.06)",border:`1px solid rgba(201,168,76,.2)`,
+            <div style={{background:"rgba(255,94,170,.06)",border:`1px solid rgba(255,94,170,.2)`,
               borderRadius:8,padding:14,marginBottom:14}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                 <div style={{fontSize:11,fontWeight:700,color:C.gold,textTransform:"uppercase",letterSpacing:".06em"}}>
@@ -5045,7 +5045,7 @@ function TabDeals({a}){
                   ))}
                   <button onClick={addRevLine} style={{...goldBtn,fontSize:9,padding:"4px 10px"}}>+ Add Line</button>
                   <button onClick={saveAllLines} disabled={saving} style={{...goldBtn,fontSize:9,padding:"4px 10px",
-                    background:revDirty?C.green:saving?"rgba(201,168,76,.4)":"rgba(201,168,76,.3)"}}>{saving?"Saving...":revDirty?"Save":"Saved"}</button>
+                    background:revDirty?C.green:saving?"rgba(255,94,170,.4)":"rgba(255,94,170,.3)"}}>{saving?"Saving...":revDirty?"Save":"Saved"}</button>
                   {saveMsg&&<span style={{fontSize:9,color:saveMsg.startsWith("Saved")?C.green:C.red,marginLeft:6}}>{saveMsg}</span>}
                 </div>
               </div>
@@ -5121,7 +5121,7 @@ function TabDeals({a}){
                   ))}
                   <button onClick={addExpLine} style={{...goldBtn,fontSize:9,padding:"4px 10px"}}>+ Add Line</button>
                   <button onClick={saveAllLines} disabled={saving} style={{...goldBtn,fontSize:9,padding:"4px 10px",
-                    background:revDirty?C.green:saving?"rgba(201,168,76,.4)":"rgba(201,168,76,.3)"}}>{saving?"Saving...":revDirty?"Save":"Saved"}</button>
+                    background:revDirty?C.green:saving?"rgba(255,94,170,.4)":"rgba(255,94,170,.3)"}}>{saving?"Saving...":revDirty?"Save":"Saved"}</button>
                   {saveMsg&&<span style={{fontSize:9,color:saveMsg.startsWith("Saved")?C.green:C.red,marginLeft:6}}>{saveMsg}</span>}
                 </div>
               </div>
@@ -5194,7 +5194,7 @@ function TabDeals({a}){
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
                   <span style={{fontSize:8,color:C.whDim}}>Dbl-click to edit. Right-click to reset.</span>
                   <button onClick={saveAllLines} disabled={saving} style={{...goldBtn,fontSize:10,padding:"5px 14px",
-                    background:revDirty?C.green:saving?"rgba(201,168,76,.4)":"rgba(201,168,76,.3)"}}>{saving?"Saving...":revDirty?"Save Changes":"Saved"}</button>
+                    background:revDirty?C.green:saving?"rgba(255,94,170,.4)":"rgba(255,94,170,.3)"}}>{saving?"Saving...":revDirty?"Save Changes":"Saved"}</button>
                   {saveMsg&&<span style={{fontSize:9,color:saveMsg.startsWith("Saved")?C.green:C.red,marginLeft:6}}>{saveMsg}</span>}
                   {Object.keys(proformaOverrides).length>0&&(
                     <button onClick={()=>{setProformaOverrides({});setRevDirty(true);}} style={{...dimBtn,fontSize:9,padding:"4px 10px"}}>
@@ -5272,7 +5272,7 @@ function TabDeals({a}){
                           const yoy=prevNoi&&prevNoi>0?(yr.noi-prevNoi)/prevNoi:null;
                           const isExpanded=expandedYears[yr.year];
                           return(<React.Fragment key={yr.year}>
-                            <tr style={{background:isExpanded?"rgba(201,168,76,.06)":"transparent"}}>
+                            <tr style={{background:isExpanded?"rgba(255,94,170,.06)":"transparent"}}>
                               <td style={{...tdS,width:24,cursor:"pointer",textAlign:"center",color:C.goldDim,fontSize:13}}
                                 onClick={()=>setExpandedYears(p=>({...p,[yr.year]:!p[yr.year]}))}>
                                 {isExpanded?"▾":"▸"}
@@ -5525,7 +5525,7 @@ function TabDeals({a}){
                   <SHdr t="Deal Assumptions"/>
                   <button onClick={runAnalysis} disabled={analyzing}
                     style={{...goldBtn,fontSize:10,padding:"6px 18px",
-                      background:analyzing?"rgba(201,168,76,.4)":C.gold}}>
+                      background:analyzing?"rgba(255,94,170,.4)":C.gold}}>
                     {analyzing?"Running...":"Run Analysis"}
                   </button>
                 </div>
@@ -5696,7 +5696,7 @@ function TabDeals({a}){
                                 <td style={{...tdS,color:C.goldDim,fontWeight:600}}>{(row.exitCap*100).toFixed(1)}%</td>
                                 {analysis.sensitivity.growthRates.map(g=>{
                                   const v=row.values[g]?.lpIRR;
-                                  const bg=v>.18?"rgba(30,132,73,.25)":v>.14?"rgba(201,168,76,.12)":"rgba(192,57,43,.2)";
+                                  const bg=v>.18?"rgba(30,132,73,.25)":v>.14?"rgba(255,94,170,.12)":"rgba(192,57,43,.2)";
                                   const clr=v>.18?C.green:v>.14?C.white:C.red;
                                   return <td key={g} style={{...tdS,textAlign:"center",background:bg,color:clr,
                                     fontWeight:500}}>{v!=null?f.p(v):"—"}</td>;
