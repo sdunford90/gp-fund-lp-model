@@ -85,7 +85,7 @@ const MULTI_TIER_PRESET = [
 const DEFAULT = {
   fundTerm:7, debtPct:.60, interestRate:.065, amortYears:25,
   exitCapRate:.075, saleCosts:.02, carry:.20, prefReturn:.07,
-  gpPct:.02, amFee:.01, pmFee:.06, benefitsRate:.22, salaryGrowth:.03,
+  gpPct:0, amFee:0, pmFee:0, benefitsRate:.22, salaryGrowth:.03,
   partners:3, compoundPref:false, catchUp:false,
   // Refinancing: optional mid-hold refi to return capital to LP
   refiEnabled:false, refiMonth:36, refiLTV:.70, refiRate:.065, refiCosts:.01,
@@ -117,6 +117,37 @@ function totalLPForIRR(targetIRR, lpCapital, annualInterim, N) {
   for (let y = 1; y < N; y++) pvInterim += annualInterim / Math.pow(1 + targetIRR, y);
   const terminal = (lpCapital - pvInterim) * Math.pow(1 + targetIRR, N);
   return annualInterim * (N - 1) + terminal;
+}
+
+// ── PER-ASSET BOTTOMS-UP REVENUE HELPERS ─────────────────────────────────────
+function computeAssetGrossRevenue(asset, y){
+  let gr=0;
+  const g=asset.growth||.03;
+  const gf=y>1?Math.pow(1+g,y-1):1;
+  (asset.slipTypes||[]).forEach(s=>{
+    if(!(s.count>0))return;
+    const occ=s.occupancy!=null?s.occupancy:.85;
+    gr+=(s.count||0)*(s.rate||0)*12*occ*gf;
+  });
+  (asset.strUnits||[]).forEach(s=>{
+    if(!(s.units>0))return;
+    const occ=s.occupancy!=null?s.occupancy:.65;
+    gr+=(s.units||0)*(s.adr||0)*365*occ*gf;
+  });
+  (asset.otherRevenue||[]).forEach(o=>{
+    gr+=(o.annual||0)*gf;
+  });
+  return gr;
+}
+function computeMgmtFees(asset, grossRevenue){
+  return (asset.mgmtFees||[]).reduce((s,f2)=>{
+    return s+(f2.type==="pct"?grossRevenue*(f2.amount||0):(f2.amount||0));
+  },0);
+}
+function hasRevenueRows(asset){
+  return (asset.slipTypes||[]).some(s=>s.count>0)||
+         (asset.strUnits||[]).some(s=>s.units>0)||
+         (asset.otherRevenue||[]).some(o=>o.annual>0);
 }
 
 // ── MODEL ─────────────────────────────────────────────────────────────────────
@@ -175,9 +206,21 @@ function run(a){
     const eq=asset.price*(1-debtPct),debt=asset.price*debtPct;
     const annDS=pmt(interestRate,amortYears,debt);
     const margin=asset.noiMargin||.525;
-    const noi=Array.from({length:fundTerm+1},(_,y)=>
-      y===0?0:asset.price*asset.cap*Math.pow(1+asset.growth,y-1));
-    const egi=noi.map(n=>margin>0?n/margin:n);
+
+    // Bottoms-up NOI: use revenue rows if any are defined, else cap-rate fallback
+    const useBottomsUp=hasRevenueRows(asset);
+    let noi,egi,grossRevYr1;
+    if(useBottomsUp){
+      const grossRev=Array.from({length:fundTerm+1},(_,y)=>y===0?0:computeAssetGrossRevenue(asset,y));
+      grossRevYr1=grossRev[1]||0;
+      const mgmtFeeArr=grossRev.map(gr=>computeMgmtFees(asset,gr));
+      noi=grossRev.map((gr,y)=>y===0?0:gr*margin-mgmtFeeArr[y]);
+      egi=grossRev; // EGI = gross revenue (before mgmt fees)
+    }else{
+      noi=Array.from({length:fundTerm+1},(_,y)=>y===0?0:asset.price*asset.cap*Math.pow(1+asset.growth,y-1));
+      egi=noi.map(n=>margin>0?n/margin:n);
+      grossRevYr1=egi[1]||0;
+    }
 
     // Refinancing: if enabled and asset was acquired before refiMonth
     let refiProceeds=0, newDebt=0, newAnnDS=0, refiYearIdx=0;
@@ -185,20 +228,21 @@ function run(a){
     if(assetRefiEligible){
       refiYearIdx=Math.ceil((refiMonth-asset.startMonth)/12);
       const yrsHeld=(refiMonth-asset.startMonth)/12;
-      // Appraised value at refi = NOI at refi / exit cap (conservative: use exit cap)
-      const refiNOI=asset.price*asset.cap*Math.pow(1+asset.growth,yrsHeld);
+      // Appraised value at refi = NOI at refi / exit cap
+      const refiNOI=useBottomsUp
+        ?computeAssetGrossRevenue(asset,Math.max(1,Math.round(yrsHeld)))*margin
+        :asset.price*asset.cap*Math.pow(1+asset.growth,yrsHeld);
       const appraisedVal=refiNOI/exitCapRate;
       newDebt=appraisedVal*refiLTV;
       const yrsFromAcq=(refiMonth-asset.startMonth)/12;
       const oldLB=Math.abs(fvLoan(interestRate,Math.round(yrsFromAcq),annDS,debt));
       refiProceeds=newDebt-oldLB-appraisedVal*refiCosts;
-      if(refiProceeds<0)refiProceeds=0; // no cash-out if underwater
+      if(refiProceeds<0)refiProceeds=0;
       newAnnDS=pmt(refiRate,amortYears,newDebt);
     }
 
     const ecf=noi.map((n,y)=>{
       if(y===0)return -eq;
-      // Use new debt service after refi year
       const ds=assetRefiEligible&&y>=refiYearIdx?newAnnDS:annDS;
       return n-ds-egi[y]*pmFee;
     });
@@ -206,10 +250,14 @@ function run(a){
     if(assetRefiEligible&&refiYearIdx<=fundTerm){
       ecf[refiYearIdx]=(ecf[refiYearIdx]||0)+refiProceeds;
     }
+    // CapEx: deduct from levered ECF in the specified hold year
+    (asset.capexSchedule||[]).forEach(cx=>{
+      const yr=Math.round(cx.year||1);
+      if(yr>=1&&yr<=fundTerm) ecf[yr]=(ecf[yr]||0)-(cx.amount||0);
+    });
 
     const exitNOI=noi[fundTerm];
     const exitVal=exitNOI/exitCapRate;
-    // Loan balance at exit: use new debt terms if refi'd
     const exitLB=assetRefiEligible
       ? Math.abs(fvLoan(refiRate,fundTerm-Math.round((refiMonth-asset.startMonth)/12),newAnnDS,newDebt))
       : Math.abs(fvLoan(interestRate,fundTerm,annDS,debt));
@@ -217,8 +265,8 @@ function run(a){
     ecf[fundTerm]+=saleNet;
     const eqIRR=irr(ecf);
     const moic=ecf.slice(1).reduce((s,v)=>s+v,0)/eq;
-    return{...asset,eq,debt,annDS,noi,saleNet,exitVal,lb:exitLB,irr:eqIRR,moic,
-      refiProceeds,newDebt,newAnnDS,assetRefiEligible};
+    return{...asset,eq,debt,annDS,noi,egi,saleNet,exitVal,lb:exitLB,irr:eqIRR,moic,
+      refiProceeds,newDebt,newAnnDS,assetRefiEligible,useBottomsUp,grossRevYr1};
   });
 
   // Monthly portfolio
@@ -234,13 +282,22 @@ function run(a){
     assets.forEach((x,ai)=>{
       if(mo<x.startMonth)return;
       const yrs=(mo-x.startMonth)/12;
-      const moNoi=x.price*x.cap*Math.pow(1+x.growth,yrs)/12;
       const margin=x.noiMargin||.525;
+      const ar=assetR[ai];
+      let moNoi,moEgi;
+      if(ar.useBottomsUp){
+        const moGross=ar.grossRevYr1*Math.pow(1+(x.growth||.03),yrs)/12;
+        const moMgmtFees=computeMgmtFees(x,moGross*12)/12;
+        moNoi=moGross*margin-moMgmtFees;
+        moEgi=moGross;
+      }else{
+        moNoi=x.price*x.cap*Math.pow(1+x.growth,yrs)/12;
+        moEgi=margin>0?moNoi/margin:moNoi;
+      }
       noi+=moNoi;
-      egi+=margin>0?moNoi/margin:moNoi;
+      egi+=moEgi;
       invEq+=x.price*(1-debtPct);
       // After refi: use new debt service
-      const ar=assetR[ai];
       if(ar.assetRefiEligible&&mo>=refiMonth){
         ds+=Math.abs(ar.newAnnDS)/12;
       }else{
@@ -758,7 +815,8 @@ export default function Portal(){
   const setAsset=useCallback((i,k,v)=>setA(p=>({...p,assets:p.assets.map((x,j)=>j===i?{...x,[k]:v}:x)})),[]);
   const addAsset=useCallback((scope="scenario",name)=>setA(p=>({...p,assets:[...p.assets,{
     name:name||"Asset "+(p.assets.length+1),price:12000000,cap:.075,growth:.05,
-    noiMargin:.525,startMonth:Math.min(36,(p.assets.length+1)*3+3),scope}]})),[]);
+    noiMargin:.525,startMonth:Math.min(36,(p.assets.length+1)*3+3),scope,
+    slipTypes:[],strUnits:[],otherRevenue:[],mgmtFees:[],capexSchedule:[]}]})),[]);
   const removeAsset=useCallback((i)=>setA(p=>({...p,assets:p.assets.filter((_,j)=>j!==i)})),[]);
 
   const setHire=useCallback((i,k,v)=>setA(p=>({...p,hires:p.hires.map((x,j)=>j===i?{...x,[k]:v}:x)})),[]);
@@ -964,8 +1022,8 @@ export default function Portal(){
 
           <div style={{height:1,background:C.border,margin:"12px 0"}}/>
           <SHdr t="Fees & Carry"/>
-          <Sli label="AM Fee"         value={a.amFee}        min={.005} max={.02}  step={.0025} disp={v=>`${(v*100).toFixed(2)}%`} onChange={v=>set("amFee",v)} sub="% invested capital/yr"/>
-          <Sli label="PM Fee"         value={a.pmFee}        min={.03}  max={.10}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("pmFee",v)} sub="% EGI (gross revenue)"/>
+          <Sli label="AM Fee"         value={a.amFee}        min={0}    max={.02}  step={.0025} disp={v=>`${(v*100).toFixed(2)}%`} onChange={v=>set("amFee",v)} sub="% invested capital/yr"/>
+          <Sli label="PM Fee"         value={a.pmFee}        min={0}    max={.10}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("pmFee",v)} sub="% EGI (gross revenue)"/>
           <Sli label="Carried Int."   value={a.carry}        min={.10}  max={.30}  step={.025}  disp={v=>`${(v*100).toFixed(0)}%`} onChange={v=>set("carry",v)} sub="GP catch-up target"/>
           <Sli label="Preferred Ret." value={a.prefReturn}   min={.05}  max={.10}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("prefReturn",v)}/>
           {/* Pref type toggle */}
@@ -1002,7 +1060,7 @@ export default function Portal(){
               {a.catchUp?"GP takes 100% above pref until carry% of total, then splits":"GP takes carry% of all proceeds above pref"}
             </div>
           </div>
-          <Sli label="GP Commitment"  value={a.gpPct}        min={.01}  max={.05}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("gpPct",v)}/>
+          <Sli label="GP Commitment"  value={a.gpPct}        min={0}    max={.05}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("gpPct",v)}/>
           <Sli label="Sale Costs"     value={a.saleCosts}    min={.01}  max={.04}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("saleCosts",v)}/>
 
           <div style={{height:1,background:C.border,margin:"12px 0"}}/>
@@ -1618,26 +1676,51 @@ function TabOverview({m,a}){
 // ASSETS
 // ═══════════════════════════════════════════════════════════════════════════════
 function TabAssets({m,a,setAsset,addAsset,removeAsset,addGlobalWithModal}){
+  const [expanded,setExpanded]=useState({});
+  const toggle=(idx,section)=>setExpanded(p=>({...p,[idx]:{...(p[idx]||{}),[section]:!(p[idx]||{})[section]}}));
+
+  const inp={background:"rgba(255,255,255,.05)",border:`1px solid ${C.border}`,
+    borderRadius:3,color:C.white,fontSize:10,padding:"3px 6px",width:"100%",outline:"none"};
+  const secBtn={background:"transparent",border:`1px solid ${C.border}`,
+    color:C.goldDim,fontSize:9,padding:"3px 8px",borderRadius:3,cursor:"pointer"};
+  const TH=({children})=><th style={{fontSize:8,color:C.whDim,fontWeight:600,padding:"3px 4px",
+    textAlign:"left",textTransform:"uppercase",letterSpacing:".05em"}}>{children}</th>;
+
   return(
     <div>
       <PHdr title="Asset Assumptions" sub="Adjust per-asset parameters — returns update live"/>
       {a.assets.map((asset,idx)=>{
         const r=m.assetR[idx];
+        const exp=expanded[idx]||{};
+        const hasRev=r?.useBottomsUp||false;
+        const impliedCap=hasRev&&r?.noi?.[1]&&asset.price?r.noi[1]/asset.price:null;
+        const yr1Gross=r?.grossRevYr1||0;
+
+        const updRow=(field,ri,k,v)=>{
+          const arr=[...(asset[field]||[])];
+          arr[ri]={...arr[ri],[k]:v};
+          setAsset(idx,field,arr);
+        };
+        const delRow=(field,ri)=>setAsset(idx,field,(asset[field]||[]).filter((_,j)=>j!==ri));
+        const addRow=(field,tmpl)=>setAsset(idx,field,[...(asset[field]||[]),tmpl]);
+
         return(
           <div key={idx} style={{background:C.whFaint,border:`1px solid ${C.border}`,
             borderRadius:5,padding:"12px 14px",marginBottom:8}}>
+
+            {/* Header */}
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <input value={asset.name} onChange={e=>setAsset(idx,"name",e.target.value)}
                   style={{background:"transparent",border:"none",borderBottom:`1px solid rgba(201,168,76,.3)`,
-                    color:C.white,fontSize:12,fontWeight:700,outline:"none",width:120,padding:"1px 0"}}/>
+                    color:C.white,fontSize:12,fontWeight:700,outline:"none",width:140,padding:"1px 0"}}/>
               </div>
               <div style={{display:"flex",gap:8,alignItems:"center"}}>
                 <span style={{fontSize:11,color:C.green}}>IRR: {f.p(r?.irr)}</span>
                 <span style={{fontSize:11,color:C.gold}}>MOIC: {f.x(r?.moic)}</span>
                 <span style={{fontSize:11,color:C.whDim}}>Equity: {f.$(r?.eq)}</span>
                 <button onClick={()=>setAsset(idx,"scope",asset.scope==="global"?"scenario":"global")}
-                  title={asset.scope==="global"?"Global: change applies to all scenarios":"Scenario: change only affects current scenario"}
+                  title={asset.scope==="global"?"Global: applies to all scenarios":"Scenario: current scenario only"}
                   style={{padding:"2px 7px",borderRadius:3,fontSize:8,fontWeight:700,cursor:"pointer",
                     background:asset.scope==="global"?"rgba(201,168,76,.2)":"rgba(255,255,255,.06)",
                     color:asset.scope==="global"?C.gold:C.whDim,
@@ -1651,37 +1734,289 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset,addGlobalWithModal}){
                 )}
               </div>
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10}}>
+
+            {/* Sliders */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10,marginBottom:10}}>
               {[
-                {k:"price",     l:"Price",       min:5e6, max:50e6,step:5e5, d:v=>`$${(v/1e6).toFixed(1)}M`},
-                {k:"cap",       l:"Going-In Cap",min:.05, max:.12, step:.005,d:v=>`${(v*100).toFixed(1)}%`},
-                {k:"growth",    l:"NOI Growth",  min:.02, max:.12, step:.005,d:v=>`${(v*100).toFixed(1)}%`},
-                {k:"noiMargin", l:"NOI Margin",  min:.40, max:.85, step:.01, fb:.525, d:v=>`${(v*100).toFixed(0)}%`},
-                {k:"startMonth",l:"Close Month", min:3,   max:36,  step:3,   d:v=>`M${v}`},
-              ].map(fi=>(
-                <div key={fi.k}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
-                    <span style={{fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".06em"}}>{fi.l}</span>
-                    <span style={{fontSize:10,color:C.gold}}>{fi.d(asset[fi.k]!=null?asset[fi.k]:(fi.fb!=null?fi.fb:0))}</span>
+                {k:"price",     l:"Price",                     min:5e6,max:50e6,step:5e5, d:v=>`$${(v/1e6).toFixed(1)}M`},
+                {k:"cap",       l:hasRev?"Implied Cap":"Cap",  min:.04, max:.12, step:.005,d:v=>impliedCap?`${(impliedCap*100).toFixed(1)}% ↑`:`${(v*100).toFixed(1)}%`,readOnly:hasRev},
+                {k:"growth",    l:"Revenue Growth",            min:.02, max:.12, step:.005,d:v=>`${(v*100).toFixed(1)}%`},
+                {k:"noiMargin", l:"NOI Margin",                min:.30, max:.85, step:.01, fb:.525,d:v=>`${(v*100).toFixed(0)}%`},
+                {k:"startMonth",l:"Close Month",               min:3,   max:36,  step:3,   d:v=>`M${v}`},
+              ].map(fi=>{
+                const val=asset[fi.k]!=null?asset[fi.k]:(fi.fb!=null?fi.fb:fi.min);
+                const pct=Math.min(100,Math.max(0,((val-fi.min)/(fi.max-fi.min))*100));
+                return(
+                  <div key={fi.k}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                      <span style={{fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".06em"}}>{fi.l}</span>
+                      <span style={{fontSize:10,color:fi.readOnly?"rgba(201,168,76,.5)":C.gold}}>{fi.d(val)}</span>
+                    </div>
+                    {fi.readOnly?(
+                      <div style={{height:6,background:"rgba(255,255,255,.04)",borderRadius:2,marginTop:5}}>
+                        <div style={{height:"100%",borderRadius:2,background:"rgba(201,168,76,.3)",
+                          width:`${impliedCap?Math.min(100,Math.max(0,((impliedCap-.04)/(.12-.04))*100)):0}%`}}/>
+                      </div>
+                    ):(
+                      <input type="range" min={fi.min} max={fi.max} step={fi.step} value={val}
+                        onChange={e=>setAsset(idx,fi.k,Number(e.target.value))}
+                        style={{width:"100%",accentColor:C.gold,cursor:"pointer",
+                          background:`linear-gradient(to right,${C.gold} ${pct}%,rgba(255,255,255,0.07) 0%)`}}/>
+                    )}
                   </div>
-                  <input type="range" min={fi.min} max={fi.max} step={fi.step} value={asset[fi.k]!=null?asset[fi.k]:(fi.fb!=null?fi.fb:fi.min)}
-                    onChange={e=>setAsset(idx,fi.k,Number(e.target.value))}
-                    style={{width:"100%",accentColor:C.gold,cursor:"pointer",
-                      background:`linear-gradient(to right, ${C.gold} ${Math.min(100,Math.max(0,(((asset[fi.k]!=null?asset[fi.k]:(fi.fb!=null?fi.fb:fi.min))-fi.min)/(fi.max-fi.min))*100))}%, rgba(255,255,255,0.07) 0%)`}}/>
-                </div>
-              ))}
+                );
+              })}
             </div>
+
+            {/* ── REVENUE BUILD-UP ── */}
+            <div style={{marginBottom:5}}>
+              <button onClick={()=>toggle(idx,"rev")}
+                style={{width:"100%",textAlign:"left",background:"rgba(201,168,76,.06)",
+                  border:`1px solid rgba(201,168,76,.15)`,borderRadius:4,padding:"5px 10px",
+                  cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:9,fontWeight:700,color:C.gold,textTransform:"uppercase",letterSpacing:".06em"}}>
+                  ▸ Revenue Build-Up
+                  {hasRev?` · ${f.$(yr1Gross)} Yr1 Gross`:" (slips, STR, other revenue)"}
+                </span>
+                <span style={{fontSize:9,color:C.goldDim}}>{exp.rev?"▴":"▾"}</span>
+              </button>
+              {exp.rev&&(
+                <div style={{background:"rgba(201,168,76,.025)",border:`1px solid rgba(201,168,76,.1)`,
+                  borderRadius:"0 0 4px 4px",padding:"10px 12px"}}>
+
+                  {/* SLIPS */}
+                  <div style={{marginBottom:12}}>
+                    <div style={{fontSize:9,color:C.goldDim,fontWeight:700,textTransform:"uppercase",letterSpacing:".08em",marginBottom:6}}>
+                      Slips by Type
+                    </div>
+                    {(asset.slipTypes||[]).length>0&&(
+                      <table style={{width:"100%",borderCollapse:"collapse",marginBottom:6}}>
+                        <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
+                          <TH>Label</TH><TH>Units</TH><TH>Rate/mo ($)</TH><TH>Occ %</TH><TH>Growth %</TH><TH>Yr1 Rev</TH><TH/>
+                        </tr></thead>
+                        <tbody>
+                          {(asset.slipTypes||[]).map((row,ri)=>{
+                            const yr1=(row.count||0)*(row.rate||0)*12*(row.occupancy!=null?row.occupancy:.85);
+                            return(
+                              <tr key={ri} style={{borderBottom:`1px solid rgba(255,255,255,.04)`}}>
+                                <td style={{padding:"3px 4px"}}><input value={row.label||""} onChange={e=>updRow("slipTypes",ri,"label",e.target.value)} placeholder="e.g. 40ft Monthly" style={{...inp,width:110}}/></td>
+                                <td style={{padding:"3px 4px"}}><input type="number" value={row.count||""} onChange={e=>updRow("slipTypes",ri,"count",Number(e.target.value))} min={0} style={{...inp,width:52}}/></td>
+                                <td style={{padding:"3px 4px"}}><input type="number" value={row.rate||""} onChange={e=>updRow("slipTypes",ri,"rate",Number(e.target.value))} min={0} style={{...inp,width:72}}/></td>
+                                <td style={{padding:"3px 4px"}}><input type="number" value={row.occupancy!=null?Math.round(row.occupancy*100):85} onChange={e=>updRow("slipTypes",ri,"occupancy",Number(e.target.value)/100)} min={0} max={100} style={{...inp,width:50}}/></td>
+                                <td style={{padding:"3px 4px"}}><input type="number" value={row.growth!=null?Math.round(row.growth*100):3} onChange={e=>updRow("slipTypes",ri,"growth",Number(e.target.value)/100)} min={0} max={20} style={{...inp,width:46}}/></td>
+                                <td style={{padding:"3px 4px",fontSize:10,color:yr1>0?C.green:C.whDim,fontWeight:600}}>{yr1>0?f.$(yr1):"—"}</td>
+                                <td style={{padding:"3px 4px"}}><button onClick={()=>delRow("slipTypes",ri)} style={{background:"transparent",border:"none",color:C.red,cursor:"pointer",fontSize:13,lineHeight:1}}>×</button></td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                    <button onClick={()=>addRow("slipTypes",{label:"",count:0,rate:1200,occupancy:.85,growth:.03})} style={secBtn}>+ Add Slip Type</button>
+                  </div>
+
+                  {/* STR */}
+                  <div style={{marginBottom:12}}>
+                    <div style={{fontSize:9,color:C.goldDim,fontWeight:700,textTransform:"uppercase",letterSpacing:".08em",marginBottom:6}}>
+                      Short-Term Rentals (STR)
+                    </div>
+                    {(asset.strUnits||[]).length>0&&(
+                      <table style={{width:"100%",borderCollapse:"collapse",marginBottom:6}}>
+                        <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
+                          <TH>Label</TH><TH>Units</TH><TH>ADR ($)</TH><TH>Occ %</TH><TH>Growth %</TH><TH>Yr1 Rev</TH><TH/>
+                        </tr></thead>
+                        <tbody>
+                          {(asset.strUnits||[]).map((row,ri)=>{
+                            const yr1=(row.units||0)*(row.adr||0)*365*(row.occupancy!=null?row.occupancy:.65);
+                            return(
+                              <tr key={ri} style={{borderBottom:`1px solid rgba(255,255,255,.04)`}}>
+                                <td style={{padding:"3px 4px"}}><input value={row.label||""} onChange={e=>updRow("strUnits",ri,"label",e.target.value)} placeholder="e.g. Wet Slip STR" style={{...inp,width:110}}/></td>
+                                <td style={{padding:"3px 4px"}}><input type="number" value={row.units||""} onChange={e=>updRow("strUnits",ri,"units",Number(e.target.value))} min={0} style={{...inp,width:52}}/></td>
+                                <td style={{padding:"3px 4px"}}><input type="number" value={row.adr||""} onChange={e=>updRow("strUnits",ri,"adr",Number(e.target.value))} min={0} style={{...inp,width:66}}/></td>
+                                <td style={{padding:"3px 4px"}}><input type="number" value={row.occupancy!=null?Math.round(row.occupancy*100):65} onChange={e=>updRow("strUnits",ri,"occupancy",Number(e.target.value)/100)} min={0} max={100} style={{...inp,width:50}}/></td>
+                                <td style={{padding:"3px 4px"}}><input type="number" value={row.growth!=null?Math.round(row.growth*100):5} onChange={e=>updRow("strUnits",ri,"growth",Number(e.target.value)/100)} min={0} max={20} style={{...inp,width:46}}/></td>
+                                <td style={{padding:"3px 4px",fontSize:10,color:yr1>0?C.green:C.whDim,fontWeight:600}}>{yr1>0?f.$(yr1):"—"}</td>
+                                <td style={{padding:"3px 4px"}}><button onClick={()=>delRow("strUnits",ri)} style={{background:"transparent",border:"none",color:C.red,cursor:"pointer",fontSize:13,lineHeight:1}}>×</button></td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                    <button onClick={()=>addRow("strUnits",{label:"",units:0,adr:350,occupancy:.65,growth:.05})} style={secBtn}>+ Add STR</button>
+                  </div>
+
+                  {/* OTHER REVENUE */}
+                  <div style={{marginBottom:8}}>
+                    <div style={{fontSize:9,color:C.goldDim,fontWeight:700,textTransform:"uppercase",letterSpacing:".08em",marginBottom:6}}>
+                      Other Revenue
+                    </div>
+                    {(asset.otherRevenue||[]).length>0&&(
+                      <table style={{width:"100%",borderCollapse:"collapse",marginBottom:6}}>
+                        <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
+                          <TH>Label</TH><TH>Annual ($)</TH><TH>Growth %</TH><TH>Yr1</TH><TH/>
+                        </tr></thead>
+                        <tbody>
+                          {(asset.otherRevenue||[]).map((row,ri)=>(
+                            <tr key={ri} style={{borderBottom:`1px solid rgba(255,255,255,.04)`}}>
+                              <td style={{padding:"3px 4px"}}><input value={row.label||""} onChange={e=>updRow("otherRevenue",ri,"label",e.target.value)} placeholder="e.g. Dry Storage" style={{...inp,width:140}}/></td>
+                              <td style={{padding:"3px 4px"}}><input type="number" value={row.annual||""} onChange={e=>updRow("otherRevenue",ri,"annual",Number(e.target.value))} min={0} style={{...inp,width:95}}/></td>
+                              <td style={{padding:"3px 4px"}}><input type="number" value={row.growth!=null?Math.round(row.growth*100):3} onChange={e=>updRow("otherRevenue",ri,"growth",Number(e.target.value)/100)} min={0} max={20} style={{...inp,width:46}}/></td>
+                              <td style={{padding:"3px 4px",fontSize:10,color:(row.annual||0)>0?C.green:C.whDim,fontWeight:600}}>{(row.annual||0)>0?f.$(row.annual):"—"}</td>
+                              <td style={{padding:"3px 4px"}}><button onClick={()=>delRow("otherRevenue",ri)} style={{background:"transparent",border:"none",color:C.red,cursor:"pointer",fontSize:13,lineHeight:1}}>×</button></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                      {[["Dry Storage",480000],["Fuel (Net Margin)",150000],["Service & Repair",80000],["Concession / NNN",60000]].map(([label,annual])=>(
+                        <button key={label} onClick={()=>addRow("otherRevenue",{label,annual,growth:.03})} style={secBtn}>+ {label.split(" ")[0]}</button>
+                      ))}
+                      <button onClick={()=>addRow("otherRevenue",{label:"",annual:0,growth:.03})} style={{...secBtn,color:C.gold}}>+ Other</button>
+                    </div>
+                  </div>
+
+                  {/* Totals summary */}
+                  {hasRev&&(
+                    <div style={{display:"flex",gap:16,marginTop:10,paddingTop:8,borderTop:`1px solid ${C.border}`,flexWrap:"wrap"}}>
+                      <div style={{fontSize:10}}><span style={{color:C.whDim}}>Yr1 Gross: </span><span style={{color:C.gold,fontWeight:700}}>{f.$(yr1Gross)}</span></div>
+                      {impliedCap!=null&&<div style={{fontSize:10}}><span style={{color:C.whDim}}>Implied Cap: </span><span style={{color:C.gold,fontWeight:700}}>{f.p(impliedCap)}</span></div>}
+                      <div style={{fontSize:10}}><span style={{color:C.whDim}}>Yr1 NOI: </span><span style={{color:C.green,fontWeight:700}}>{f.$(r?.noi?.[1])}</span></div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* ── BLUEWATER MANAGEMENT FEES ── */}
+            <div style={{marginBottom:5}}>
+              <button onClick={()=>toggle(idx,"fees")}
+                style={{width:"100%",textAlign:"left",background:"rgba(41,128,185,.05)",
+                  border:`1px solid rgba(41,128,185,.2)`,borderRadius:4,padding:"5px 10px",
+                  cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:9,fontWeight:700,color:C.blue,textTransform:"uppercase",letterSpacing:".06em"}}>
+                  ▸ Bluewater Management Fees
+                  {(asset.mgmtFees||[]).length>0?` · ${(asset.mgmtFees||[]).length} line${(asset.mgmtFees||[]).length>1?"s":""}`:` (marketing, IT, asset mgmt)`}
+                </span>
+                <span style={{fontSize:9,color:"rgba(41,128,185,.4)"}}>{exp.fees?"▴":"▾"}</span>
+              </button>
+              {exp.fees&&(
+                <div style={{background:"rgba(41,128,185,.03)",border:`1px solid rgba(41,128,185,.1)`,
+                  borderRadius:"0 0 4px 4px",padding:"10px 12px"}}>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:8}}>
+                    {[["Marketing Fee","pct",.02],["IT Fee","fixed",24000],["Asset Mgmt","pct",.01],["Accounting","fixed",18000]].map(([label,type,amt])=>(
+                      <button key={label} onClick={()=>addRow("mgmtFees",{label,type,amount:amt})}
+                        style={{...secBtn,color:C.blue,borderColor:"rgba(41,128,185,.3)"}}>+ {label}</button>
+                    ))}
+                    <button onClick={()=>addRow("mgmtFees",{label:"",type:"fixed",amount:0})}
+                      style={{...secBtn,color:C.blue,borderColor:"rgba(41,128,185,.3)"}}>+ Other</button>
+                  </div>
+                  {(asset.mgmtFees||[]).length>0&&(
+                    <table style={{width:"100%",borderCollapse:"collapse",marginBottom:8}}>
+                      <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
+                        <TH>Fee Label</TH><TH>Type</TH><TH>Amount</TH><TH>Annual $</TH><TH/>
+                      </tr></thead>
+                      <tbody>
+                        {(asset.mgmtFees||[]).map((row,ri)=>{
+                          const ann=row.type==="pct"?yr1Gross*(row.amount||0):(row.amount||0);
+                          return(
+                            <tr key={ri} style={{borderBottom:`1px solid rgba(255,255,255,.04)`}}>
+                              <td style={{padding:"3px 4px"}}><input value={row.label||""} onChange={e=>updRow("mgmtFees",ri,"label",e.target.value)} placeholder="Fee name" style={{...inp,width:110}}/></td>
+                              <td style={{padding:"3px 4px"}}>
+                                <select value={row.type||"pct"} onChange={e=>updRow("mgmtFees",ri,"type",e.target.value)}
+                                  style={{...inp,width:62,padding:"3px 4px"}}>
+                                  <option value="pct">% Rev</option>
+                                  <option value="fixed">Fixed</option>
+                                </select>
+                              </td>
+                              <td style={{padding:"3px 4px",whiteSpace:"nowrap"}}>
+                                <input type="number" min={0}
+                                  value={row.type==="pct"?(row.amount!=null?+(row.amount*100).toFixed(2):0):(row.amount||"")}
+                                  onChange={e=>updRow("mgmtFees",ri,"amount",row.type==="pct"?Number(e.target.value)/100:Number(e.target.value))}
+                                  style={{...inp,width:62}}/>
+                                <span style={{fontSize:8,color:C.whDim,marginLeft:2}}>{row.type==="pct"?"%":"$"}</span>
+                              </td>
+                              <td style={{padding:"3px 4px",fontSize:10,color:ann>0?C.blue:C.whDim,fontWeight:600}}>{ann>0?f.$(ann):"—"}</td>
+                              <td style={{padding:"3px 4px"}}><button onClick={()=>delRow("mgmtFees",ri)} style={{background:"transparent",border:"none",color:C.red,cursor:"pointer",fontSize:13,lineHeight:1}}>×</button></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                  {(()=>{
+                    const tot=(asset.mgmtFees||[]).reduce((s,row)=>s+(row.type==="pct"?yr1Gross*(row.amount||0):(row.amount||0)),0);
+                    return tot>0&&(
+                      <div style={{fontSize:10,color:C.whDim}}>
+                        Total fees: <span style={{color:C.blue,fontWeight:700}}>{f.$(tot)}</span>
+                        {yr1Gross>0&&<span style={{marginLeft:8}}>({f.p(tot/yr1Gross)} of Yr1 gross)</span>}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+
+            {/* ── CAPEX SCHEDULE ── */}
+            <div style={{marginBottom:2}}>
+              <button onClick={()=>toggle(idx,"capex")}
+                style={{width:"100%",textAlign:"left",background:"rgba(192,57,43,.04)",
+                  border:`1px solid rgba(192,57,43,.2)`,borderRadius:4,padding:"5px 10px",
+                  cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:9,fontWeight:700,color:C.red,textTransform:"uppercase",letterSpacing:".06em"}}>
+                  ▸ CapEx Schedule
+                  {(asset.capexSchedule||[]).length>0
+                    ?` · ${f.$((asset.capexSchedule||[]).reduce((s,cx)=>s+(cx.amount||0),0))} total`
+                    :" (dock, dredging, improvements)"}
+                </span>
+                <span style={{fontSize:9,color:"rgba(192,57,43,.4)"}}>{exp.capex?"▴":"▾"}</span>
+              </button>
+              {exp.capex&&(
+                <div style={{background:"rgba(192,57,43,.03)",border:`1px solid rgba(192,57,43,.1)`,
+                  borderRadius:"0 0 4px 4px",padding:"10px 12px"}}>
+                  <div style={{fontSize:9,color:"rgba(192,57,43,.55)",marginBottom:8}}>
+                    Deducted from levered equity cash flow in the year spent — directly impacts IRR.
+                  </div>
+                  {(asset.capexSchedule||[]).length>0&&(
+                    <table style={{width:"100%",borderCollapse:"collapse",marginBottom:8}}>
+                      <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
+                        <TH>Label</TH><TH>Hold Yr</TH><TH>Amount ($)</TH><TH/>
+                      </tr></thead>
+                      <tbody>
+                        {(asset.capexSchedule||[]).map((row,ri)=>(
+                          <tr key={ri} style={{borderBottom:`1px solid rgba(255,255,255,.04)`}}>
+                            <td style={{padding:"3px 4px"}}><input value={row.label||""} onChange={e=>updRow("capexSchedule",ri,"label",e.target.value)} placeholder="e.g. Dock Renovation" style={{...inp,width:140}}/></td>
+                            <td style={{padding:"3px 4px"}}><input type="number" value={row.year||1} onChange={e=>updRow("capexSchedule",ri,"year",Number(e.target.value))} min={1} max={a.fundTerm||7} style={{...inp,width:52}}/></td>
+                            <td style={{padding:"3px 4px"}}><input type="number" value={row.amount||""} onChange={e=>updRow("capexSchedule",ri,"amount",Number(e.target.value))} min={0} style={{...inp,width:100}}/></td>
+                            <td style={{padding:"3px 4px"}}><button onClick={()=>delRow("capexSchedule",ri)} style={{background:"transparent",border:"none",color:C.red,cursor:"pointer",fontSize:13,lineHeight:1}}>×</button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                    {[["Dock Renovation",1,500000],["Dredging",3,250000],["Marina Upgrades",2,0]].map(([label,year,amount])=>(
+                      <button key={label} onClick={()=>addRow("capexSchedule",{label,year,amount})}
+                        style={{...secBtn,color:C.red,borderColor:"rgba(192,57,43,.3)"}}>+ {label}</button>
+                    ))}
+                    <button onClick={()=>addRow("capexSchedule",{label:"",year:1,amount:0})}
+                      style={{...secBtn,color:C.red,borderColor:"rgba(192,57,43,.3)"}}>+ Add CapEx</button>
+                  </div>
+                </div>
+              )}
+            </div>
+
           </div>
         );
       })}
+
       <div style={{display:"flex",gap:6,marginBottom:12,marginTop:4}}>
-        <button onClick={()=>addAsset("scenario")} style={{
-          flex:1,padding:"10px",
+        <button onClick={()=>addAsset("scenario")} style={{flex:1,padding:"10px",
           background:"rgba(201,168,76,.07)",border:`1px dashed rgba(201,168,76,.3)`,
           color:C.goldDim,borderRadius:5,fontSize:11,fontWeight:600,cursor:"pointer",
           letterSpacing:".05em"}}>+ Add Scenario Asset</button>
-        <button onClick={()=>addGlobalWithModal("assets")} style={{
-          flex:1,padding:"10px",
+        <button onClick={()=>addGlobalWithModal("assets")} style={{flex:1,padding:"10px",
           background:"rgba(201,168,76,.15)",border:`1px dashed rgba(201,168,76,.5)`,
           color:C.gold,borderRadius:5,fontSize:11,fontWeight:600,cursor:"pointer",
           letterSpacing:".05em"}}>+ Add Global Asset</button>
