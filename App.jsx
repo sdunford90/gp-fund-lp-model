@@ -32,6 +32,7 @@ const DEF_ASSET_BASE = {
   capexItems:[],  // [{label,amount,year}]    — year 0 = day-1
   noiY1Growth:.03, noiY2Growth:.05,
   noiPlug:null,   // manual NOI override (null = use computed)
+  txCosts:0,      // transaction/closing costs ($ amount, added to day-1 equity)
   bwMarketing:12000, bwAccounting:18000, bwIT:6000, bwRevMgmt:.04,
   startMonth:6,
 };
@@ -259,10 +260,11 @@ function run(a){
     const bwFees = noi.map((n,y)=> y===0 ? {fixed:0,revMgmt:0,total:0} : calcBWFees(asset, n));
     const bwAnn = bwFees.map(f=>f.total);
 
-    // Equity cash flow — includes year-specific capex
+    // Equity cash flow — includes day-1 capex, transaction costs, year-specific capex
+    const txCosts = asset.txCosts||0;
     const ecf = noi.map((n,y)=>{
       const yrCapex = capexByYear[y]||0;
-      if(y===0) return -(eq + day1Capex);
+      if(y===0) return -(eq + day1Capex + txCosts);
       return n - annDS - bwAnn[y] - yrCapex;
     });
 
@@ -272,11 +274,11 @@ function run(a){
     const saleNet = exitVal - lb - exitVal*saleCosts;
     ecf[fundTerm] += saleNet;
     const eqIRR = irr(ecf);
-    const totalEquityIn = eq + day1Capex;
+    const totalEquityIn = eq + day1Capex + txCosts;
     const moic = (saleNet + ecf.slice(1,fundTerm).reduce((s,v)=>s+v,0) + totalEquityIn) / totalEquityIn;
     const totBWFee = bwAnn.reduce((s,v)=>s+v,0);
 
-    return {...asset, eq, debt, annDS, noi, bwFees, bwAnn, totBWFee, totalCapex, day1Capex, capexByYear,
+    return {...asset, eq, debt, annDS, noi, bwFees, bwAnn, totBWFee, totalCapex, day1Capex, capexByYear, txCosts,
       buRev, grossRev, y1Opex, opexByYear, saleNet, exitVal, lb, irr:eqIRR, moic, baseNOI, totalEquityIn};
   });
 
@@ -1123,7 +1125,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                 {label:"Annual Debt Svc",  value:f.$(r.annDS),   accent:C.orange},
                 {label:"Loan Balance",     value:f.$(r.lb),      accent:C.purple},
                 {label:"7yr BW Fees",      value:f.$(r.totBWFee),accent:C.gold},
-                {label:"Day-1 CapEx",      value:f.$(r.capex),   accent:C.red},
+                {label:"Tx Costs",          value:f.$(r.txCosts), accent:C.red},
               ].map(({label,value,accent})=>(
                 <div key={label} style={{background:C.surface,border:`1px solid ${C.border}`,
                   borderRadius:10,padding:"10px 12px",borderLeft:`3px solid ${accent}`,
@@ -1150,10 +1152,30 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
             {section==="overview" && (
               <Card style={{marginBottom:16}}>
                 <CT c="Acquisition Assumptions"/>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"16px 28px"}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"16px 28px",marginBottom:16}}>
                   <DealSlider label="Acquisition Price" k="price" min={2e6} max={60e6} step={5e5} disp={v=>`$${(v/1e6).toFixed(1)}M`} color={C.accent}/>
                   <DealSlider label="Going-In Cap Rate" k="cap" min={.04} max={.14} step={.005} disp={v=>`${(v*100).toFixed(1)}%`} color={C.purple}/>
                   <DealSlider label="Close Month" k="startMonth" min={3} max={36} step={3} disp={v=>`Month ${v}`} color={C.orange}/>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"16px 28px"}}>
+                  <div>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                      <span style={{fontSize:10,color:C.textDim,fontWeight:600}}>Transaction / Closing Costs</span>
+                      <span style={{fontSize:12,color:C.red,fontWeight:700}}>{f.$(asset.txCosts||0)}</span>
+                    </div>
+                    <input type="number" value={asset.txCosts||0}
+                      onChange={e=>setAsset(sel,"txCosts",Number(e.target.value))}
+                      style={{width:"100%",background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:6,
+                        padding:"7px 10px",fontSize:12,color:C.text,fontWeight:600,outline:"none"}}/>
+                    <div style={{fontSize:9,color:C.textFaint,marginTop:3}}>Legal, title, survey, due diligence, lender fees — added to day-1 equity requirement</div>
+                  </div>
+                  <div style={{padding:"10px 14px",background:C.surfaceAlt,borderRadius:8,border:`1px solid ${C.border}`}}>
+                    <div style={{fontSize:9,color:C.textFaint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6,fontWeight:600}}>Total Day-1 Capital Required</div>
+                    <div style={{fontSize:18,fontWeight:700,color:C.text}}>{f.$(r.totalEquityIn)}</div>
+                    <div style={{fontSize:9,color:C.textFaint,marginTop:3}}>
+                      Equity {f.$(r.eq)} + CapEx {f.$(r.day1Capex)} + Tx Costs {f.$(r.txCosts)}
+                    </div>
+                  </div>
                 </div>
               </Card>
             )}
