@@ -467,16 +467,16 @@ const Sli=({label,value,min,max,step,disp,onChange,sub})=>{
   return(
     <div style={{marginBottom:15}}>
       <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-        <span style={{fontSize:9,color:"rgba(255,255,255,0.5)",textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:"'JetBrains Mono',monospace"}}>{label}</span>
-        <span style={{fontSize:11,color:C.gold,fontWeight:600,fontFamily:"'JetBrains Mono',monospace"}}>{disp(value)}</span>
+        <span style={{fontSize:9,color:C.textDim,textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:"'JetBrains Mono',monospace"}}>{label}</span>
+        <span style={{fontSize:11,color:C.navy,fontWeight:600,fontFamily:"'JetBrains Mono',monospace"}}>{disp(value)}</span>
       </div>
-      <div style={{position:"relative",height:3,background:"rgba(255,255,255,0.12)",borderRadius:2}}>
-        <div style={{position:"absolute",left:0,width:`${p}%`,height:"100%",background:C.gold,borderRadius:2}}/>
+      <div style={{position:"relative",height:3,background:C.border,borderRadius:2}}>
+        <div style={{position:"absolute",left:0,width:`${p}%`,height:"100%",background:C.navy,borderRadius:2}}/>
         <input type="range" min={min} max={max} step={step} value={value}
           onChange={e=>onChange(Number(e.target.value))}
           style={{position:"absolute",top:-7,left:0,width:"100%",height:18,opacity:0,cursor:"pointer",margin:0,padding:0}}/>
       </div>
-      {sub&&<div style={{fontSize:9,color:"rgba(255,255,255,0.3)",marginTop:2}}>{sub}</div>}
+      {sub&&<div style={{fontSize:9,color:C.textFaint,marginTop:2}}>{sub}</div>}
     </div>
   );
 };
@@ -630,19 +630,20 @@ export default function Portal(){
   return(
     <div style={{minHeight:"100vh",background:C.bg,fontFamily:"'DM Sans',sans-serif",color:C.text}}>
       {/* NAV */}
-      <div style={{background:C.navy,borderBottom:"1px solid rgba(255,255,255,0.08)",padding:"0 24px",
+      <div style={{background:C.surface,borderBottom:`1px solid ${C.border}`,padding:"0 24px",
         display:"flex",alignItems:"center",justifyContent:"space-between",
-        height:56,position:"sticky",top:0,zIndex:100,gap:16}}>
+        height:56,position:"sticky",top:0,zIndex:100,gap:16,
+        boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
 
         {/* Logo */}
         <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
-          <div style={{width:32,height:32,background:C.gold,borderRadius:6,
+          <div style={{width:32,height:32,background:C.navy,borderRadius:6,
             display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-            <span style={{fontSize:12,fontWeight:900,color:C.navy,fontFamily:"'DM Sans',sans-serif"}}>F1</span>
+            <span style={{fontSize:12,fontWeight:900,color:"#FFFFFF",fontFamily:"'DM Sans',sans-serif"}}>F1</span>
           </div>
           <div>
-            <div style={{fontSize:14,fontWeight:700,color:C.navText,letterSpacing:"0.01em",lineHeight:1.2,fontFamily:"'DM Sans',sans-serif"}}>GP Fund I</div>
-            <div style={{fontSize:10,color:C.gold,letterSpacing:"0.08em",textTransform:"uppercase",lineHeight:1}}>LP Model</div>
+            <div style={{fontSize:14,fontWeight:700,color:C.text,letterSpacing:"0.01em",lineHeight:1.2,fontFamily:"'DM Sans',sans-serif"}}>GP Fund I</div>
+            <div style={{fontSize:10,color:C.textDim,letterSpacing:"0.08em",textTransform:"uppercase",lineHeight:1}}>LP Model</div>
           </div>
         </div>
 
@@ -657,10 +658,10 @@ export default function Portal(){
                 padding:"8px 16px",cursor:"pointer",border:"none",
                 borderBottom:active?`2px solid ${C.gold}`:"2px solid transparent",
                 borderTop:"2px solid transparent",
-                background:active?"rgba(212,175,55,0.08)":"transparent",
+                background:"transparent",
                 minWidth:72,whiteSpace:"nowrap",flexShrink:0,transition:"background .15s"}}>
                 <span style={{fontSize:11,fontWeight:active?700:500,letterSpacing:"0.04em",
-                  textTransform:"uppercase",color:active?C.gold:C.navTextDim,lineHeight:1,
+                  textTransform:"uppercase",color:active?C.navy:C.textDim,lineHeight:1,
                   fontFamily:"'DM Sans',sans-serif"}}>
                   {t}
                 </span>
@@ -670,7 +671,7 @@ export default function Portal(){
         </div>
 
         {/* Badge */}
-        <div style={{flexShrink:0,fontSize:9,color:C.navTextDim,
+        <div style={{flexShrink:0,fontSize:9,color:C.textFaint,
           letterSpacing:"0.06em",textTransform:"uppercase",textAlign:"right",lineHeight:1.6}}>
           CONFIDENTIAL<br/>DRAFT
         </div>
@@ -756,8 +757,8 @@ export default function Portal(){
 
       <div style={{display:"flex"}}>
         {/* SIDEBAR */}
-        <div style={{width:262,flexShrink:0,background:C.navy,
-          borderRight:"none",padding:"18px 14px",
+        <div style={{width:262,flexShrink:0,background:C.surfaceAlt,
+          borderRight:`1px solid ${C.border}`,padding:"18px 14px",
           height:"calc(100vh - 52px)",overflowY:"auto",position:"sticky",top:52}}>
 
           <SHdr t="Fund Structure"/>
@@ -772,52 +773,52 @@ export default function Portal(){
           <Sli label="Preferred Ret." value={a.prefReturn}   min={.05}  max={.10}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("prefReturn",v)}/>
           {/* Pref type toggle */}
           <div style={{marginBottom:12}}>
-            <div style={{fontSize:9,color:"rgba(255,255,255,0.5)",textTransform:"uppercase",letterSpacing:".07em",marginBottom:5,fontWeight:600,fontFamily:"'JetBrains Mono',monospace"}}>Pref Type</div>
+            <div style={{fontSize:9,color:C.textDim,textTransform:"uppercase",letterSpacing:".07em",marginBottom:5,fontWeight:600,fontFamily:"'JetBrains Mono',monospace"}}>Pref Type</div>
             <div style={{display:"flex",gap:4}}>
               {[["Simple","false"],["Compound","true"]].map(([lbl,val])=>{
                 const active=String(a.compoundPref)===val;
                 return(<button key={lbl} onClick={()=>set("compoundPref",val==="true")}
                   style={{flex:1,padding:"5px 0",fontSize:9,fontWeight:700,letterSpacing:".06em",
                     textTransform:"uppercase",cursor:"pointer",borderRadius:6,
-                    background:active?C.gold:"transparent",color:active?C.navy:C.navTextDim,
-                    border:`1px solid ${active?C.gold:"rgba(255,255,255,0.2)"}`}}>{lbl}</button>);
+                    background:active?C.navy:"transparent",color:active?"#FFFFFF":C.textDim,
+                    border:`1px solid ${active?C.navy:C.border}`}}>{lbl}</button>);
               })}
             </div>
-            <div style={{fontSize:8,color:"rgba(255,255,255,0.3)",marginTop:3}}>
+            <div style={{fontSize:8,color:C.textFaint,marginTop:3}}>
               {a.compoundPref?"Compound: capital*(1+r)^n":"Simple: capital*rate*years"}
             </div>
           </div>
           {/* Catch-up toggle */}
           <div style={{marginBottom:12}}>
-            <div style={{fontSize:9,color:"rgba(255,255,255,0.5)",textTransform:"uppercase",letterSpacing:".07em",marginBottom:5,fontWeight:600,fontFamily:"'JetBrains Mono',monospace"}}>GP Catch-Up</div>
+            <div style={{fontSize:9,color:C.textDim,textTransform:"uppercase",letterSpacing:".07em",marginBottom:5,fontWeight:600,fontFamily:"'JetBrains Mono',monospace"}}>GP Catch-Up</div>
             <div style={{display:"flex",gap:4}}>
               {[["None","false"],["Full","true"]].map(([lbl,val])=>{
                 const active=String(a.catchUp)===val;
                 return(<button key={lbl} onClick={()=>set("catchUp",val==="true")}
                   style={{flex:1,padding:"5px 0",fontSize:9,fontWeight:700,letterSpacing:".06em",
                     textTransform:"uppercase",cursor:"pointer",borderRadius:6,
-                    background:active?C.gold:"transparent",color:active?C.navy:C.navTextDim,
-                    border:`1px solid ${active?C.gold:"rgba(255,255,255,0.2)"}`}}>{lbl}</button>);
+                    background:active?C.navy:"transparent",color:active?"#FFFFFF":C.textDim,
+                    border:`1px solid ${active?C.navy:C.border}`}}>{lbl}</button>);
               })}
             </div>
-            <div style={{fontSize:8,color:"rgba(255,255,255,0.3)",marginTop:3}}>
+            <div style={{fontSize:8,color:C.textFaint,marginTop:3}}>
               {a.catchUp?"GP catches up to carry% then splits":"GP takes carry% above pref"}
             </div>
           </div>
           <Sli label="GP Commitment"  value={a.gpPct}        min={.01}  max={.05}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("gpPct",v)}/>
           <Sli label="Sale Costs"     value={a.saleCosts}    min={.01}  max={.04}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("saleCosts",v)}/>
 
-          <div style={{height:1,background:"rgba(255,255,255,0.1)",margin:"12px 0"}}/>
+          <div style={{height:1,background:C.border,margin:"12px 0"}}/>
           <SHdr t="G&A Globals"/>
           <Sli label="Benefits Rate"  value={a.benefitsRate} min={.15}  max={.30}  step={.01}  disp={v=>`${(v*100).toFixed(0)}%`} onChange={v=>set("benefitsRate",v)}/>
           <Sli label="Salary Growth"  value={a.salaryGrowth} min={.01}  max={.06}  step={.005} disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("salaryGrowth",v)}/>
           <Sli label="# of Partners"  value={a.partners}     min={1}    max={5}    step={1}    disp={v=>`${v}`}                   onChange={v=>set("partners",v)}/>
 
           {m&&(
-            <div style={{marginTop:10,padding:"12px",background:"rgba(255,255,255,0.06)",
-              borderRadius:8,border:"1px solid rgba(255,255,255,0.1)"}}>
-              <div style={{fontSize:9,color:C.gold,textTransform:"uppercase",letterSpacing:".1em",marginBottom:5,fontWeight:700,fontFamily:"'JetBrains Mono',monospace"}}>Live Output</div>
-              <div style={{fontSize:11,color:"rgba(255,255,255,0.6)",lineHeight:1.9,fontFamily:"'JetBrains Mono',monospace"}}>
+            <div style={{marginTop:10,padding:"12px",background:C.surface,
+              borderRadius:8,border:`1px solid ${C.border}`}}>
+              <div style={{fontSize:9,color:C.navy,textTransform:"uppercase",letterSpacing:".1em",marginBottom:5,fontWeight:700,fontFamily:"'JetBrains Mono',monospace"}}>Live Output</div>
+              <div style={{fontSize:11,color:C.textDim,lineHeight:1.9,fontFamily:"'JetBrains Mono',monospace"}}>
                 <div>LP IRR: <span style={{color:m.lpIRR>a.prefReturn?C.green:"#F87171",fontWeight:700}}>{f.p(m.lpIRR)}</span></div>
                 <div>LP MOIC: <span style={{color:C.gold,fontWeight:700}}>{f.x(m.lpMOIC)}</span></div>
                 <div>GP Promote: <span style={{color:C.gold,fontWeight:700}}>{f.$(m.gpPromote)}</span></div>
