@@ -16,6 +16,9 @@ const C = {
   cardBg:"#FFFFFF",       cardBorder:"#E2E8F0",
   // Nav-surface text (white on navy)
   navText:"#FFFFFF",      navTextDim:"rgba(255,255,255,0.55)",
+  // Backward-compat aliases
+  white:"#1A2E44",   whDim:"#64748B",   whFaint:"#F4F5F7",
+  mid:"#64748B",     dark:"#0F172A",
 };
 
 // ── DEFAULT STATE ─────────────────────────────────────────────────────────────
@@ -1861,27 +1864,27 @@ function TabWaterfall({m,a}){
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                 <div style={{background:"rgba(41,128,185,.12)",borderRadius:3,padding:"7px 10px"}}>
                   <div style={{fontSize:9,color:"rgba(41,128,185,.7)",textTransform:"uppercase"}}>LP</div>
-                  <div style={{fontSize:16,color:"#5DADE2",fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(row.lp)}</div>
+                  <div style={{fontSize:16,color:"#5DADE2",fontWeight:700,fontFamily:"'DM Serif Display',serif"}}>{f.$(row.lp)}</div>
                 </div>
                 <div style={{background:"rgba(201,168,76,.08)",borderRadius:3,padding:"7px 10px"}}>
                   <div style={{fontSize:9,color:C.goldDim,textTransform:"uppercase"}}>GP</div>
-                  <div style={{fontSize:16,color:C.gold,fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(row.gp)}</div>
+                  <div style={{fontSize:16,color:C.gold,fontWeight:700,fontFamily:"'DM Serif Display',serif"}}>{f.$(row.gp)}</div>
                 </div>
               </div>
             </div>
           ))}
-          <div style={{background:C.navy,border:`1px solid ${C.gold}`,borderRadius:5,padding:"13px 15px"}}>
-            <div style={{fontSize:9,color:C.gold,textTransform:"uppercase",letterSpacing:".1em",marginBottom:7}}>Totals</div>
+          <div style={{background:C.navy,border:`1px solid ${C.gold}`,borderRadius:8,padding:"13px 15px"}}>
+            <div style={{fontSize:9,color:C.gold,textTransform:"uppercase",letterSpacing:".1em",marginBottom:7,fontFamily:"'JetBrains Mono',monospace"}}>Totals</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
               <div>
-                <div style={{fontSize:9,color:"rgba(93,173,226,.7)",textTransform:"uppercase"}}>LP Total</div>
-                <div style={{fontSize:19,color:"#5DADE2",fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(m.lpTotal)}</div>
-                <div style={{fontSize:10,color:C.whDim}}>MOIC: {f.x(m.lpMOIC)}</div>
+                <div style={{fontSize:9,color:"rgba(93,173,226,.7)",textTransform:"uppercase",fontFamily:"'JetBrains Mono',monospace"}}>LP Total</div>
+                <div style={{fontSize:19,color:"#5DADE2",fontWeight:700,fontFamily:"'DM Serif Display',serif"}}>{f.$(m.lpTotal)}</div>
+                <div style={{fontSize:10,color:"rgba(255,255,255,0.55)"}}>MOIC: {f.x(m.lpMOIC)}</div>
               </div>
               <div>
-                <div style={{fontSize:9,color:C.goldDim,textTransform:"uppercase"}}>GP Total</div>
-                <div style={{fontSize:19,color:C.gold,fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{f.$(m.gpFundTotal)}</div>
-                <div style={{fontSize:10,color:C.whDim}}>{f.$(m.gpPromote)} promote</div>
+                <div style={{fontSize:9,color:C.gold,textTransform:"uppercase",fontFamily:"'JetBrains Mono',monospace"}}>GP Total</div>
+                <div style={{fontSize:19,color:C.gold,fontWeight:700,fontFamily:"'DM Serif Display',serif"}}>{f.$(m.gpFundTotal)}</div>
+                <div style={{fontSize:10,color:"rgba(255,255,255,0.55)"}}>{f.$(m.gpPromote)} promote</div>
               </div>
             </div>
           </div>
