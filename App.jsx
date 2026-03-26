@@ -28,6 +28,7 @@ const DEF_ASSET_BASE = {
   fuelGallons:0, fuelMargin:0.50,
   upland:[],      // [{name,rent}]            — monthly rent
   otherIncome:0,
+  opex:[],        // [{label,amount,growth}]  — annual recurring expenses
   capexItems:[],  // [{label,amount,year}]    — year 0 = day-1
   noiY1Growth:.03, noiY2Growth:.05,
   noiPlug:null,   // manual NOI override (null = use computed)
@@ -38,7 +39,8 @@ const DEF_ASSETS = [
   {...DEF_ASSET_BASE, name:"Deal 1", price:15000000, cap:.070, growth:.07, startMonth:6,
     slips:[{type:"Wet 40ft",count:80,rate:550,occ:.88},{type:"Wet 60ft",count:40,rate:800,occ:.85},{type:"Dry Rack",count:60,rate:280,occ:.92}],
     lodging:[], fuelGallons:200000, fuelMargin:.55,
-    upland:[{name:"Restaurant",rent:4000},{name:"Ship Store",rent:2500},{name:"Bait Shop",rent:1500}]},
+    upland:[{name:"Restaurant",rent:4000},{name:"Ship Store",rent:2500},{name:"Bait Shop",rent:1500}],
+    opex:[{label:"Property Taxes",amount:95000,growth:.02},{label:"Insurance",amount:48000,growth:.03},{label:"Utilities",amount:36000,growth:.02},{label:"R&M / Maintenance",amount:55000,growth:.02},{label:"On-Site Payroll",amount:180000,growth:.03}]},
   {...DEF_ASSET_BASE, name:"Deal 2", price:12000000, cap:.070, growth:.07, startMonth:9,
     slips:[{type:"Wet 30ft",count:60,rate:420,occ:.86},{type:"Wet 50ft",count:30,rate:680,occ:.83},{type:"Dry Rack",count:40,rate:240,occ:.90}],
     fuelGallons:120000, fuelMargin:.50,
@@ -220,15 +222,26 @@ function run(a){
     const totalCapex = capexItems.reduce((s,c)=>s+c.amount,0);
     const day1Capex = capexByYear[0]||0;
 
-    // Compute base NOI
-    let baseNOI;
+    // OpEx: recurring annual expenses (each can have its own growth rate)
+    const opexItems = asset.opex||[];
+    const y1Opex = opexItems.reduce((s,o)=>s+o.amount, 0);
+    const opexByYear = Array.from({length:fundTerm+1},(_,y)=>{
+      if(y===0) return 0;
+      return opexItems.reduce((s,o)=>s + o.amount*Math.pow(1+(o.growth||0), y-1), 0);
+    });
+
+    // Compute gross revenue and base NOI
     const buRev = calcBottomUpRevenue(asset);
+    let grossRev, baseNOI;
     if(asset.noiPlug!=null && asset.noiPlug>0){
       baseNOI = asset.noiPlug; // manual override
+      grossRev = baseNOI + y1Opex; // implied
     } else if(asset.revenueMode==="bottomup" && buRev.total>0){
-      baseNOI = buRev.total;
+      grossRev = buRev.total;
+      baseNOI = grossRev - y1Opex; // revenue minus opex
     } else {
       baseNOI = asset.price*asset.cap;
+      grossRev = baseNOI + y1Opex; // implied
     }
 
     // NOI schedule: Y1 uses noiY1Growth, Y2+ uses noiY2Growth
@@ -264,7 +277,7 @@ function run(a){
     const totBWFee = bwAnn.reduce((s,v)=>s+v,0);
 
     return {...asset, eq, debt, annDS, noi, bwFees, bwAnn, totBWFee, totalCapex, day1Capex, capexByYear,
-      buRev, saleNet, exitVal, lb, irr:eqIRR, moic, baseNOI, totalEquityIn};
+      buRev, grossRev, y1Opex, opexByYear, saleNet, exitVal, lb, irr:eqIRR, moic, baseNOI, totalEquityIn};
   });
 
   // Monthly portfolio
@@ -1125,7 +1138,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
             {/* Section Tabs */}
             <div style={{display:"flex",gap:2,marginBottom:16,background:C.surfaceAlt,
               borderRadius:8,padding:3,border:`1px solid ${C.border}`}}>
-              {[["overview","Acquisition"],["revenue","Revenue Detail"],["bwfees","BW Fees"],["capex","CapEx & NOI"]].map(([v,l])=>(
+              {[["overview","Acquisition"],["revenue","Revenue"],["opex","OpEx"],["bwfees","BW Fees"],["noi","NOI Analysis"],["capex","CapEx"]].map(([v,l])=>(
                 <button key={v} onClick={()=>setSection(v)} style={{
                   background:section===v?C.surface:"transparent",color:section===v?C.text:C.textFaint,
                   border:"none",borderRadius:6,padding:"6px 16px",fontSize:10,fontWeight:600,
@@ -1376,10 +1389,188 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
               </Card>
             )}
 
-            {/* ── CAPEX & NOI SECTION ── */}
+            {/* ── OPEX SECTION ── */}
+            {section==="opex" && (
+              <Card style={{marginBottom:16}}>
+                <CT c="Operating Expenses"/>
+                <div style={{fontSize:10,color:C.textDim,marginBottom:14,padding:"8px 12px",background:C.surfaceAlt,borderRadius:6}}>
+                  Annual recurring property-level expenses. In bottom-up mode, NOI = Gross Revenue − OpEx. Each line can have its own annual growth rate.
+                </div>
+
+                {/* Header row */}
+                <div style={{display:"grid",gridTemplateColumns:"2.5fr 1fr 1fr 1fr auto",gap:8,padding:"6px 0",
+                  borderBottom:`1px solid ${C.borderDark}`,marginBottom:4}}>
+                  <span style={{fontSize:9,color:C.textFaint,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em"}}>Expense</span>
+                  <span style={{fontSize:9,color:C.textFaint,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",textAlign:"right"}}>Annual $</span>
+                  <span style={{fontSize:9,color:C.textFaint,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",textAlign:"right"}}>Growth/yr</span>
+                  <span style={{fontSize:9,color:C.textFaint,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",textAlign:"right"}}>Y7 Cost</span>
+                  <span/>
+                </div>
+
+                {(asset.opex||[]).length===0&&(
+                  <div style={{fontSize:10,color:C.textFaint,padding:"12px 0"}}>No expenses added. Click "+ Add Expense" below.</div>
+                )}
+
+                {(asset.opex||[]).map((o,oi)=>{
+                  const y7 = o.amount*Math.pow(1+(o.growth||0),a.fundTerm-1);
+                  return(
+                    <div key={oi} style={{display:"grid",gridTemplateColumns:"2.5fr 1fr 1fr 1fr auto",gap:8,alignItems:"center",
+                      padding:"6px 0",borderBottom:`1px solid ${C.border}`}}>
+                      <input value={o.label} onChange={e=>{const arr=[...(asset.opex||[])];arr[oi]={...arr[oi],label:e.target.value};setAsset(sel,"opex",arr);}}
+                        style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"5px 8px",fontSize:11,color:C.text,outline:"none",fontWeight:600}}/>
+                      <input type="number" value={o.amount} onChange={e=>{const arr=[...(asset.opex||[])];arr[oi]={...arr[oi],amount:Number(e.target.value)};setAsset(sel,"opex",arr);}}
+                        style={{width:"100%",background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"4px 6px",fontSize:11,color:C.red,fontWeight:700,textAlign:"right",outline:"none"}}/>
+                      <div style={{display:"flex",alignItems:"center",gap:3,justifyContent:"flex-end"}}>
+                        <input type="number" value={((o.growth||0)*100).toFixed(1)} step="0.5"
+                          onChange={e=>{const arr=[...(asset.opex||[])];arr[oi]={...arr[oi],growth:Number(e.target.value)/100};setAsset(sel,"opex",arr);}}
+                          style={{width:48,background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"4px 4px",fontSize:11,color:C.orange,fontWeight:700,textAlign:"right",outline:"none"}}/>
+                        <span style={{fontSize:9,color:C.textFaint}}>%</span>
+                      </div>
+                      <span style={{fontSize:11,color:C.textDim,textAlign:"right"}}>{f.$(y7)}</span>
+                      <button onClick={()=>{const arr=(asset.opex||[]).filter((_,j)=>j!==oi);setAsset(sel,"opex",arr);}}
+                        style={{background:C.redL,border:"none",color:C.red,borderRadius:4,padding:"2px 6px",fontSize:9,cursor:"pointer"}}>✕</button>
+                    </div>
+                  );
+                })}
+
+                {(asset.opex||[]).length>0&&(
+                  <div style={{display:"grid",gridTemplateColumns:"2.5fr 1fr 1fr 1fr auto",gap:8,padding:"8px 0",
+                    borderTop:`2px solid ${C.borderDark}`,marginTop:4}}>
+                    <span style={{fontSize:11,fontWeight:700,color:C.text}}>Total OpEx</span>
+                    <span style={{fontSize:11,fontWeight:700,color:C.red,textAlign:"right"}}>{f.$((asset.opex||[]).reduce((s,o)=>s+o.amount,0))}</span>
+                    <span/>
+                    <span style={{fontSize:11,fontWeight:700,color:C.red,textAlign:"right"}}>{f.$((asset.opex||[]).reduce((s,o)=>s+o.amount*Math.pow(1+(o.growth||0),a.fundTerm-1),0))}</span>
+                    <span/>
+                  </div>
+                )}
+
+                <button onClick={()=>{const arr=[...(asset.opex||[]),{label:"New Expense",amount:10000,growth:.02}];setAsset(sel,"opex",arr);}}
+                  style={{marginTop:8,background:C.redL,color:C.red,border:`1px dashed rgba(220,38,38,0.3)`,
+                    borderRadius:6,padding:"8px",width:"100%",fontSize:10,fontWeight:600,cursor:"pointer"}}>+ Add Expense</button>
+
+                {/* Quick-add common expenses */}
+                <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:8}}>
+                  {[
+                    {label:"Property Taxes",amount:80000,growth:.02},
+                    {label:"Insurance",amount:40000,growth:.03},
+                    {label:"Utilities",amount:30000,growth:.02},
+                    {label:"R&M / Maintenance",amount:45000,growth:.02},
+                    {label:"On-Site Payroll",amount:150000,growth:.03},
+                    {label:"Landscaping",amount:12000,growth:.02},
+                    {label:"Security",amount:18000,growth:.02},
+                    {label:"Waste / Sanitation",amount:8000,growth:.02},
+                  ].filter(q=>!(asset.opex||[]).some(o=>o.label===q.label)).map(q=>(
+                    <button key={q.label} onClick={()=>{const arr=[...(asset.opex||[]),q];setAsset(sel,"opex",arr);}}
+                      style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:20,padding:"3px 10px",
+                        fontSize:9,color:C.textDim,cursor:"pointer",fontWeight:500}}>+ {q.label}</button>
+                  ))}
+                </div>
+              </Card>
+            )}
+
+            {/* ── NOI ANALYSIS SECTION ── */}
+            {section==="noi" && (
+              <Card style={{marginBottom:16}}>
+                <CT c="NOI Analysis"/>
+
+                {/* NOI Build-Up */}
+                <div style={{padding:"14px 16px",background:C.surfaceAlt,borderRadius:8,border:`1px solid ${C.border}`,marginBottom:16}}>
+                  <div style={{fontSize:10,fontWeight:700,color:C.text,marginBottom:10}}>Year 1 NOI Build-Up</div>
+                  <div style={{fontSize:12}}>
+                    <div style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:`1px solid ${C.border}`}}>
+                      <span style={{color:C.textDim}}>Gross Revenue {asset.revenueMode==="bottomup"?"(Bottom-Up)":"(Cap Rate Implied)"}</span>
+                      <span style={{color:C.green,fontWeight:700}}>{f.$(r.grossRev)}</span>
+                    </div>
+                    {(asset.opex||[]).map((o,oi)=>(
+                      <div key={oi} style={{display:"flex",justifyContent:"space-between",padding:"4px 0 4px 16px",borderBottom:`1px solid ${C.border}`}}>
+                        <span style={{color:C.textFaint,fontSize:11}}>− {o.label}</span>
+                        <span style={{color:C.red,fontWeight:600,fontSize:11}}>({f.$(o.amount)})</span>
+                      </div>
+                    ))}
+                    {(asset.opex||[]).length>0&&(
+                      <div style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:`1px solid ${C.border}`}}>
+                        <span style={{color:C.textDim}}>Total OpEx</span>
+                        <span style={{color:C.red,fontWeight:700}}>({f.$(r.y1Opex)})</span>
+                      </div>
+                    )}
+                    <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",
+                      borderTop:`2px solid ${C.borderDark}`,marginTop:4}}>
+                      <span style={{color:C.text,fontWeight:700,fontSize:14}}>Net Operating Income (Y1)</span>
+                      <span style={{color:C.accent,fontWeight:700,fontSize:14}}>{f.$(r.baseNOI)}</span>
+                    </div>
+                    {asset.noiPlug&&(
+                      <div style={{display:"flex",justifyContent:"space-between",padding:"4px 0"}}>
+                        <span style={{color:C.orange,fontWeight:600,fontSize:11}}>NOI Override Active</span>
+                        <span style={{color:C.orange,fontWeight:700}}>{f.$(asset.noiPlug)}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Y1 NOI Adjustment */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"16px 28px",marginBottom:18}}>
+                  <div>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                      <span style={{fontSize:10,color:C.textDim,fontWeight:600}}>Y1 NOI (Plug Override)</span>
+                    </div>
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      <input type="number" value={asset.noiPlug||""} placeholder={`${f.$(r.baseNOI)} computed`}
+                        onChange={e=>setAsset(sel,"noiPlug",e.target.value?Number(e.target.value):null)}
+                        style={{flex:1,background:C.surfaceAlt,border:`1px solid ${asset.noiPlug?C.orange:C.border}`,borderRadius:5,
+                          padding:"7px 10px",fontSize:12,color:asset.noiPlug?C.orange:C.textDim,fontWeight:700,outline:"none"}}/>
+                      {asset.noiPlug&&<button onClick={()=>setAsset(sel,"noiPlug",null)}
+                        style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,color:C.textFaint,borderRadius:5,
+                          padding:"5px 10px",fontSize:9,cursor:"pointer"}}>Clear</button>}
+                    </div>
+                  </div>
+                  <DealSlider label="Y1→Y2 Growth" k="noiY1Growth" min={-.10} max={.20} step={.005}
+                    disp={v=>`${(v*100).toFixed(1)}%`} color={C.orange}/>
+                  <DealSlider label="Y2+ Annual Growth" k="noiY2Growth" min={.01} max={.12} step={.005}
+                    disp={v=>`${(v*100).toFixed(1)}%`} color={C.green}/>
+                </div>
+
+                {/* Full NOI Schedule */}
+                <div style={{padding:"14px 16px",background:C.surfaceAlt,borderRadius:8,border:`1px solid ${C.border}`}}>
+                  <div style={{fontSize:10,fontWeight:700,color:C.text,marginBottom:10}}>NOI Schedule — {a.fundTerm} Year Hold</div>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                    <thead>
+                      <tr style={{borderBottom:`1px solid ${C.borderDark}`}}>
+                        {["","NOI","Growth","OpEx","BW Fees","Net CF (pre-debt)"].map(h=>(
+                          <th key={h} style={{padding:"5px 8px",fontSize:9,color:C.textFaint,fontWeight:700,
+                            textTransform:"uppercase",letterSpacing:".06em",textAlign:h===""?"left":"right"}}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {r.noi && r.noi.slice(1).map((n,y)=>{
+                        const opx = r.opexByYear?.[y+1]||0;
+                        const bw = r.bwAnn?.[y+1]||0;
+                        const netCF = n - opx - bw;
+                        const yoyGrowth = y>0 ? n/r.noi[y]-1 : null;
+                        return(
+                          <tr key={y} style={{borderBottom:`1px solid ${C.border}`,
+                            background:y%2===0?"transparent":C.surfaceAlt}}>
+                            <td style={{padding:"6px 8px",fontWeight:700,color:C.accent}}>Year {y+1}</td>
+                            <td style={{padding:"6px 8px",textAlign:"right",fontWeight:700,color:C.text}}>{f.$(n)}</td>
+                            <td style={{padding:"6px 8px",textAlign:"right",color:yoyGrowth!=null?(yoyGrowth>=0?C.green:C.red):C.textFaint,fontWeight:600}}>
+                              {yoyGrowth!=null?`${yoyGrowth>=0?"+":""}${(yoyGrowth*100).toFixed(1)}%`:"—"}
+                            </td>
+                            <td style={{padding:"6px 8px",textAlign:"right",color:C.red}}>{opx>0?`(${f.$(opx)})`:"—"}</td>
+                            <td style={{padding:"6px 8px",textAlign:"right",color:C.gold}}>{bw>0?`(${f.$(bw)})`:"—"}</td>
+                            <td style={{padding:"6px 8px",textAlign:"right",fontWeight:700,color:netCF>=0?C.green:C.red}}>{f.$(netCF)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            )}
+
+            {/* ── CAPEX SECTION ── */}
             {section==="capex" && (
               <Card style={{marginBottom:16}}>
-                <CT c="CapEx & NOI Stabilization"/>
+                <CT c="Capital Expenditures"/>
 
                 {/* CapEx Items (dynamic rows) */}
                 <div style={{marginBottom:18}}>
@@ -1422,33 +1613,26 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                   )}
                 </div>
 
-                {/* Growth Rates */}
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"16px 28px",marginBottom:16}}>
-                  <DealSlider label="Y1 NOI Growth (Stabilization)" k="noiY1Growth" min={-.10} max={.20} step={.005}
-                    disp={v=>`${(v*100).toFixed(1)}%`} color={C.orange}/>
-                  <DealSlider label="Y2+ NOI Growth" k="noiY2Growth" min={.01} max={.12} step={.005}
-                    disp={v=>`${(v*100).toFixed(1)}%`} color={C.green}/>
-                </div>
-
-                {/* NOI Schedule */}
-                <div style={{padding:"12px 14px",background:C.surfaceAlt,borderRadius:8,border:`1px solid ${C.border}`}}>
-                  <div style={{fontSize:10,fontWeight:700,color:C.text,marginBottom:8}}>NOI Schedule</div>
-                  <div style={{display:"grid",gridTemplateColumns:`repeat(${a.fundTerm},1fr)`,gap:6}}>
-                    {r.noi && r.noi.slice(1).map((n,y)=>(
-                      <div key={y} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,
-                        padding:"8px",textAlign:"center"}}>
-                        <div style={{fontSize:9,color:C.textFaint,marginBottom:3}}>Y{y+1}</div>
-                        <div style={{fontSize:12,fontWeight:700,color:C.text}}>{f.$(n)}</div>
-                        {y>0&&<div style={{fontSize:9,color:n>r.noi[y]?C.green:C.red,marginTop:2}}>
-                          {n>r.noi[y]?"+":"−"}{f.p(Math.abs(n/r.noi[y]-1))}
-                        </div>}
-                        {r.capexByYear&&r.capexByYear[y+1]>0&&(
-                          <div style={{fontSize:8,color:C.red,marginTop:2}}>CapEx: {f.$(r.capexByYear[y+1])}</div>
-                        )}
+                {/* CapEx summary by year */}
+                {(asset.capexItems||[]).length>0&&(
+                  <div style={{padding:"12px 14px",background:C.surfaceAlt,borderRadius:8,border:`1px solid ${C.border}`}}>
+                    <div style={{fontSize:10,fontWeight:700,color:C.text,marginBottom:8}}>CapEx by Year</div>
+                    <div style={{display:"grid",gridTemplateColumns:`auto repeat(${a.fundTerm},1fr)`,gap:6}}>
+                      <div style={{fontSize:9,color:C.textFaint,padding:"4px 8px"}}>Day-1</div>
+                      {Array.from({length:a.fundTerm},(_,y)=>(
+                        <div key={y} style={{fontSize:9,color:C.textFaint,padding:"4px",textAlign:"center"}}>Y{y+1}</div>
+                      ))}
+                      <div style={{fontSize:11,fontWeight:700,color:r.capexByYear?.[0]?C.red:C.textFaint,padding:"0 8px"}}>
+                        {r.capexByYear?.[0]?f.$(r.capexByYear[0]):"—"}
                       </div>
-                    ))}
+                      {Array.from({length:a.fundTerm},(_,y)=>(
+                        <div key={y} style={{fontSize:11,fontWeight:700,color:r.capexByYear?.[y+1]?C.red:C.textFaint,textAlign:"center"}}>
+                          {r.capexByYear?.[y+1]?f.$(r.capexByYear[y+1]):"—"}
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
               </Card>
             )}
 
