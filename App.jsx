@@ -20,33 +20,57 @@ const C = {
 
 // ── DEFAULT STATE ─────────────────────────────────────────────────────────────
 const DEF_ASSET_BASE = {
-  // Revenue mode: "topdown" (cap rate) or "bottomup" (units × rate × occ)
   revenueMode: "topdown",
-  // Top-down
   price:15000000, cap:.070, growth:.05,
-  // Bottom-up revenue components
-  wetSlips:0, wetRate:500, wetOcc:.85,
-  drySlips:0, dryRate:250, dryOcc:.90,
-  hotelUnits:0, hotelADR:200, hotelOcc:.70,
+  // Dynamic arrays
+  slips:[],       // [{type,count,rate,occ}]  — monthly rate
+  lodging:[],     // [{type,units,adr,occ}]   — daily rate
   fuelGallons:0, fuelMargin:0.50,
-  uplandTenants:0, uplandRent:2000,
+  upland:[],      // [{name,rent}]            — monthly rent
   otherIncome:0,
-  // CapEx & stabilization
-  capex:0, noiY1Growth:.03, noiY2Growth:.05,
-  // BW management fees (per deal)
+  capexItems:[],  // [{label,amount,year}]    — year 0 = day-1
+  noiY1Growth:.03, noiY2Growth:.05,
+  noiPlug:null,   // manual NOI override (null = use computed)
   bwMarketing:12000, bwAccounting:18000, bwIT:6000, bwRevMgmt:.04,
-  // Timing
   startMonth:6,
 };
 const DEF_ASSETS = [
-  {...DEF_ASSET_BASE, name:"Deal 1", price:15000000, cap:.070, growth:.07, startMonth:6,  wetSlips:120, wetRate:550, wetOcc:.88, drySlips:60, dryRate:280, dryOcc:.92, fuelGallons:200000, fuelMargin:.55, uplandTenants:3, uplandRent:3500},
-  {...DEF_ASSET_BASE, name:"Deal 2", price:12000000, cap:.070, growth:.07, startMonth:9,  wetSlips:90,  wetRate:480, wetOcc:.85, drySlips:40, dryRate:240, dryOcc:.90, fuelGallons:120000, fuelMargin:.50, uplandTenants:2, uplandRent:2800},
-  {...DEF_ASSET_BASE, name:"Deal 3", price:18000000, cap:.075, growth:.06, startMonth:12, wetSlips:150, wetRate:600, wetOcc:.87, drySlips:80, dryRate:300, dryOcc:.91, hotelUnits:12, hotelADR:220, hotelOcc:.72, fuelGallons:280000, fuelMargin:.52, uplandTenants:4, uplandRent:4000},
-  {...DEF_ASSET_BASE, name:"Deal 4", price:20000000, cap:.080, growth:.05, startMonth:15, wetSlips:180, wetRate:520, wetOcc:.83, drySlips:100, dryRate:260, dryOcc:.88, hotelUnits:20, hotelADR:250, hotelOcc:.68, fuelGallons:350000, fuelMargin:.48, uplandTenants:5, uplandRent:3200},
-  {...DEF_ASSET_BASE, name:"Deal 5", price:16000000, cap:.082, growth:.05, startMonth:18, wetSlips:130, wetRate:490, wetOcc:.86, drySlips:50, dryRate:250, dryOcc:.89, fuelGallons:180000, fuelMargin:.50, uplandTenants:2, uplandRent:2500},
-  {...DEF_ASSET_BASE, name:"Deal 6", price:14000000, cap:.081, growth:.05, startMonth:21, wetSlips:100, wetRate:470, wetOcc:.84, drySlips:45, dryRate:230, dryOcc:.87, fuelGallons:140000, fuelMargin:.50, uplandTenants:3, uplandRent:3000},
-  {...DEF_ASSET_BASE, name:"Deal 7", price:14000000, cap:.075, growth:.05, startMonth:24, wetSlips:110, wetRate:510, wetOcc:.82, drySlips:55, dryRate:260, dryOcc:.88, hotelUnits:8, hotelADR:190, hotelOcc:.65, fuelGallons:160000, fuelMargin:.50, uplandTenants:2, uplandRent:2200},
-  {...DEF_ASSET_BASE, name:"Deal 8", price:12000000, cap:.078, growth:.05, startMonth:27, wetSlips:80,  wetRate:460, wetOcc:.85, drySlips:35, dryRate:240, dryOcc:.90, fuelGallons:100000, fuelMargin:.48, uplandTenants:1, uplandRent:2000},
+  {...DEF_ASSET_BASE, name:"Deal 1", price:15000000, cap:.070, growth:.07, startMonth:6,
+    slips:[{type:"Wet 40ft",count:80,rate:550,occ:.88},{type:"Wet 60ft",count:40,rate:800,occ:.85},{type:"Dry Rack",count:60,rate:280,occ:.92}],
+    lodging:[], fuelGallons:200000, fuelMargin:.55,
+    upland:[{name:"Restaurant",rent:4000},{name:"Ship Store",rent:2500},{name:"Bait Shop",rent:1500}]},
+  {...DEF_ASSET_BASE, name:"Deal 2", price:12000000, cap:.070, growth:.07, startMonth:9,
+    slips:[{type:"Wet 30ft",count:60,rate:420,occ:.86},{type:"Wet 50ft",count:30,rate:680,occ:.83},{type:"Dry Rack",count:40,rate:240,occ:.90}],
+    fuelGallons:120000, fuelMargin:.50,
+    upland:[{name:"Café",rent:3000},{name:"Chandlery",rent:2200}]},
+  {...DEF_ASSET_BASE, name:"Deal 3", price:18000000, cap:.075, growth:.06, startMonth:12,
+    slips:[{type:"Wet 40ft",count:100,rate:580,occ:.87},{type:"Wet 80ft",count:50,rate:1100,occ:.82},{type:"Dry Rack",count:80,rate:300,occ:.91}],
+    lodging:[{type:"Standard Room",units:10,adr:220,occ:.72},{type:"Suite",units:2,adr:380,occ:.65}],
+    fuelGallons:280000, fuelMargin:.52,
+    upland:[{name:"Restaurant",rent:5000},{name:"Market",rent:3000},{name:"Kayak Rental",rent:1800},{name:"Ship Store",rent:2200}]},
+  {...DEF_ASSET_BASE, name:"Deal 4", price:20000000, cap:.080, growth:.05, startMonth:15,
+    slips:[{type:"Wet 40ft",count:100,rate:520,occ:.84},{type:"Wet 60ft",count:50,rate:780,occ:.81},{type:"Mega Yacht 100ft+",count:30,rate:2200,occ:.70},{type:"Dry Rack",count:100,rate:260,occ:.88}],
+    lodging:[{type:"King Room",units:14,adr:250,occ:.68},{type:"Double Queen",units:6,adr:230,occ:.72}],
+    fuelGallons:350000, fuelMargin:.48,
+    upland:[{name:"Full-Service Restaurant",rent:6000},{name:"Pool Bar",rent:3500},{name:"Ship Store",rent:2800},{name:"Charter Office",rent:2000},{name:"Dive Shop",rent:1800}],
+    capexItems:[{label:"Dock Renovation",amount:800000,year:0},{label:"Pool Deck",amount:250000,year:2}]},
+  {...DEF_ASSET_BASE, name:"Deal 5", price:16000000, cap:.082, growth:.05, startMonth:18,
+    slips:[{type:"Wet 35ft",count:90,rate:460,occ:.86},{type:"Wet 55ft",count:40,rate:720,occ:.83},{type:"Dry Stack",count:50,rate:250,occ:.89}],
+    fuelGallons:180000, fuelMargin:.50,
+    upland:[{name:"Tiki Bar",rent:3200},{name:"Bait & Tackle",rent:1800}]},
+  {...DEF_ASSET_BASE, name:"Deal 6", price:14000000, cap:.081, growth:.05, startMonth:21,
+    slips:[{type:"Wet 30ft",count:70,rate:440,occ:.85},{type:"Wet 50ft",count:30,rate:650,occ:.82},{type:"Dry Rack",count:45,rate:230,occ:.87}],
+    fuelGallons:140000, fuelMargin:.50,
+    upland:[{name:"Grill",rent:3500},{name:"Convenience Store",rent:2000},{name:"Kayak/Paddle",rent:1500}]},
+  {...DEF_ASSET_BASE, name:"Deal 7", price:14000000, cap:.075, growth:.05, startMonth:24,
+    slips:[{type:"Wet 40ft",count:70,rate:510,occ:.83},{type:"Wet 70ft",count:40,rate:950,occ:.78},{type:"Dry Rack",count:55,rate:260,occ:.88}],
+    lodging:[{type:"Houseboat",units:6,adr:190,occ:.65},{type:"Floating Cabin",units:2,adr:280,occ:.60}],
+    fuelGallons:160000, fuelMargin:.50,
+    upland:[{name:"Bar & Grill",rent:3000},{name:"Outfitter",rent:1800}]},
+  {...DEF_ASSET_BASE, name:"Deal 8", price:12000000, cap:.078, growth:.05, startMonth:27,
+    slips:[{type:"Wet 30ft",count:50,rate:420,occ:.86},{type:"Wet 45ft",count:30,rate:580,occ:.84},{type:"Dry Rack",count:35,rate:240,occ:.90}],
+    fuelGallons:100000, fuelMargin:.48,
+    upland:[{name:"Snack Bar",rent:2000}]},
 ];
 
 const DEF_HIRES = [
@@ -168,13 +192,12 @@ function run(a){
 
   // ── Bottom-up revenue helper ──
   function calcBottomUpRevenue(a){
-    const wet = (a.wetSlips||0)*(a.wetRate||0)*12*(a.wetOcc||0);
-    const dry = (a.drySlips||0)*(a.dryRate||0)*12*(a.dryOcc||0);
-    const hotel = (a.hotelUnits||0)*(a.hotelADR||0)*365*(a.hotelOcc||0);
+    const slipRev = (a.slips||[]).reduce((s,r)=>s + r.count*r.rate*12*r.occ, 0);
+    const lodgingRev = (a.lodging||[]).reduce((s,r)=>s + r.units*r.adr*365*r.occ, 0);
     const fuel = (a.fuelGallons||0)*(a.fuelMargin||0);
-    const upland = (a.uplandTenants||0)*(a.uplandRent||0)*12;
+    const uplandRev = (a.upland||[]).reduce((s,r)=>s + r.rent*12, 0);
     const other = a.otherIncome||0;
-    return {wet,dry,hotel,fuel,upland,other, total:wet+dry+hotel+fuel+upland+other};
+    return {slipRev,lodgingRev,fuel,uplandRev,other, total:slipRev+lodgingRev+fuel+uplandRev+other};
   }
 
   // ── BW management fee helper (per deal, per year) ──
@@ -189,24 +212,31 @@ function run(a){
   const assetR=assets.map(asset=>{
     const eq=asset.price*(1-debtPct), debt=asset.price*debtPct;
     const annDS=pmt(interestRate,amortYears,debt);
-    const capex=asset.capex||0;
 
-    // Compute base NOI year 1
+    // CapEx: sum items by year
+    const capexItems = asset.capexItems||[];
+    const capexByYear = {};
+    capexItems.forEach(c=>{ capexByYear[c.year]=(capexByYear[c.year]||0)+c.amount; });
+    const totalCapex = capexItems.reduce((s,c)=>s+c.amount,0);
+    const day1Capex = capexByYear[0]||0;
+
+    // Compute base NOI
     let baseNOI;
     const buRev = calcBottomUpRevenue(asset);
-    if(asset.revenueMode==="bottomup" && buRev.total>0){
-      baseNOI = buRev.total; // bottom-up: total revenue IS the NOI proxy
+    if(asset.noiPlug!=null && asset.noiPlug>0){
+      baseNOI = asset.noiPlug; // manual override
+    } else if(asset.revenueMode==="bottomup" && buRev.total>0){
+      baseNOI = buRev.total;
     } else {
       baseNOI = asset.price*asset.cap;
     }
 
-    // NOI schedule: Y1 uses noiY1Growth (stabilization), Y2+ uses noiY2Growth
+    // NOI schedule: Y1 uses noiY1Growth, Y2+ uses noiY2Growth
     const g1 = asset.noiY1Growth!=null ? asset.noiY1Growth : (asset.growth||.05);
     const g2 = asset.noiY2Growth!=null ? asset.noiY2Growth : (asset.growth||.05);
     const noi=Array.from({length:fundTerm+1},(_,y)=>{
       if(y===0) return 0;
       if(y===1) return baseNOI;
-      // Y1→Y2 uses g1, Y2→Y3+ uses g2
       let v = baseNOI * (1+g1);
       for(let yr=3; yr<=y; yr++) v *= (1+g2);
       return v;
@@ -216,23 +246,24 @@ function run(a){
     const bwFees = noi.map((n,y)=> y===0 ? {fixed:0,revMgmt:0,total:0} : calcBWFees(asset, n));
     const bwAnn = bwFees.map(f=>f.total);
 
-    // Equity cash flow
+    // Equity cash flow — includes year-specific capex
     const ecf = noi.map((n,y)=>{
-      if(y===0) return -(eq + capex); // equity + day-1 capex
-      return n - annDS - bwAnn[y];
+      const yrCapex = capexByYear[y]||0;
+      if(y===0) return -(eq + day1Capex);
+      return n - annDS - bwAnn[y] - yrCapex;
     });
 
     const exitNOI = noi[fundTerm];
-    const exitVal = exitNOI / exitCapRate; // buyer caps gross NOI
+    const exitVal = exitNOI / exitCapRate;
     const lb = Math.abs(fvLoan(interestRate,fundTerm,annDS,debt));
     const saleNet = exitVal - lb - exitVal*saleCosts;
     ecf[fundTerm] += saleNet;
     const eqIRR = irr(ecf);
-    const totalEquityIn = eq + capex;
+    const totalEquityIn = eq + day1Capex;
     const moic = (saleNet + ecf.slice(1,fundTerm).reduce((s,v)=>s+v,0) + totalEquityIn) / totalEquityIn;
     const totBWFee = bwAnn.reduce((s,v)=>s+v,0);
 
-    return {...asset, eq, debt, annDS, noi, bwFees, bwAnn, totBWFee, capex,
+    return {...asset, eq, debt, annDS, noi, bwFees, bwAnn, totBWFee, totalCapex, day1Capex, capexByYear,
       buRev, saleNet, exitVal, lb, irr:eqIRR, moic, baseNOI, totalEquityIn};
   });
 
@@ -563,6 +594,8 @@ export default function Portal(){
   const setAsset=useCallback((i,k,v)=>setA(p=>({...p,assets:p.assets.map((x,j)=>j===i?{...x,[k]:v}:x)})),[]);
   const addAsset=useCallback(()=>setA(p=>({...p,assets:[...p.assets,{
     ...DEF_ASSET_BASE, name:"Deal "+(p.assets.length+1),
+    slips:[{type:"Wet Slip",count:50,rate:500,occ:.85}],
+    lodging:[], upland:[], capexItems:[],
     startMonth:Math.min(36,(p.assets.length+1)*3+3)}]})),[]);
   const removeAsset=useCallback((i)=>setA(p=>({...p,assets:p.assets.filter((_,j)=>j!==i)})),[]);
 
@@ -1114,107 +1147,190 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
             {/* ── REVENUE DETAIL SECTION ── */}
             {section==="revenue" && (
               <Card style={{marginBottom:16}}>
-                <CT c="Revenue Components — Bottom-Up Detail"/>
+                <CT c="Revenue Components"/>
                 <div style={{fontSize:10,color:C.textDim,marginBottom:14,padding:"8px 12px",background:C.surfaceAlt,borderRadius:6}}>
                   {asset.revenueMode==="bottomup"
-                    ? "Bottom-up mode active — NOI is calculated from unit economics below"
-                    : "Top-down mode active — values below are informational. Switch to Bottom-Up to drive NOI from these inputs."}
+                    ? "Bottom-up mode — NOI driven by unit economics below"
+                    : "Top-down mode — these are informational. Switch to Bottom-Up to drive NOI."}
                 </div>
 
-                {/* Wet Slips */}
-                <div style={{marginBottom:16}}>
-                  <div style={{fontSize:10,fontWeight:700,color:C.accent,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10,
-                    paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>Wet Slips</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"12px 24px"}}>
-                    <DealSlider label="Slip Count" k="wetSlips" min={0} max={400} step={5} disp={v=>`${v}`} color={C.accent}/>
-                    <DealSlider label="Avg Monthly Rate" k="wetRate" min={100} max={2000} step={25} disp={v=>`$${v}`} color={C.green}/>
-                    <DealSlider label="Occupancy" k="wetOcc" min={.50} max={1} step={.01} disp={v=>`${(v*100).toFixed(0)}%`} color={C.cyan}/>
+                {/* ── Slips (dynamic rows) ── */}
+                <div style={{marginBottom:18}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,
+                    paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>
+                    <span style={{fontSize:10,fontWeight:700,color:C.accent,textTransform:"uppercase",letterSpacing:".06em"}}>Slips / Berths</span>
+                    <button onClick={()=>{const s=[...(asset.slips||[]),{type:"New Slip Type",count:20,rate:400,occ:.85}];setAsset(sel,"slips",s);}}
+                      style={{background:C.accentDim,color:C.accent,border:"none",borderRadius:5,padding:"3px 10px",fontSize:9,fontWeight:700,cursor:"pointer"}}>+ Add Type</button>
                   </div>
-                  <div style={{fontSize:10,color:C.textFaint,marginTop:6}}>
-                    Annual Revenue: <span style={{color:C.green,fontWeight:700}}>{f.$((asset.wetSlips||0)*(asset.wetRate||0)*12*(asset.wetOcc||0))}</span>
-                  </div>
+                  {(asset.slips||[]).map((s,si)=>(
+                    <div key={si} style={{display:"grid",gridTemplateColumns:"1.5fr 1fr 1fr 1fr auto",gap:8,alignItems:"center",
+                      padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+                      <input value={s.type} onChange={e=>{const arr=[...(asset.slips||[])];arr[si]={...arr[si],type:e.target.value};setAsset(sel,"slips",arr);}}
+                        style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"5px 8px",fontSize:11,color:C.text,outline:"none",fontWeight:600}}/>
+                      <div style={{display:"flex",alignItems:"center",gap:4}}>
+                        <span style={{fontSize:9,color:C.textFaint}}>Qty</span>
+                        <input type="number" value={s.count} onChange={e=>{const arr=[...(asset.slips||[])];arr[si]={...arr[si],count:Number(e.target.value)};setAsset(sel,"slips",arr);}}
+                          style={{width:50,background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"4px 6px",fontSize:11,color:C.accent,fontWeight:700,textAlign:"right",outline:"none"}}/>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:4}}>
+                        <span style={{fontSize:9,color:C.textFaint}}>$/mo</span>
+                        <input type="number" value={s.rate} onChange={e=>{const arr=[...(asset.slips||[])];arr[si]={...arr[si],rate:Number(e.target.value)};setAsset(sel,"slips",arr);}}
+                          style={{width:60,background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"4px 6px",fontSize:11,color:C.green,fontWeight:700,textAlign:"right",outline:"none"}}/>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:4}}>
+                        <span style={{fontSize:9,color:C.textFaint}}>Occ</span>
+                        <input type="number" value={Math.round(s.occ*100)} min={0} max={100} onChange={e=>{const arr=[...(asset.slips||[])];arr[si]={...arr[si],occ:Number(e.target.value)/100};setAsset(sel,"slips",arr);}}
+                          style={{width:42,background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"4px 6px",fontSize:11,color:C.cyan,fontWeight:700,textAlign:"right",outline:"none"}}/>
+                        <span style={{fontSize:9,color:C.textFaint}}>%</span>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{fontSize:10,color:C.green,fontWeight:600,minWidth:55,textAlign:"right"}}>{f.$(s.count*s.rate*12*s.occ)}</span>
+                        <button onClick={()=>{const arr=(asset.slips||[]).filter((_,j)=>j!==si);setAsset(sel,"slips",arr);}}
+                          style={{background:C.redL,border:"none",color:C.red,borderRadius:4,padding:"2px 6px",fontSize:9,cursor:"pointer"}}>✕</button>
+                      </div>
+                    </div>
+                  ))}
+                  {(asset.slips||[]).length>0&&(
+                    <div style={{display:"flex",justifyContent:"flex-end",padding:"6px 0",fontSize:11}}>
+                      <span style={{color:C.textDim}}>Slip Revenue: </span>
+                      <span style={{color:C.green,fontWeight:700,marginLeft:6}}>{f.$((asset.slips||[]).reduce((s,r)=>s+r.count*r.rate*12*r.occ,0))}</span>
+                    </div>
+                  )}
                 </div>
 
-                {/* Dry Slips */}
-                <div style={{marginBottom:16}}>
-                  <div style={{fontSize:10,fontWeight:700,color:C.purple,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10,
-                    paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>Dry Storage</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"12px 24px"}}>
-                    <DealSlider label="Slip Count" k="drySlips" min={0} max={300} step={5} disp={v=>`${v}`} color={C.purple}/>
-                    <DealSlider label="Avg Monthly Rate" k="dryRate" min={50} max={800} step={25} disp={v=>`$${v}`} color={C.green}/>
-                    <DealSlider label="Occupancy" k="dryOcc" min={.50} max={1} step={.01} disp={v=>`${(v*100).toFixed(0)}%`} color={C.cyan}/>
+                {/* ── Lodging (dynamic rows) ── */}
+                <div style={{marginBottom:18}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,
+                    paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>
+                    <span style={{fontSize:10,fontWeight:700,color:C.orange,textTransform:"uppercase",letterSpacing:".06em"}}>Hotel / Lodging</span>
+                    <button onClick={()=>{const l=[...(asset.lodging||[]),{type:"New Room Type",units:5,adr:200,occ:.70}];setAsset(sel,"lodging",l);}}
+                      style={{background:"rgba(234,88,12,0.08)",color:C.orange,border:"none",borderRadius:5,padding:"3px 10px",fontSize:9,fontWeight:700,cursor:"pointer"}}>+ Add Type</button>
                   </div>
-                  <div style={{fontSize:10,color:C.textFaint,marginTop:6}}>
-                    Annual Revenue: <span style={{color:C.green,fontWeight:700}}>{f.$((asset.drySlips||0)*(asset.dryRate||0)*12*(asset.dryOcc||0))}</span>
-                  </div>
+                  {(asset.lodging||[]).map((l,li)=>(
+                    <div key={li} style={{display:"grid",gridTemplateColumns:"1.5fr 1fr 1fr 1fr auto",gap:8,alignItems:"center",
+                      padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+                      <input value={l.type} onChange={e=>{const arr=[...(asset.lodging||[])];arr[li]={...arr[li],type:e.target.value};setAsset(sel,"lodging",arr);}}
+                        style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"5px 8px",fontSize:11,color:C.text,outline:"none",fontWeight:600}}/>
+                      <div style={{display:"flex",alignItems:"center",gap:4}}>
+                        <span style={{fontSize:9,color:C.textFaint}}>Units</span>
+                        <input type="number" value={l.units} onChange={e=>{const arr=[...(asset.lodging||[])];arr[li]={...arr[li],units:Number(e.target.value)};setAsset(sel,"lodging",arr);}}
+                          style={{width:42,background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"4px 6px",fontSize:11,color:C.orange,fontWeight:700,textAlign:"right",outline:"none"}}/>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:4}}>
+                        <span style={{fontSize:9,color:C.textFaint}}>ADR</span>
+                        <input type="number" value={l.adr} onChange={e=>{const arr=[...(asset.lodging||[])];arr[li]={...arr[li],adr:Number(e.target.value)};setAsset(sel,"lodging",arr);}}
+                          style={{width:55,background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"4px 6px",fontSize:11,color:C.green,fontWeight:700,textAlign:"right",outline:"none"}}/>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:4}}>
+                        <span style={{fontSize:9,color:C.textFaint}}>Occ</span>
+                        <input type="number" value={Math.round(l.occ*100)} min={0} max={100} onChange={e=>{const arr=[...(asset.lodging||[])];arr[li]={...arr[li],occ:Number(e.target.value)/100};setAsset(sel,"lodging",arr);}}
+                          style={{width:42,background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"4px 6px",fontSize:11,color:C.cyan,fontWeight:700,textAlign:"right",outline:"none"}}/>
+                        <span style={{fontSize:9,color:C.textFaint}}>%</span>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{fontSize:10,color:C.green,fontWeight:600,minWidth:55,textAlign:"right"}}>{f.$(l.units*l.adr*365*l.occ)}</span>
+                        <button onClick={()=>{const arr=(asset.lodging||[]).filter((_,j)=>j!==li);setAsset(sel,"lodging",arr);}}
+                          style={{background:C.redL,border:"none",color:C.red,borderRadius:4,padding:"2px 6px",fontSize:9,cursor:"pointer"}}>✕</button>
+                      </div>
+                    </div>
+                  ))}
+                  {(asset.lodging||[]).length>0&&(
+                    <div style={{display:"flex",justifyContent:"flex-end",padding:"6px 0",fontSize:11}}>
+                      <span style={{color:C.textDim}}>Lodging Revenue: </span>
+                      <span style={{color:C.green,fontWeight:700,marginLeft:6}}>{f.$((asset.lodging||[]).reduce((s,r)=>s+r.units*r.adr*365*r.occ,0))}</span>
+                    </div>
+                  )}
                 </div>
 
-                {/* Floating Hotels */}
-                <div style={{marginBottom:16}}>
-                  <div style={{fontSize:10,fontWeight:700,color:C.orange,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10,
-                    paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>Floating Hotel / Lodging</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"12px 24px"}}>
-                    <DealSlider label="Unit Count" k="hotelUnits" min={0} max={100} step={1} disp={v=>`${v}`} color={C.orange}/>
-                    <DealSlider label="Avg Daily Rate (ADR)" k="hotelADR" min={50} max={600} step={10} disp={v=>`$${v}`} color={C.green}/>
-                    <DealSlider label="Occupancy" k="hotelOcc" min={.30} max={1} step={.01} disp={v=>`${(v*100).toFixed(0)}%`} color={C.cyan}/>
-                  </div>
-                  <div style={{fontSize:10,color:C.textFaint,marginTop:6}}>
-                    Annual Revenue: <span style={{color:C.green,fontWeight:700}}>{f.$((asset.hotelUnits||0)*(asset.hotelADR||0)*365*(asset.hotelOcc||0))}</span>
-                  </div>
-                </div>
-
-                {/* Fuel */}
-                <div style={{marginBottom:16}}>
+                {/* ── Fuel ── */}
+                <div style={{marginBottom:18}}>
                   <div style={{fontSize:10,fontWeight:700,color:C.gold,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10,
                     paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>Fuel Operations</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px 24px"}}>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"12px 24px"}}>
                     <DealSlider label="Annual Gallons" k="fuelGallons" min={0} max={1000000} step={10000} disp={v=>v>=1e6?`${(v/1e6).toFixed(1)}M`:`${(v/1000).toFixed(0)}K`} color={C.gold}/>
                     <DealSlider label="Margin / Gallon" k="fuelMargin" min={0} max={1.50} step={.05} disp={v=>`$${v.toFixed(2)}`} color={C.green}/>
-                  </div>
-                  <div style={{fontSize:10,color:C.textFaint,marginTop:6}}>
-                    Annual Fuel Profit: <span style={{color:C.green,fontWeight:700}}>{f.$((asset.fuelGallons||0)*(asset.fuelMargin||0))}</span>
-                  </div>
-                </div>
-
-                {/* Upland Tenants */}
-                <div style={{marginBottom:16}}>
-                  <div style={{fontSize:10,fontWeight:700,color:C.cyan,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10,
-                    paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>Upland Tenants</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px 24px"}}>
-                    <DealSlider label="Tenant Count" k="uplandTenants" min={0} max={20} step={1} disp={v=>`${v}`} color={C.cyan}/>
-                    <DealSlider label="Avg Monthly Rent" k="uplandRent" min={500} max={10000} step={250} disp={v=>`$${v.toLocaleString()}`} color={C.green}/>
-                  </div>
-                  <div style={{fontSize:10,color:C.textFaint,marginTop:6}}>
-                    Annual Rent: <span style={{color:C.green,fontWeight:700}}>{f.$((asset.uplandTenants||0)*(asset.uplandRent||0)*12)}</span>
+                    <div style={{fontSize:11,color:C.textFaint,alignSelf:"end",paddingBottom:2}}>
+                      Profit: <span style={{color:C.green,fontWeight:700}}>{f.$((asset.fuelGallons||0)*(asset.fuelMargin||0))}/yr</span>
+                    </div>
                   </div>
                 </div>
 
-                {/* Other Income */}
-                <DealSlider label="Other Annual Income" k="otherIncome" min={0} max={500000} step={5000} disp={v=>f.$(v)} color={C.green}/>
+                {/* ── Upland Tenants (dynamic rows) ── */}
+                <div style={{marginBottom:18}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,
+                    paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>
+                    <span style={{fontSize:10,fontWeight:700,color:C.cyan,textTransform:"uppercase",letterSpacing:".06em"}}>Upland Tenants</span>
+                    <button onClick={()=>{const u=[...(asset.upland||[]),{name:"New Tenant",rent:2000}];setAsset(sel,"upland",u);}}
+                      style={{background:"rgba(8,145,178,0.08)",color:C.cyan,border:"none",borderRadius:5,padding:"3px 10px",fontSize:9,fontWeight:700,cursor:"pointer"}}>+ Add Tenant</button>
+                  </div>
+                  {(asset.upland||[]).map((u,ui)=>(
+                    <div key={ui} style={{display:"grid",gridTemplateColumns:"2fr 1fr auto",gap:8,alignItems:"center",
+                      padding:"6px 0",borderBottom:`1px solid ${C.border}`}}>
+                      <input value={u.name} onChange={e=>{const arr=[...(asset.upland||[])];arr[ui]={...arr[ui],name:e.target.value};setAsset(sel,"upland",arr);}}
+                        style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"5px 8px",fontSize:11,color:C.text,outline:"none",fontWeight:600}}/>
+                      <div style={{display:"flex",alignItems:"center",gap:4}}>
+                        <span style={{fontSize:9,color:C.textFaint}}>$/mo</span>
+                        <input type="number" value={u.rent} onChange={e=>{const arr=[...(asset.upland||[])];arr[ui]={...arr[ui],rent:Number(e.target.value)};setAsset(sel,"upland",arr);}}
+                          style={{width:65,background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"4px 6px",fontSize:11,color:C.cyan,fontWeight:700,textAlign:"right",outline:"none"}}/>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{fontSize:10,color:C.green,fontWeight:600}}>{f.$(u.rent*12)}/yr</span>
+                        <button onClick={()=>{const arr=(asset.upland||[]).filter((_,j)=>j!==ui);setAsset(sel,"upland",arr);}}
+                          style={{background:C.redL,border:"none",color:C.red,borderRadius:4,padding:"2px 6px",fontSize:9,cursor:"pointer"}}>✕</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Other Income + NOI Plug */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px 24px",marginBottom:12}}>
+                  <DealSlider label="Other Annual Income" k="otherIncome" min={0} max={500000} step={5000} disp={v=>f.$(v)} color={C.green}/>
+                  <div>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                      <span style={{fontSize:10,color:C.textDim,fontWeight:600}}>NOI Override (Plug)</span>
+                      <span style={{fontSize:9,color:C.textFaint}}>{asset.noiPlug?"Active":"Off"}</span>
+                    </div>
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      <input type="number" value={asset.noiPlug||""} placeholder="Leave blank for computed"
+                        onChange={e=>setAsset(sel,"noiPlug",e.target.value?Number(e.target.value):null)}
+                        style={{flex:1,background:C.surfaceAlt,border:`1px solid ${asset.noiPlug?C.orange:C.border}`,borderRadius:5,
+                          padding:"6px 10px",fontSize:11,color:C.orange,fontWeight:700,outline:"none"}}/>
+                      {asset.noiPlug&&<button onClick={()=>setAsset(sel,"noiPlug",null)}
+                        style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,color:C.textFaint,borderRadius:5,
+                          padding:"4px 8px",fontSize:9,cursor:"pointer"}}>Clear</button>}
+                    </div>
+                    <div style={{fontSize:9,color:C.textFaint,marginTop:3}}>Overrides both top-down and bottom-up NOI</div>
+                  </div>
+                </div>
 
                 {/* Revenue Summary */}
                 {r.buRev && (
-                  <div style={{marginTop:16,padding:"12px 14px",background:C.surfaceAlt,borderRadius:8,border:`1px solid ${C.border}`}}>
+                  <div style={{marginTop:12,padding:"12px 14px",background:C.surfaceAlt,borderRadius:8,border:`1px solid ${C.border}`}}>
                     <div style={{fontSize:10,fontWeight:700,color:C.text,marginBottom:8}}>Revenue Summary (Annual)</div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"4px 16px",fontSize:11}}>
+                    <div style={{fontSize:11}}>
                       {[
-                        {l:"Wet Slips",c:C.accent,v:r.buRev.wet},
-                        {l:"Dry Storage",c:C.purple,v:r.buRev.dry},
-                        {l:"Floating Hotel",c:C.orange,v:r.buRev.hotel},
+                        {l:"Slips / Berths",c:C.accent,v:r.buRev.slipRev},
+                        {l:"Lodging",c:C.orange,v:r.buRev.lodgingRev},
                         {l:"Fuel",c:C.gold,v:r.buRev.fuel},
-                        {l:"Upland Tenants",c:C.cyan,v:r.buRev.upland},
+                        {l:"Upland Tenants",c:C.cyan,v:r.buRev.uplandRev},
                         {l:"Other",c:C.textDim,v:r.buRev.other},
                       ].filter(x=>x.v>0).map(({l,c,v})=>(
-                        <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",borderBottom:`1px solid ${C.border}`}}>
+                        <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:`1px solid ${C.border}`}}>
                           <span style={{color:c,fontWeight:600}}>{l}</span>
                           <span style={{color:C.text,fontWeight:600}}>{f.$(v)}</span>
                         </div>
                       ))}
-                      <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",gridColumn:"1 / -1",
+                      <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",
                         borderTop:`2px solid ${C.borderDark}`,marginTop:4}}>
                         <span style={{color:C.text,fontWeight:700}}>Total Bottom-Up Revenue</span>
-                        <span style={{color:C.green,fontWeight:700,fontSize:13}}>{f.$(r.buRev.total)}</span>
+                        <span style={{color:C.green,fontWeight:700,fontSize:14}}>{f.$(r.buRev.total)}</span>
                       </div>
+                      {asset.noiPlug&&(
+                        <div style={{display:"flex",justifyContent:"space-between",padding:"4px 0"}}>
+                          <span style={{color:C.orange,fontWeight:700}}>NOI Override Active</span>
+                          <span style={{color:C.orange,fontWeight:700}}>{f.$(asset.noiPlug)}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1226,7 +1342,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
               <Card style={{marginBottom:16}}>
                 <CT c="Bluewater Management Fee Structure"/>
                 <div style={{fontSize:10,color:C.textDim,marginBottom:14,padding:"8px 12px",background:C.surfaceAlt,borderRadius:6}}>
-                  Fixed fees are annual amounts. Revenue management is a % of gross revenue/NOI. All flow as asset-level opex.
+                  Fixed fees are annual amounts. Revenue management is a % of gross revenue/NOI.
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 28px"}}>
                   <div>
@@ -1245,7 +1361,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                     <DealSlider label="Rev Mgmt Fee %" k="bwRevMgmt" min={0} max={.10} step={.005}
                       disp={v=>`${(v*100).toFixed(1)}%`} color={C.gold}/>
                     <div style={{fontSize:10,color:C.textFaint,marginTop:8}}>
-                      Y1 Rev Mgmt Fee: <span style={{color:C.gold,fontWeight:700}}>{f.$(r.baseNOI*(asset.bwRevMgmt||0))}</span>
+                      Y1 Rev Mgmt: <span style={{color:C.gold,fontWeight:700}}>{f.$(r.baseNOI*(asset.bwRevMgmt||0))}</span>
                     </div>
                     <div style={{marginTop:16,padding:"12px 14px",background:C.surfaceAlt,borderRadius:8}}>
                       <div style={{fontSize:10,fontWeight:700,color:C.text,marginBottom:6}}>7-Year BW Fee Total</div>
@@ -1263,19 +1379,60 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
             {section==="capex" && (
               <Card style={{marginBottom:16}}>
                 <CT c="CapEx & NOI Stabilization"/>
+
+                {/* CapEx Items (dynamic rows) */}
+                <div style={{marginBottom:18}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,
+                    paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>
+                    <span style={{fontSize:10,fontWeight:700,color:C.red,textTransform:"uppercase",letterSpacing:".06em"}}>Capital Expenditures</span>
+                    <button onClick={()=>{const c=[...(asset.capexItems||[]),{label:"New CapEx",amount:100000,year:0}];setAsset(sel,"capexItems",c);}}
+                      style={{background:C.redL,color:C.red,border:"none",borderRadius:5,padding:"3px 10px",fontSize:9,fontWeight:700,cursor:"pointer"}}>+ Add CapEx</button>
+                  </div>
+                  {(asset.capexItems||[]).length===0&&(
+                    <div style={{fontSize:10,color:C.textFaint,padding:"8px 0"}}>No CapEx items. Click "+ Add CapEx" to add renovation or capital costs.</div>
+                  )}
+                  {(asset.capexItems||[]).map((c,ci)=>(
+                    <div key={ci} style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr auto",gap:8,alignItems:"center",
+                      padding:"6px 0",borderBottom:`1px solid ${C.border}`}}>
+                      <input value={c.label} onChange={e=>{const arr=[...(asset.capexItems||[])];arr[ci]={...arr[ci],label:e.target.value};setAsset(sel,"capexItems",arr);}}
+                        style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"5px 8px",fontSize:11,color:C.text,outline:"none",fontWeight:600}}/>
+                      <div style={{display:"flex",alignItems:"center",gap:4}}>
+                        <span style={{fontSize:9,color:C.textFaint}}>$</span>
+                        <input type="number" value={c.amount} onChange={e=>{const arr=[...(asset.capexItems||[])];arr[ci]={...arr[ci],amount:Number(e.target.value)};setAsset(sel,"capexItems",arr);}}
+                          style={{width:75,background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"4px 6px",fontSize:11,color:C.red,fontWeight:700,textAlign:"right",outline:"none"}}/>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:4}}>
+                        <span style={{fontSize:9,color:C.textFaint}}>Year</span>
+                        <select value={c.year} onChange={e=>{const arr=[...(asset.capexItems||[])];arr[ci]={...arr[ci],year:Number(e.target.value)};setAsset(sel,"capexItems",arr);}}
+                          style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"4px 6px",fontSize:11,color:C.text,cursor:"pointer",outline:"none"}}>
+                          <option value={0}>Day-1</option>
+                          {Array.from({length:a.fundTerm},(_,i)=><option key={i+1} value={i+1}>Year {i+1}</option>)}
+                        </select>
+                      </div>
+                      <button onClick={()=>{const arr=(asset.capexItems||[]).filter((_,j)=>j!==ci);setAsset(sel,"capexItems",arr);}}
+                        style={{background:C.redL,border:"none",color:C.red,borderRadius:4,padding:"2px 6px",fontSize:9,cursor:"pointer"}}>✕</button>
+                    </div>
+                  ))}
+                  {(asset.capexItems||[]).length>0&&(
+                    <div style={{display:"flex",justifyContent:"flex-end",padding:"8px 0",fontSize:11,borderTop:`1px solid ${C.border}`,marginTop:4}}>
+                      <span style={{color:C.textDim}}>Total CapEx: </span>
+                      <span style={{color:C.red,fontWeight:700,marginLeft:6}}>{f.$((asset.capexItems||[]).reduce((s,c)=>s+c.amount,0))}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Growth Rates */}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"16px 28px",marginBottom:16}}>
-                  <DealSlider label="Day-1 CapEx" k="capex" min={0} max={5000000} step={50000}
-                    disp={v=>f.$(v)} color={C.red}/>
                   <DealSlider label="Y1 NOI Growth (Stabilization)" k="noiY1Growth" min={-.10} max={.20} step={.005}
                     disp={v=>`${(v*100).toFixed(1)}%`} color={C.orange}/>
                   <DealSlider label="Y2+ NOI Growth" k="noiY2Growth" min={.01} max={.12} step={.005}
                     disp={v=>`${(v*100).toFixed(1)}%`} color={C.green}/>
-                  <DealSlider label="Top-Down Growth (legacy)" k="growth" min={.01} max={.12} step={.005}
-                    disp={v=>`${(v*100).toFixed(1)}%`} color={C.purple}/>
                 </div>
+
+                {/* NOI Schedule */}
                 <div style={{padding:"12px 14px",background:C.surfaceAlt,borderRadius:8,border:`1px solid ${C.border}`}}>
                   <div style={{fontSize:10,fontWeight:700,color:C.text,marginBottom:8}}>NOI Schedule</div>
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6}}>
+                  <div style={{display:"grid",gridTemplateColumns:`repeat(${a.fundTerm},1fr)`,gap:6}}>
                     {r.noi && r.noi.slice(1).map((n,y)=>(
                       <div key={y} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,
                         padding:"8px",textAlign:"center"}}>
@@ -1284,6 +1441,9 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                         {y>0&&<div style={{fontSize:9,color:n>r.noi[y]?C.green:C.red,marginTop:2}}>
                           {n>r.noi[y]?"+":"−"}{f.p(Math.abs(n/r.noi[y]-1))}
                         </div>}
+                        {r.capexByYear&&r.capexByYear[y+1]>0&&(
+                          <div style={{fontSize:8,color:C.red,marginTop:2}}>CapEx: {f.$(r.capexByYear[y+1])}</div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1371,9 +1531,9 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                       <td style={{padding:"10px 12px",textAlign:"center",color:C.text}}>{f.$(ast.price)}</td>
                       <td style={{padding:"10px 12px",textAlign:"center",color:C.purple}}>{f.p(ast.cap)}</td>
                       <td style={{padding:"10px 12px",textAlign:"center",color:C.orange}}>M{ast.startMonth}</td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:C.accent}}>{ast.wetSlips||"—"}</td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:C.purple}}>{ast.drySlips||"—"}</td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:C.orange}}>{ast.hotelUnits||"—"}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:C.accent}}>{(ast.slips||[]).reduce((s,r)=>s+r.count,0)||"—"}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:C.purple}}>—</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:C.orange}}>{(ast.lodging||[]).reduce((s,r)=>s+r.units,0)||"—"}</td>
                       <td style={{padding:"10px 12px",textAlign:"center",color:C.gold}}>{ast.fuelGallons?`${(ast.fuelGallons/1000).toFixed(0)}K`:"—"}</td>
                       <td style={{padding:"10px 12px",textAlign:"center",color:C.cyan}}>{f.$(ar?.bwAnn?.[1]||0)}</td>
                       <td style={{padding:"10px 12px",textAlign:"center",color:C.text}}>{f.$(ar?.eq)}</td>
@@ -1400,9 +1560,9 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                   <td style={{padding:"10px 12px",textAlign:"center",color:C.accent,fontWeight:700}}>{f.$(totVal)}</td>
                   <td style={{padding:"10px 12px",textAlign:"center",color:C.purple,fontWeight:700}}>{f.p(wtdCap)}</td>
                   <td/>
-                  <td style={{padding:"10px 12px",textAlign:"center",color:C.accent,fontWeight:700}}>{a.assets.reduce((s,x)=>s+(x.wetSlips||0),0)}</td>
-                  <td style={{padding:"10px 12px",textAlign:"center",color:C.purple,fontWeight:700}}>{a.assets.reduce((s,x)=>s+(x.drySlips||0),0)}</td>
-                  <td style={{padding:"10px 12px",textAlign:"center",color:C.orange,fontWeight:700}}>{a.assets.reduce((s,x)=>s+(x.hotelUnits||0),0)}</td>
+                  <td style={{padding:"10px 12px",textAlign:"center",color:C.accent,fontWeight:700}}>{a.assets.reduce((s,x)=>s+(x.slips||[]).reduce((t,r)=>t+r.count,0),0)}</td>
+                  <td/>
+                  <td style={{padding:"10px 12px",textAlign:"center",color:C.orange,fontWeight:700}}>{a.assets.reduce((s,x)=>s+(x.lodging||[]).reduce((t,r)=>t+r.units,0),0)||"—"}</td>
                   <td/>
                   <td/>
                   <td style={{padding:"10px 12px",textAlign:"center",color:C.accent,fontWeight:700}}>{f.$(totEq)}</td>
