@@ -13,15 +13,16 @@ const C = {
 };
 
 // ── DEFAULT STATE ─────────────────────────────────────────────────────────────
+const EMPTY_ASSET_ARRAYS={slipTypes:[],strUnits:[],otherRevenue:[],mgmtFees:[],capexSchedule:[]};
 const DEF_ASSETS = [
-  {name:"Asset 1",price:15000000,cap:.070,growth:.07,startMonth:6, noiMargin:.525, scope:"global"},
-  {name:"Asset 2",price:12000000,cap:.070,growth:.07,startMonth:9, noiMargin:.525, scope:"global"},
-  {name:"Asset 3",price:18000000,cap:.075,growth:.06,startMonth:12,noiMargin:.525, scope:"global"},
-  {name:"Asset 4",price:20000000,cap:.080,growth:.05,startMonth:15,noiMargin:.525, scope:"global"},
-  {name:"Asset 5",price:16000000,cap:.082,growth:.05,startMonth:18,noiMargin:.525, scope:"global"},
-  {name:"Asset 6",price:14000000,cap:.081,growth:.05,startMonth:21,noiMargin:.525, scope:"global"},
-  {name:"Asset 7",price:14000000,cap:.075,growth:.05,startMonth:24,noiMargin:.525, scope:"global"},
-  {name:"Asset 8",price:12000000,cap:.078,growth:.05,startMonth:27,noiMargin:.525, scope:"global"},
+  {name:"Asset 1",price:15000000,cap:.070,growth:.07,startMonth:6, noiMargin:.525, scope:"global",...EMPTY_ASSET_ARRAYS},
+  {name:"Asset 2",price:12000000,cap:.070,growth:.07,startMonth:9, noiMargin:.525, scope:"global",...EMPTY_ASSET_ARRAYS},
+  {name:"Asset 3",price:18000000,cap:.075,growth:.06,startMonth:12,noiMargin:.525, scope:"global",...EMPTY_ASSET_ARRAYS},
+  {name:"Asset 4",price:20000000,cap:.080,growth:.05,startMonth:15,noiMargin:.525, scope:"global",...EMPTY_ASSET_ARRAYS},
+  {name:"Asset 5",price:16000000,cap:.082,growth:.05,startMonth:18,noiMargin:.525, scope:"global",...EMPTY_ASSET_ARRAYS},
+  {name:"Asset 6",price:14000000,cap:.081,growth:.05,startMonth:21,noiMargin:.525, scope:"global",...EMPTY_ASSET_ARRAYS},
+  {name:"Asset 7",price:14000000,cap:.075,growth:.05,startMonth:24,noiMargin:.525, scope:"global",...EMPTY_ASSET_ARRAYS},
+  {name:"Asset 8",price:12000000,cap:.078,growth:.05,startMonth:27,noiMargin:.525, scope:"global",...EMPTY_ASSET_ARRAYS},
 ];
 
 const DEF_HIRES = [
@@ -122,19 +123,23 @@ function totalLPForIRR(targetIRR, lpCapital, annualInterim, N) {
 // ── PER-ASSET BOTTOMS-UP REVENUE HELPERS ─────────────────────────────────────
 function computeAssetGrossRevenue(asset, y){
   let gr=0;
-  const g=asset.growth||.03;
-  const gf=y>1?Math.pow(1+g,y-1):1;
   (asset.slipTypes||[]).forEach(s=>{
     if(!(s.count>0))return;
     const occ=s.occupancy!=null?s.occupancy:.85;
+    const g=s.growth!=null?s.growth:(asset.growth||.03);
+    const gf=y>1?Math.pow(1+g,y-1):1;
     gr+=(s.count||0)*(s.rate||0)*12*occ*gf;
   });
   (asset.strUnits||[]).forEach(s=>{
     if(!(s.units>0))return;
     const occ=s.occupancy!=null?s.occupancy:.65;
+    const g=s.growth!=null?s.growth:(asset.growth||.03);
+    const gf=y>1?Math.pow(1+g,y-1):1;
     gr+=(s.units||0)*(s.adr||0)*365*occ*gf;
   });
   (asset.otherRevenue||[]).forEach(o=>{
+    const g=o.growth!=null?o.growth:(asset.growth||.03);
+    const gf=y>1?Math.pow(1+g,y-1):1;
     gr+=(o.annual||0)*gf;
   });
   return gr;
@@ -851,7 +856,7 @@ export default function Portal(){
     const type=globalModal;
     setA(prev=>{
       const updated={...prev};
-      if(type==="assets") updated.assets=[...prev.assets,{name,price:12000000,cap:.075,growth:.05,noiMargin:.525,startMonth:Math.min(36,(prev.assets.length+1)*3+3),scope:"global"}];
+      if(type==="assets") updated.assets=[...prev.assets,{name,price:12000000,cap:.075,growth:.05,noiMargin:.525,startMonth:Math.min(36,(prev.assets.length+1)*3+3),scope:"global",...EMPTY_ASSET_ARRAYS}];
       else if(type==="hires") updated.hires=[...prev.hires,{role:name,salary:75000,start:12,alloc:1.00,scope:"global"}];
       else if(type==="overhead") updated.overhead=[...prev.overhead,{label:name,annual:10000,start:1,end:0,rampMo:3,growth:.02,ramps:false,scope:"global"}];
       else if(type==="oneTime") updated.oneTime=[...prev.oneTime,{label:name,amount:5000,month:1,category:"Other",scope:"global"}];
@@ -1995,6 +2000,25 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset,addGlobalWithModal}){
                       </tbody>
                     </table>
                   )}
+                  {(()=>{
+                    const cx=asset.capexSchedule||[];
+                    if(cx.length===0)return null;
+                    const byYr={};
+                    cx.forEach(r=>{const y=Math.round(r.year||1);byYr[y]=(byYr[y]||0)+(r.amount||0);});
+                    const yrs=Object.keys(byYr).map(Number).sort((a,b)=>a-b);
+                    if(yrs.length===0)return null;
+                    return(
+                      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8,paddingBottom:8,borderBottom:`1px solid rgba(192,57,43,.12)`}}>
+                        {yrs.map(yr=>(
+                          <div key={yr} style={{fontSize:9,background:"rgba(192,57,43,.08)",border:`1px solid rgba(192,57,43,.2)`,
+                            borderRadius:3,padding:"3px 8px"}}>
+                            <span style={{color:"rgba(192,57,43,.6)"}}>Yr {yr}: </span>
+                            <span style={{color:C.red,fontWeight:700}}>{f.$(byYr[yr])}</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                   <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
                     {[["Dock Renovation",1,500000],["Dredging",3,250000],["Marina Upgrades",2,0]].map(([label,year,amount])=>(
                       <button key={label} onClick={()=>addRow("capexSchedule",{label,year,amount})}
