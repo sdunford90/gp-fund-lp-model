@@ -161,7 +161,8 @@ function run(a){
       return n-annDS-n*mf;  // NOI - debt service - Bluewater mgmt fee
     });
     const exitNOI=noi[fundTerm];
-    const exitVal=exitNOI/exitCapRate;
+    const netExitNOI=exitNOI*(1-mf);  // buyer caps NOI net of mgmt fee
+    const exitVal=netExitNOI/exitCapRate;
     const lb=Math.abs(fvLoan(interestRate,fundTerm,annDS,debt));
     const saleNet=exitVal-lb-exitVal*saleCosts;
     ecf[fundTerm]+=saleNet;
