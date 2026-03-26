@@ -610,10 +610,10 @@ const Sli=({label,value,min,max,step,disp,onChange,sub})=>{
     <div style={{marginBottom:15}}>
       <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
         <span style={{fontSize:9,color:"rgba(255,255,255,0.5)",textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:"'JetBrains Mono',monospace"}}>{label}</span>
-        <span style={{fontSize:11,color:C.gold,fontWeight:600,fontFamily:"'JetBrains Mono',monospace"}}>{disp(value)}</span>
+        <span style={{fontSize:11,color:C.goldDim,fontWeight:600,fontFamily:"'JetBrains Mono',monospace"}}>{disp(value)}</span>
       </div>
       <div style={{position:"relative",height:3,background:"rgba(255,255,255,0.12)",borderRadius:2}}>
-        <div style={{position:"absolute",left:0,width:`${p}%`,height:"100%",background:C.gold,borderRadius:2}}/>
+        <div style={{position:"absolute",left:0,width:`${p}%`,height:"100%",background:C.goldDim,borderRadius:2}}/>
         <input type="range" min={min} max={max} step={step} value={value}
           onChange={e=>onChange(Number(e.target.value))}
           style={{position:"absolute",top:-7,left:0,width:"100%",height:17,opacity:0,cursor:"pointer",margin:0,padding:0}}/>
