@@ -131,7 +131,7 @@ const DEFAULT = {
 
 // ── MATH ──────────────────────────────────────────────────────────────────────
 function pmt(r,n,pv){ return r===0?pv/n:(pv*r*Math.pow(1+r,n))/(Math.pow(1+r,n)-1); }
-function fvLoan(r,n,pmt,pv){ return pv*Math.pow(1+r,n)-pmt*(Math.pow(1+r,n)-1)/r; }
+function fvLoan(r,n,pmt,pv){ return r===0?pv-pmt*n:pv*Math.pow(1+r,n)-pmt*(Math.pow(1+r,n)-1)/r; }
 function irr(cfs,g=.1){
   let r=g;
   for(let i=0;i<300;i++){
@@ -289,22 +289,23 @@ function run(a){
 
   const monthly=Array.from({length:MO},(_,i)=>{
     const mo=i+1;
-    let noi=0,invEq=0,ds=0,bwF=0;
+    let noi=0,invEq=0,ds=0,bwF=0,capxF=0;
     assetR.forEach((ar,ai)=>{
       const x=assets[ai];
       if(mo<x.startMonth)return;
-      // Use computed NOI from assetR (supports both revenue modes)
       const yr=Math.floor((mo-x.startMonth)/12)+1;
       const moNOI=(yr<=fundTerm?ar.noi[yr]:ar.noi[fundTerm])/12;
       noi+=moNOI;
-      // BW fees monthly
       const bwYear = yr<=fundTerm ? ar.bwAnn[yr] : ar.bwAnn[fundTerm];
       bwF+=bwYear/12;
+      // Year-specific capex spread across the year's months
+      const yrCapex = ar.capexByYear?.[yr]||0;
+      if(yrCapex>0) capxF+=yrCapex/12;
       invEq+=x.price*(1-debtPct);
       ds+=Math.abs(pmt(interestRate,amortYears,x.price*debtPct))/12;
     });
     const ga=gaMonthly[i].total;
-    const netOpCF=noi-ds-bwF-ga;
+    const netOpCF=noi-ds-bwF-capxF-ga;
     const lpCall=assets.reduce((s,x)=>x.startMonth===mo?s+x.price*(1-debtPct)*(1-gpPct):s,0);
     const gpCall=assets.reduce((s,x)=>x.startMonth===mo?s+x.price*(1-debtPct)*gpPct:s,0);
     return{mo,noi,invEq,ds,bwF,netOpCF,lpCall,gpCall,ga};
