@@ -121,7 +121,7 @@ const DEF_PARTNER_SALARIES = [
 const DEFAULT = {
   fundTerm:7, debtPct:.60, interestRate:.065, amortYears:25,
   exitCapRate:.075, saleCosts:.02, carry:.20, prefReturn:.07,
-  gpPct:.02, amFee:0, pmFee:0, benefitsRate:.22, salaryGrowth:.03,
+  gpPct:0, amFee:0, pmFee:0, benefitsRate:.22, salaryGrowth:.03,
   partners:3, compoundPref:false, catchUp:false,
   assets:DEF_ASSETS, hires:DEF_HIRES, overhead:DEF_OVERHEAD, oneTime:DEF_ONE_TIME, partnerSalaries:DEF_PARTNER_SALARIES,
 };
@@ -805,7 +805,7 @@ export default function Portal(){
               {a.catchUp?"GP catches up to carry% then splits":"GP takes carry% above pref"}
             </div>
           </div>
-          <Sli label="GP Commitment"  value={a.gpPct}        min={.01}  max={.05}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("gpPct",v)}/>
+          <Sli label="GP Commitment"  value={a.gpPct}        min={0}    max={.05}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("gpPct",v)}/>
           <Sli label="Sale Costs"     value={a.saleCosts}    min={.01}  max={.04}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("saleCosts",v)}/>
 
           <div style={{height:1,background:C.border,margin:"12px 0"}}/>
