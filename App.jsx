@@ -220,11 +220,14 @@ function run(a){
       grossRevYr1=grossRev[1]||0;
       const mgmtFeeArr=grossRev.map(gr=>computeMgmtFees(asset,gr));
       noi=grossRev.map((gr,y)=>y===0?0:gr*margin-mgmtFeeArr[y]);
-      egi=grossRev; // EGI = gross revenue (before mgmt fees)
+      egi=grossRev; // EGI = gross revenue (before mgmt fees and NOI margin)
     }else{
-      noi=Array.from({length:fundTerm+1},(_,y)=>y===0?0:asset.price*asset.cap*Math.pow(1+asset.growth,y-1));
-      egi=noi.map(n=>margin>0?n/margin:n);
+      // Cap-rate fallback: NOI_base = price×cap×growth^(y-1); subtract mgmt fees if defined
+      const noiBase=Array.from({length:fundTerm+1},(_,y)=>y===0?0:asset.price*asset.cap*Math.pow(1+asset.growth,y-1));
+      egi=noiBase.map(n=>margin>0?n/margin:n);  // EGI proxy for PM fee and mgmt-fee-pct calc
       grossRevYr1=egi[1]||0;
+      const mgmtFeeArr=egi.map(gr=>computeMgmtFees(asset,gr));
+      noi=noiBase.map((n,y)=>y===0?0:n-mgmtFeeArr[y]);
     }
 
     // Refinancing: if enabled and asset was acquired before refiMonth
@@ -232,11 +235,8 @@ function run(a){
     const assetRefiEligible=refiEnabled&&asset.startMonth<refiMonth;
     if(assetRefiEligible){
       refiYearIdx=Math.ceil((refiMonth-asset.startMonth)/12);
-      const yrsHeld=(refiMonth-asset.startMonth)/12;
-      // Appraised value at refi = NOI at refi / exit cap
-      const refiNOI=useBottomsUp
-        ?computeAssetGrossRevenue(asset,Math.max(1,Math.round(yrsHeld)))*margin
-        :asset.price*asset.cap*Math.pow(1+asset.growth,yrsHeld);
+      // Use the computed NOI array (already includes mgmt fees) for refi valuation
+      const refiNOI=noi[Math.min(refiYearIdx,fundTerm)]||0;
       const appraisedVal=refiNOI/exitCapRate;
       newDebt=appraisedVal*refiLTV;
       const yrsFromAcq=(refiMonth-asset.startMonth)/12;
@@ -286,19 +286,12 @@ function run(a){
     let noi=0,egi=0,invEq=0,ds=0;
     assets.forEach((x,ai)=>{
       if(mo<x.startMonth)return;
-      const yrs=(mo-x.startMonth)/12;
-      const margin=x.noiMargin||.525;
       const ar=assetR[ai];
-      let moNoi,moEgi;
-      if(ar.useBottomsUp){
-        const moGross=ar.grossRevYr1*Math.pow(1+(x.growth||.03),yrs)/12;
-        const moMgmtFees=computeMgmtFees(x,moGross*12)/12;
-        moNoi=moGross*margin-moMgmtFees;
-        moEgi=moGross;
-      }else{
-        moNoi=x.price*x.cap*Math.pow(1+x.growth,yrs)/12;
-        moEgi=margin>0?moNoi/margin:moNoi;
-      }
+      // Look up the annual NOI/EGI for this month's year (ar.noi already includes mgmt fees)
+      const moFrac=mo-x.startMonth; // months elapsed since acquisition
+      const yearIdx=Math.min(Math.floor(moFrac/12)+1,fundTerm);
+      const moNoi=ar.noi[yearIdx]/12;
+      const moEgi=ar.egi[yearIdx]/12;
       noi+=moNoi;
       egi+=moEgi;
       invEq+=x.price*(1-debtPct);
