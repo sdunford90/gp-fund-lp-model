@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Helm — Brand Identity System</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy:   #0A2342;
+    --cyan:   #00D4FF;
+    --cyan-light: #E0F9FF;
+    --cyan-mid:   #7AEAFF;
+    --warm:   #FAFAF8;
+    --slate:  #2E4A6B;
+    --mid:    #6B8CAE;
+    --border: #E2E8EF;
+    --text:   #1A2E44;
+    --muted:  #64748B;
+    --success:#00C896;
+    --warning:#FFB020;
+    --danger: #FF4D4D;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--warm);
+    font-family: 'DM Sans', sans-serif;
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* ── HERO ── */
+  .hero {
+    background: var(--navy);
+    padding: 80px 60px 70px;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: -120px; right: -120px;
+    width: 480px; height: 480px;
+    background: radial-gradient(circle, rgba(0,212,255,0.18) 0%, transparent 70%);
+    border-radius: 50%;
+  }
+  .hero::after {
+    content: '';
+    position: absolute;
+    bottom: -80px; left: 30%;
+    width: 300px; height: 300px;
+    background: radial-gradient(circle, rgba(0,212,255,0.08) 0%, transparent 70%);
+    border-radius: 50%;
+  }
+  .hero-eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    color: var(--cyan);
+    text-transform: uppercase;
+    margin-bottom: 20px;
+  }
+  .hero-wordmark {
+    font-family: 'DM Serif Display', serif;
+    font-size: 96px;
+    color: #fff;
+    line-height: 1;
+    letter-spacing: -2px;
+    position: relative;
+    z-index: 1;
+  }
+  .hero-wordmark span {
+    color: var(--cyan);
+  }
+  .hero-tagline {
+    margin-top: 20px;
+    font-size: 18px;
+    font-weight: 300;
+    color: rgba(255,255,255,0.6);
+    letter-spacing: 0.01em;
+    position: relative;
+    z-index: 1;
+  }
+  .hero-tagline strong {
+    color: rgba(255,255,255,0.9);
+    font-weight: 500;
+  }
+  .cyan-bar {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--cyan) 0%, transparent 100%);
+  }
+
+  /* ── SECTION ── */
+  .section {
+    padding: 60px 60px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    margin-bottom: 8px;
+  }
+  .section-title {
+    font-family: 'DM Serif Display', serif;
+    font-size: 32px;
+    color: var(--navy);
+    margin-bottom: 40px;
+    line-height: 1.2;
+  }
+
+  /* ── COLOR SWATCHES ── */
+  .palette-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    margin-bottom: 40px;
+  }
+  .swatch {
+    display: flex;
+    flex-direction: column;
+  }
+  .swatch-color {
+    height: 140px;
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    padding: 16px;
+  }
+  .swatch-color .check {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.3);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+    color: rgba(255,255,255,0.7);
+  }
+  .swatch-info {
+    padding: 16px 20px 20px;
+    background: white;
+    border-top: 1px solid var(--border);
+  }
+  .swatch-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--navy);
+    margin-bottom: 2px;
+  }
+  .swatch-hex {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .swatch-use {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 6px;
+    line-height: 1.4;
+  }
+
+  /* Extended palette */
+  .extended-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 12px;
+    margin-bottom: 40px;
+  }
+  .mini-swatch {
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .mini-color { height: 56px; }
+  .mini-info { padding: 8px 10px; background: white; }
+  .mini-name { font-size: 10px; font-weight: 600; color: var(--navy); }
+  .mini-hex  { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--muted); }
+
+  /* ── TYPOGRAPHY ── */
+  .type-specimen {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+    margin-bottom: 40px;
+  }
+  .type-block {
+    padding: 36px;
+    background: white;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+  }
+  .type-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    margin-bottom: 16px;
+    display: block;
+  }
+  .display-specimen {
+    font-family: 'DM Serif Display', serif;
+    font-size: 48px;
+    color: var(--navy);
+    line-height: 1.1;
+  }
+  .display-specimen em { color: var(--cyan); font-style: normal; }
+  .body-specimen {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 15px;
+    color: var(--text);
+    line-height: 1.7;
+    font-weight: 400;
+  }
+  .mono-specimen {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    color: var(--navy);
+    line-height: 1.8;
+  }
+  .mono-specimen .num { color: var(--cyan); }
+
+  /* ── UI COMPONENTS ── */
+  .components-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    margin-bottom: 40px;
+  }
+  .component-card {
+    background: white;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    padding: 32px;
+  }
+  .component-card h4 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    margin-bottom: 20px;
+  }
+
+  /* Buttons */
+  .btn-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .btn {
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    transition: all 0.15s;
+    letter-spacing: 0.01em;
+  }
+  .btn-primary { background: var(--navy); color: white; }
+  .btn-primary:hover { background: var(--slate); }
+  .btn-accent { background: var(--cyan); color: var(--navy); font-weight: 600; }
+  .btn-accent:hover { background: var(--cyan-mid); }
+  .btn-outline { background: transparent; color: var(--navy); border: 1.5px solid var(--navy); }
+  .btn-outline:hover { background: var(--navy); color: white; }
+  .btn-ghost { background: transparent; color: var(--muted); border: 1.5px solid var(--border); }
+
+  /* Badges */
+  .badge-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .badge {
+    padding: 4px 12px;
+    border-radius: 100px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .badge-paid    { background: #E0FFF5; color: #00A878; }
+  .badge-pending { background: #FFF4E0; color: #B07800; }
+  .badge-overdue { background: #FFE8E8; color: #CC0000; }
+  .badge-active  { background: var(--cyan-light); color: #007A99; }
+  .badge-draft   { background: var(--border); color: var(--muted); }
+
+  /* Form elements */
+  .form-group { margin-bottom: 16px; }
+  .form-label { font-size: 12px; font-weight: 600; color: var(--navy); margin-bottom: 6px; display: block; letter-spacing: 0.02em; }
+  .form-input {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    color: var(--text);
+    background: var(--warm);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .form-input:focus { border-color: var(--cyan); background: white; }
+  .form-input.active { border-color: var(--cyan); background: white; box-shadow: 0 0 0 3px rgba(0,212,255,0.12); }
+
+  /* Dashboard card mockup */
+  .dash-card {
+    background: white;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    padding: 20px;
+    margin-bottom: 12px;
+  }
+  .dash-card-label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+  .dash-card-value { font-family: 'DM Serif Display', serif; font-size: 36px; color: var(--navy); line-height: 1; margin-bottom: 4px; }
+  .dash-card-value span { color: var(--cyan); }
+  .dash-card-sub { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); }
+  .dash-card-sub .up { color: var(--success); }
+  .dash-card-sub .down { color: var(--danger); }
+
+  .dash-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  /* Table preview */
+  .table-preview { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .table-preview thead tr { background: var(--navy); }
+  .table-preview thead th {
+    padding: 10px 14px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.85);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .table-preview thead th:first-child { border-radius: 8px 0 0 0; }
+  .table-preview thead th:last-child { border-radius: 0 8px 0 0; }
+  .table-preview tbody tr:nth-child(even) { background: var(--warm); }
+  .table-preview tbody tr:nth-child(odd) { background: white; }
+  .table-preview tbody td { padding: 10px 14px; color: var(--text); border-bottom: 1px solid var(--border); }
+  .table-preview tbody td.mono { font-family: 'JetBrains Mono', monospace; color: var(--navy); }
+  .table-preview tbody tr:last-child td { border-bottom: none; }
+  .table-wrap { border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+
+  /* ── MARKETING PREVIEW ── */
+  .marketing-hero {
+    background: var(--navy);
+    border-radius: 16px;
+    padding: 60px 50px;
+    position: relative;
+    overflow: hidden;
+    margin-bottom: 24px;
+  }
+  .marketing-hero::before {
+    content: '';
+    position: absolute;
+    top: -100px; right: -60px;
+    width: 400px; height: 400px;
+    background: radial-gradient(circle, rgba(0,212,255,0.15) 0%, transparent 70%);
+  }
+  .mh-kicker {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--cyan);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .mh-kicker::before { content: ''; display: block; width: 24px; height: 1.5px; background: var(--cyan); }
+  .mh-title {
+    font-family: 'DM Serif Display', serif;
+    font-size: 52px;
+    color: white;
+    line-height: 1.1;
+    margin-bottom: 16px;
+    position: relative; z-index: 1;
+  }
+  .mh-title em { color: var(--cyan); font-style: normal; }
+  .mh-sub {
+    font-size: 16px;
+    color: rgba(255,255,255,0.55);
+    line-height: 1.6;
+    max-width: 480px;
+    margin-bottom: 32px;
+    position: relative; z-index: 1;
+  }
+  .mh-cta { display: flex; gap: 12px; position: relative; z-index: 1; }
+  .mh-btn-primary {
+    padding: 13px 28px;
+    background: var(--cyan);
+    color: var(--navy);
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 700;
+    font-size: 14px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    letter-spacing: 0.02em;
+  }
+  .mh-btn-secondary {
+    padding: 13px 28px;
+    background: transparent;
+    color: rgba(255,255,255,0.75);
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 500;
+    font-size: 14px;
+    border-radius: 8px;
+    border: 1.5px solid rgba(255,255,255,0.2);
+    cursor: pointer;
+  }
+
+  /* Nav preview */
+  .nav-preview {
+    background: var(--navy);
+    border-radius: 12px 12px 0 0;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    height: 52px;
+    gap: 4px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .nav-logo {
+    font-family: 'DM Serif Display', serif;
+    font-size: 20px;
+    color: white;
+    margin-right: 32px;
+  }
+  .nav-logo span { color: var(--cyan); }
+  .nav-item {
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: rgba(255,255,255,0.55);
+    cursor: pointer;
+  }
+  .nav-item.active {
+    background: rgba(0,212,255,0.12);
+    color: var(--cyan);
+  }
+  .nav-spacer { flex: 1; }
+  .nav-avatar {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: rgba(0,212,255,0.2);
+    border: 1.5px solid rgba(0,212,255,0.4);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 600; color: var(--cyan);
+  }
+
+  /* Sidebar preview */
+  .app-shell { display: flex; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
+  .sidebar {
+    width: 200px;
+    background: var(--navy);
+    padding: 20px 12px;
+    flex-shrink: 0;
+  }
+  .sidebar-logo {
+    font-family: 'DM Serif Display', serif;
+    font-size: 22px;
+    color: white;
+    margin-bottom: 28px;
+    padding: 0 8px;
+  }
+  .sidebar-logo span { color: var(--cyan); }
+  .sidebar-section { font-family: 'JetBrains Mono', monospace; font-size: 8px; letter-spacing: 0.2em; text-transform: uppercase; color: rgba(255,255,255,0.3); padding: 0 8px; margin-bottom: 6px; margin-top: 16px; }
+  .sidebar-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: rgba(255,255,255,0.5);
+    cursor: pointer;
+    margin-bottom: 2px;
+  }
+  .sidebar-item.active { background: rgba(0,212,255,0.15); color: var(--cyan); }
+  .sidebar-item .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .sidebar-content { flex: 1; background: var(--warm); padding: 24px; }
+  .sidebar-content h3 { font-family: 'DM Serif Display', serif; font-size: 22px; color: var(--navy); margin-bottom: 4px; }
+  .sidebar-content p { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
+
+  /* ── INVOICE PREVIEW ── */
+  .invoice-preview {
+    background: white;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .invoice-header {
+    background: var(--navy);
+    padding: 28px 36px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+  .invoice-logo { font-family: 'DM Serif Display', serif; font-size: 28px; color: white; }
+  .invoice-logo span { color: var(--cyan); }
+  .invoice-meta { text-align: right; }
+  .invoice-meta .label { font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; color: rgba(255,255,255,0.4); }
+  .invoice-meta .value { font-family: 'JetBrains Mono', monospace; font-size: 14px; color: var(--cyan); margin-bottom: 8px; }
+  .invoice-body { padding: 28px 36px; }
+  .invoice-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .invoice-row:last-child { border-bottom: none; }
+  .invoice-row .desc { color: var(--text); }
+  .invoice-row .amount { font-family: 'JetBrains Mono', monospace; color: var(--navy); font-weight: 500; }
+  .invoice-total { display: flex; justify-content: space-between; align-items: center; padding: 16px 36px; background: var(--navy); margin-top: 0; }
+  .invoice-total .label { font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.7); }
+  .invoice-total .amount { font-family: 'JetBrains Mono', monospace; font-size: 22px; color: var(--cyan); font-weight: 600; }
+  .invoice-bar { height: 3px; background: linear-gradient(90deg, var(--cyan), rgba(0,212,255,0.2)); }
+</style>
+</head>
+<body>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-eyebrow">Brand Identity System — v1.0</div>
+  <div class="hero-wordmark">H<span>e</span>lm</div>
+  <div class="hero-tagline"><strong>Command Your Marina.</strong> — The operating system for institutional marina management.</div>
+  <div class="cyan-bar"></div>
+</div>
+
+<!-- COLOR PALETTE -->
+<div class="section">
+  <div class="section-label">01 — Color System</div>
+  <div class="section-title">Primary Palette</div>
+
+  <div class="palette-grid">
+    <div class="swatch">
+      <div class="swatch-color" style="background:#0A2342;">
+        <div class="check">✦</div>
+      </div>
+      <div class="swatch-info">
+        <div class="swatch-name">Helm Navy</div>
+        <div class="swatch-hex">#0A2342</div>
+        <div class="swatch-use">Navigation, headers, primary buttons, authority surfaces. The anchor.</div>
+      </div>
+    </div>
+    <div class="swatch">
+      <div class="swatch-color" style="background:#00D4FF;">
+        <div class="check" style="border-color:rgba(0,50,80,0.3); color:rgba(0,50,80,0.6);">✦</div>
+      </div>
+      <div class="swatch-info">
+        <div class="swatch-name">Helm Cyan</div>
+        <div class="swatch-hex">#00D4FF</div>
+        <div class="swatch-use">Primary accent, CTAs, active states, highlights, Gold replacement throughout. The energy.</div>
+      </div>
+    </div>
+    <div class="swatch">
+      <div class="swatch-color" style="background:#FAFAF8; border-right:1px solid #E2E8EF;">
+        <div class="check" style="border-color:rgba(0,0,0,0.1); color:rgba(0,0,0,0.3);">✦</div>
+      </div>
+      <div class="swatch-info">
+        <div class="swatch-name">Warm Off-White</div>
+        <div class="swatch-hex">#FAFAF8</div>
+        <div class="swatch-use">Page background throughout. Warm, premium, not clinical. The canvas.</div>
+      </div>
+    </div>
+    <div class="swatch">
+      <div class="swatch-color" style="background:#2E4A6B;">
+        <div class="check">✦</div>
+      </div>
+      <div class="swatch-info">
+        <div class="swatch-name">Helm Slate</div>
+        <div class="swatch-hex">#2E4A6B</div>
+        <div class="swatch-use">Secondary text, supporting UI, softer navy contexts. The bridge.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-title" style="font-size:22px; margin-bottom:20px;">Extended Palette</div>
+  <div class="extended-grid">
+    <div class="mini-swatch">
+      <div class="mini-color" style="background:#E0F9FF;"></div>
+      <div class="mini-info"><div class="mini-name">Cyan Light</div><div class="mini-hex">#E0F9FF</div></div>
+    </div>
+    <div class="mini-swatch">
+      <div class="mini-color" style="background:#7AEAFF;"></div>
+      <div class="mini-info"><div class="mini-name">Cyan Mid</div><div class="mini-hex">#7AEAFF</div></div>
+    </div>
+    <div class="mini-swatch">
+      <div class="mini-color" style="background:#00C896;"></div>
+      <div class="mini-info"><div class="mini-name">Success</div><div class="mini-hex">#00C896</div></div>
+    </div>
+    <div class="mini-swatch">
+      <div class="mini-color" style="background:#FFB020;"></div>
+      <div class="mini-info"><div class="mini-name">Warning</div><div class="mini-hex">#FFB020</div></div>
+    </div>
+    <div class="mini-swatch">
+      <div class="mini-color" style="background:#FF4D4D;"></div>
+      <div class="mini-info"><div class="mini-name">Danger</div><div class="mini-hex">#FF4D4D</div></div>
+    </div>
+    <div class="mini-swatch">
+      <div class="mini-color" style="background:#E2E8EF;"></div>
+      <div class="mini-info"><div class="mini-name">Border</div><div class="mini-hex">#E2E8EF</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- TYPOGRAPHY -->
+<div class="section">
+  <div class="section-label">02 — Typography</div>
+  <div class="section-title">Type System</div>
+  <div class="type-specimen">
+    <div class="type-block">
+      <span class="type-label">DM Serif Display — Display & Headlines</span>
+      <div class="display-specimen">Command<br>Your<br><em>Marina.</em></div>
+    </div>
+    <div class="type-block">
+      <span class="type-label">DM Sans — UI Body & Labels</span>
+      <div class="body-specimen">
+        Every slip. Every dollar. Every customer. One platform built for operators who run serious businesses — from a single marina to a private equity portfolio of twenty properties.
+        <br><br>
+        <strong style="color:#0A2342;">Helm processes billing, compliance, and revenue</strong> with institutional-grade controls that Molo and Dockmaster were never designed to provide.
+      </div>
+    </div>
+    <div class="type-block" style="grid-column: 1 / -1;">
+      <span class="type-label">JetBrains Mono — Financial Figures & Code</span>
+      <div class="mono-specimen">
+        Slip Revenue &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span class="num">$  142,800.00</span><br>
+        Boat Rentals &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span class="num">$   38,450.00</span><br>
+        Fuel Sales &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span class="num">$   12,200.00</span><br>
+        <span style="color:#E2E8EF;">────────────────────────────────────────</span><br>
+        Total Revenue &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span class="num" style="color:#0A2342; font-weight:600;">$  193,450.00</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- UI COMPONENTS -->
+<div class="section">
+  <div class="section-label">03 — Components</div>
+  <div class="section-title">UI Component System</div>
+  <div class="components-grid">
+
+    <div class="component-card">
+      <h4>Buttons</h4>
+      <div class="btn-row">
+        <button class="btn btn-primary">Book Slip</button>
+        <button class="btn btn-accent">Reserve Now</button>
+        <button class="btn btn-outline">View Invoice</button>
+        <button class="btn btn-ghost">Cancel</button>
+      </div>
+    </div>
+
+    <div class="component-card">
+      <h4>Status Badges</h4>
+      <div class="badge-row">
+        <span class="badge badge-paid">Paid</span>
+        <span class="badge badge-active">Active</span>
+        <span class="badge badge-pending">Pending</span>
+        <span class="badge badge-overdue">Overdue</span>
+        <span class="badge badge-draft">Draft</span>
+      </div>
+    </div>
+
+    <div class="component-card">
+      <h4>Form Inputs</h4>
+      <div class="form-group">
+        <label class="form-label">Marina Name</label>
+        <input class="form-input active" value="Harbor View Marina" type="text">
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label class="form-label">Contact Email</label>
+        <input class="form-input" placeholder="manager@harborview.com" type="text">
+      </div>
+    </div>
+
+    <div class="component-card">
+      <h4>Data Table</h4>
+      <div class="table-wrap">
+        <table class="table-preview">
+          <thead>
+            <tr>
+              <th>Customer</th>
+              <th>Slip</th>
+              <th>Amount</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>J. Patterson</td>
+              <td>A-14</td>
+              <td class="mono">$1,850</td>
+              <td><span class="badge badge-paid" style="font-size:10px;">Paid</span></td>
+            </tr>
+            <tr>
+              <td>R. Mendoza</td>
+              <td>B-07</td>
+              <td class="mono">$2,100</td>
+              <td><span class="badge badge-overdue" style="font-size:10px;">Overdue</span></td>
+            </tr>
+            <tr>
+              <td>S. Chen</td>
+              <td>C-22</td>
+              <td class="mono">$975</td>
+              <td><span class="badge badge-pending" style="font-size:10px;">Pending</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- DASHBOARD PREVIEW -->
+<div class="section">
+  <div class="section-label">04 — Product UI</div>
+  <div class="section-title">Application Shell</div>
+
+  <div class="app-shell" style="margin-bottom:32px; min-height:320px;">
+    <div class="sidebar">
+      <div class="sidebar-logo">H<span>e</span>lm</div>
+      <div class="sidebar-section">Operations</div>
+      <div class="sidebar-item active"><span class="dot"></span>Dashboard</div>
+      <div class="sidebar-item"><span class="dot"></span>Slips</div>
+      <div class="sidebar-item"><span class="dot"></span>Customers</div>
+      <div class="sidebar-item"><span class="dot"></span>Rentals</div>
+      <div class="sidebar-section">Financial</div>
+      <div class="sidebar-item"><span class="dot"></span>Invoices</div>
+      <div class="sidebar-item"><span class="dot"></span>Payments</div>
+      <div class="sidebar-item"><span class="dot"></span>Reports</div>
+      <div class="sidebar-section">Marina</div>
+      <div class="sidebar-item"><span class="dot"></span>Dock Walk</div>
+      <div class="sidebar-item"><span class="dot"></span>POS</div>
+    </div>
+    <div class="sidebar-content">
+      <h3>Good morning, Spencer.</h3>
+      <p style="color:#00D4FF; font-size:12px; font-weight:500;">Harbor View Marina — Tuesday, March 24</p>
+      <div class="dash-grid">
+        <div class="dash-card">
+          <div class="dash-card-label">A/R Outstanding</div>
+          <div class="dash-card-value">$<span>48</span>,200</div>
+          <div class="dash-card-sub"><span class="down">↑ $3,400 overdue</span></div>
+        </div>
+        <div class="dash-card">
+          <div class="dash-card-label">Rentals This Week</div>
+          <div class="dash-card-value"><span>14</span> booked</div>
+          <div class="dash-card-sub"><span class="up">↑ 3 vs last week</span></div>
+        </div>
+        <div class="dash-card">
+          <div class="dash-card-label">Fuel Sold Today</div>
+          <div class="dash-card-value"><span>840</span> gal</div>
+          <div class="dash-card-sub">$<span style="font-family:'JetBrains Mono'">4,284</span> revenue</div>
+        </div>
+        <div class="dash-card">
+          <div class="dash-card-label">New Leads</div>
+          <div class="dash-card-value"><span>7</span> this week</div>
+          <div class="dash-card-sub"><span class="up">2 in pipeline</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MARKETING PREVIEW -->
+<div class="section">
+  <div class="section-label">05 — Marketing</div>
+  <div class="section-title">Marketing Site Direction</div>
+
+  <div class="marketing-hero">
+    <div class="mh-kicker">Marina Management Platform</div>
+    <div class="mh-title">The platform built for<br>operators who <em>mean business.</em></div>
+    <div class="mh-sub">Helm combines institutional-grade financial controls, multi-property oversight, and operational depth that Molo and Dockmaster were never designed to provide.</div>
+    <div class="mh-cta">
+      <button class="mh-btn-primary">Request a Demo</button>
+      <button class="mh-btn-secondary">See How It Works →</button>
+    </div>
+  </div>
+</div>
+
+<!-- INVOICE PREVIEW -->
+<div class="section" style="border-bottom:none;">
+  <div class="section-label">06 — Documents</div>
+  <div class="section-title">Invoice PDF Direction</div>
+
+  <div class="invoice-preview">
+    <div class="invoice-bar"></div>
+    <div class="invoice-header">
+      <div>
+        <div class="invoice-logo">H<span>e</span>lm</div>
+        <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:4px;">Harbor View Marina</div>
+        <div style="font-size:11px; color:rgba(255,255,255,0.4);">1200 Marina Blvd, Newport Beach CA</div>
+      </div>
+      <div class="invoice-meta">
+        <div class="label">Invoice Number</div>
+        <div class="value">HVM-2026-00142</div>
+        <div class="label">Due Date</div>
+        <div class="value" style="font-size:13px; color:rgba(255,255,255,0.7);">April 1, 2026</div>
+      </div>
+    </div>
+    <div class="invoice-body">
+      <div class="invoice-row">
+        <span class="desc">Monthly Slip Fee — Slip A-14 (April 2026)</span>
+        <span class="amount">$1,650.00</span>
+      </div>
+      <div class="invoice-row">
+        <span class="desc">Electricity — Metered (142 kWh × $0.14)</span>
+        <span class="amount">$19.88</span>
+      </div>
+      <div class="invoice-row">
+        <span class="desc">Pump-Out Service — March 18</span>
+        <span class="amount">$45.00</span>
+      </div>
+      <div class="invoice-row">
+        <span class="desc">Retail — Ship's Store (March charges)</span>
+        <span class="amount">$127.50</span>
+      </div>
+    </div>
+    <div class="invoice-total">
+      <span class="label">Total Due</span>
+      <span class="amount">$1,842.38</span>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
