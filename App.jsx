@@ -3,28 +3,32 @@ import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContai
   ReferenceLine, Cell, AreaChart, Area, ComposedChart } from "recharts";
 
 const C = {
-  navy:"#0F1A2E", dark:"#0A1628", mid:"#1E3A5F",
-  gold:"#D4AF37", goldDim:"rgba(212,175,55,0.50)", goldFaint:"rgba(212,175,55,0.08)",
-  white:"#F0EDE6", whDim:"rgba(240,237,230,0.55)", whFaint:"rgba(240,237,230,0.06)",
-  green:"#00C9A7", greenL:"rgba(0,201,167,0.12)",
-  red:"#FF6B6B",   redL:"rgba(255,107,107,0.12)",
-  blue:"#4EA8DE",  blueL:"rgba(78,168,222,0.12)",
-  cyan:"#22D3EE", purple:"#A78BFA", orange:"#FB923C",
-  border:"rgba(212,175,55,0.10)",
-  cardBg:"rgba(255,255,255,0.04)", cardBorder:"rgba(255,255,255,0.08)",
-  glass:"rgba(15,26,46,0.70)",
+  // Light theme
+  bg:"#F8F9FC",       surface:"#FFFFFF",   surfaceAlt:"#F1F3F8",
+  navy:"#1B2A4A",     dark:"#0F172A",      mid:"#475569",
+  text:"#1E293B",     textDim:"#64748B",   textFaint:"#94A3B8",
+  accent:"#2563EB",   accentDim:"rgba(37,99,235,0.12)", accentLight:"#DBEAFE",
+  green:"#059669",    greenL:"rgba(5,150,105,0.08)",
+  red:"#DC2626",      redL:"rgba(220,38,38,0.08)",
+  blue:"#2563EB",     blueL:"rgba(37,99,235,0.08)",
+  cyan:"#0891B2",     purple:"#7C3AED",    orange:"#EA580C",
+  gold:"#D97706",     goldDim:"rgba(217,119,6,0.5)", goldFaint:"rgba(217,119,6,0.06)",
+  border:"#E2E8F0",   borderDark:"#CBD5E1",
+  cardBg:"#FFFFFF",   cardBorder:"#E2E8F0",
+  // Legacy aliases for components that still use old names
+  white:"#1E293B", whDim:"#64748B", whFaint:"#F1F3F8",
 };
 
 // ── DEFAULT STATE ─────────────────────────────────────────────────────────────
 const DEF_ASSETS = [
-  {name:"Asset 1",price:15000000,cap:.070,growth:.07,startMonth:6 },
-  {name:"Asset 2",price:12000000,cap:.070,growth:.07,startMonth:9 },
-  {name:"Asset 3",price:18000000,cap:.075,growth:.06,startMonth:12},
-  {name:"Asset 4",price:20000000,cap:.080,growth:.05,startMonth:15},
-  {name:"Asset 5",price:16000000,cap:.082,growth:.05,startMonth:18},
-  {name:"Asset 6",price:14000000,cap:.081,growth:.05,startMonth:21},
-  {name:"Asset 7",price:14000000,cap:.075,growth:.05,startMonth:24},
-  {name:"Asset 8",price:12000000,cap:.078,growth:.05,startMonth:27},
+  {name:"Asset 1",price:15000000,cap:.070,growth:.07,startMonth:6, mgmtFee:.06},
+  {name:"Asset 2",price:12000000,cap:.070,growth:.07,startMonth:9, mgmtFee:.06},
+  {name:"Asset 3",price:18000000,cap:.075,growth:.06,startMonth:12,mgmtFee:.06},
+  {name:"Asset 4",price:20000000,cap:.080,growth:.05,startMonth:15,mgmtFee:.06},
+  {name:"Asset 5",price:16000000,cap:.082,growth:.05,startMonth:18,mgmtFee:.06},
+  {name:"Asset 6",price:14000000,cap:.081,growth:.05,startMonth:21,mgmtFee:.06},
+  {name:"Asset 7",price:14000000,cap:.075,growth:.05,startMonth:24,mgmtFee:.06},
+  {name:"Asset 8",price:12000000,cap:.078,growth:.05,startMonth:27,mgmtFee:.06},
 ];
 
 const DEF_HIRES = [
@@ -144,15 +148,17 @@ function run(a){
       total:sal+ben+fix+oneTimeHit,partnerSalCost:partnerSal*(1+benefitsRate)};
   });
 
-  // Asset calcs
+  // Asset calcs — Bluewater mgmt fee flows as asset-level opex
   const assetR=assets.map(asset=>{
+    const mf=asset.mgmtFee||0;  // Bluewater management fee (% of gross NOI)
     const eq=asset.price*(1-debtPct),debt=asset.price*debtPct;
     const annDS=pmt(interestRate,amortYears,debt);
     const noi=Array.from({length:fundTerm+1},(_,y)=>
       y===0?0:asset.price*asset.cap*Math.pow(1+asset.growth,y-1));
+    const mgmtFeeAnn=noi.map(n=>n*mf);  // annual mgmt fee per year
     const ecf=noi.map((n,y)=>{
       if(y===0)return -eq;
-      return n-annDS-n*pmFee;
+      return n-annDS-n*mf;  // NOI - debt service - Bluewater mgmt fee
     });
     const exitNOI=noi[fundTerm];
     const exitVal=exitNOI/exitCapRate;
@@ -161,7 +167,8 @@ function run(a){
     ecf[fundTerm]+=saleNet;
     const eqIRR=irr(ecf);
     const moic=(saleNet+ecf.slice(1,fundTerm).reduce((s,v)=>s+v,0)+eq)/eq;
-    return{...asset,eq,debt,annDS,noi,saleNet,exitVal,lb,irr:eqIRR,moic};
+    const totMgmtFee=mgmtFeeAnn.reduce((s,v)=>s+v,0);
+    return{...asset,eq,debt,annDS,noi,mgmtFeeAnn,totMgmtFee,saleNet,exitVal,lb,irr:eqIRR,moic};
   });
 
   // Monthly portfolio
@@ -170,19 +177,21 @@ function run(a){
 
   const monthly=Array.from({length:MO},(_,i)=>{
     const mo=i+1;
-    let noi=0,invEq=0,ds=0;
+    let noi=0,invEq=0,ds=0,mgmtF=0;
     assets.forEach(x=>{
       if(mo<x.startMonth)return;
       const yrs=(mo-x.startMonth)/12;
-      noi+=x.price*x.cap*Math.pow(1+x.growth,yrs)/12;
+      const moNOI=x.price*x.cap*Math.pow(1+x.growth,yrs)/12;
+      noi+=moNOI;
+      mgmtF+=moNOI*(x.mgmtFee||0);  // Bluewater mgmt fee on gross NOI
       invEq+=x.price*(1-debtPct);
       ds+=Math.abs(pmt(interestRate,amortYears,x.price*debtPct))/12;
     });
     const ga=gaMonthly[i].total;
-    const netOpCF=noi-ds-ga;  // G&A flows directly as fund overhead
+    const netOpCF=noi-ds-mgmtF-ga;  // NOI - debt svc - mgmt fee - G&A overhead
     const lpCall=assets.reduce((s,x)=>x.startMonth===mo?s+x.price*(1-debtPct)*(1-gpPct):s,0);
     const gpCall=assets.reduce((s,x)=>x.startMonth===mo?s+x.price*(1-debtPct)*gpPct:s,0);
-    return{mo,noi,invEq,ds,netOpCF,lpCall,gpCall,ga};
+    return{mo,noi,invEq,ds,mgmtF,netOpCF,lpCall,gpCall,ga};
   });
 
   // Totals
@@ -341,13 +350,14 @@ const f={
 
 // ── UI ATOMS ──────────────────────────────────────────────────────────────────
 const KPI=({label,value,sub,gold})=>(
-  <div style={{background:gold?C.gold:C.whFaint,border:`1px solid ${gold?C.gold:C.border}`,
-    borderRadius:4,padding:"15px 17px",flex:1,minWidth:120}}>
-    <div style={{fontSize:9,letterSpacing:"0.11em",textTransform:"uppercase",
-      color:gold?C.navy:C.goldDim,marginBottom:5}}>{label}</div>
-    <div style={{fontSize:21,fontWeight:700,color:gold?C.navy:C.white,
-      fontFamily:"'Playfair Display',serif",lineHeight:1.1}}>{value}</div>
-    {sub&&<div style={{fontSize:9,color:gold?"rgba(31,56,100,.5)":C.goldDim,marginTop:3}}>{sub}</div>}
+  <div style={{background:gold?C.accent:C.surface,border:`1px solid ${gold?C.accent:C.border}`,
+    borderRadius:8,padding:"16px 18px",flex:1,minWidth:120,
+    boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+    <div style={{fontSize:10,letterSpacing:"0.08em",textTransform:"uppercase",
+      color:gold?"rgba(255,255,255,.7)":C.textDim,marginBottom:5,fontWeight:600}}>{label}</div>
+    <div style={{fontSize:22,fontWeight:700,color:gold?"#FFFFFF":C.text,
+      fontFamily:"'Inter',sans-serif",lineHeight:1.1}}>{value}</div>
+    {sub&&<div style={{fontSize:9,color:gold?"rgba(255,255,255,.5)":C.textFaint,marginTop:3}}>{sub}</div>}
   </div>
 );
 
@@ -356,67 +366,69 @@ const Sli=({label,value,min,max,step,disp,onChange,sub})=>{
   return(
     <div style={{marginBottom:15}}>
       <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-        <span style={{fontSize:9,color:C.whDim,textTransform:"uppercase",letterSpacing:"0.07em"}}>{label}</span>
-        <span style={{fontSize:11,color:C.gold,fontWeight:600}}>{disp(value)}</span>
+        <span style={{fontSize:9,color:C.textDim,textTransform:"uppercase",letterSpacing:"0.07em",fontWeight:600}}>{label}</span>
+        <span style={{fontSize:11,color:C.accent,fontWeight:700}}>{disp(value)}</span>
       </div>
-      <div style={{position:"relative",height:3,background:"rgba(255,255,255,0.07)",borderRadius:2}}>
-        <div style={{position:"absolute",left:0,width:`${p}%`,height:"100%",background:C.gold,borderRadius:2}}/>
+      <div style={{position:"relative",height:4,background:C.border,borderRadius:3}}>
+        <div style={{position:"absolute",left:0,width:`${p}%`,height:"100%",background:C.accent,borderRadius:3}}/>
         <input type="range" min={min} max={max} step={step} value={value}
           onChange={e=>onChange(Number(e.target.value))}
-          style={{position:"absolute",top:-7,left:0,width:"100%",height:17,opacity:0,cursor:"pointer",margin:0,padding:0}}/>
+          style={{position:"absolute",top:-7,left:0,width:"100%",height:18,opacity:0,cursor:"pointer",margin:0,padding:0}}/>
       </div>
-      {sub&&<div style={{fontSize:9,color:"rgba(201,168,76,.3)",marginTop:2}}>{sub}</div>}
+      {sub&&<div style={{fontSize:9,color:C.textFaint,marginTop:2}}>{sub}</div>}
     </div>
   );
 };
 
-// Compact colored slider for tables — painted track, no browser default styling
-const MiniSlider=({value,min,max,step,onChange,color=C.gold,width=80})=>{
+const MiniSlider=({value,min,max,step,onChange,color=C.accent,width=80})=>{
   const pct=Math.min(100,Math.max(0,((value-min)/(max-min))*100));
   return(
-    <div style={{position:"relative",height:3,background:"rgba(255,255,255,0.07)",
-      borderRadius:2,width,flexShrink:0}}>
+    <div style={{position:"relative",height:4,background:C.border,
+      borderRadius:3,width,flexShrink:0}}>
       <div style={{position:"absolute",left:0,width:`${pct}%`,height:"100%",
-        background:color,borderRadius:2,pointerEvents:"none"}}/>
-      <div style={{position:"absolute",left:`calc(${pct}% - 6px)`,top:-4.5,
+        background:color,borderRadius:3,pointerEvents:"none"}}/>
+      <div style={{position:"absolute",left:`calc(${pct}% - 6px)`,top:-4,
         width:12,height:12,borderRadius:"50%",background:color,
-        pointerEvents:"none",boxShadow:"0 0 4px rgba(0,0,0,0.4)"}}/>
+        pointerEvents:"none",boxShadow:"0 1px 3px rgba(0,0,0,0.2)"}}/>
       <input type="range" min={min} max={max} step={step} value={value}
         onChange={e=>onChange(Number(e.target.value))}
-        style={{position:"absolute",top:-7,left:0,width:"100%",height:17,
+        style={{position:"absolute",top:-7,left:0,width:"100%",height:18,
           opacity:0,cursor:"pointer",margin:0,padding:0}}/>
     </div>
   );
 };
 
 const SHdr=({t})=>(
-  <div style={{fontSize:9,letterSpacing:"0.15em",textTransform:"uppercase",color:C.gold,
+  <div style={{fontSize:9,letterSpacing:"0.12em",textTransform:"uppercase",color:C.accent,
     fontWeight:700,marginBottom:9,paddingBottom:5,borderBottom:`1px solid ${C.border}`}}>{t}</div>
 );
 
 const PHdr=({title,sub})=>(
-  <div style={{marginBottom:20}}>
-    <div style={{fontSize:19,fontWeight:700,color:C.white,fontFamily:"'Playfair Display',serif",marginBottom:2}}>{title}</div>
-    {sub&&<div style={{fontSize:11,color:C.goldDim}}>{sub}</div>}
+  <div style={{marginBottom:22}}>
+    <div style={{fontSize:22,fontWeight:800,color:C.text,fontFamily:"'Inter',sans-serif",marginBottom:3,
+      letterSpacing:"-0.02em"}}>{title}</div>
+    {sub&&<div style={{fontSize:12,color:C.textDim}}>{sub}</div>}
   </div>
 );
 
 const Card=({children,style={}})=>(
-  <div style={{background:C.whFaint,border:`1px solid ${C.border}`,borderRadius:6,padding:"15px 18px",...style}}>{children}</div>
+  <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"18px 20px",
+    boxShadow:"0 1px 3px rgba(0,0,0,0.04)",...style}}>{children}</div>
 );
 
 const CT=({c})=>(
-  <div style={{fontSize:9,color:C.gold,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:11}}>{c}</div>
+  <div style={{fontSize:10,color:C.textDim,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:12,fontWeight:700}}>{c}</div>
 );
 
 const TT=({active,payload,label})=>{
   if(!active||!payload?.length)return null;
   return(
-    <div style={{background:"rgba(13,27,42,.97)",border:`1px solid ${C.gold}`,
-      borderRadius:4,padding:"9px 13px",fontSize:11,fontFamily:"'DM Sans',sans-serif"}}>
-      {label&&<div style={{color:C.gold,marginBottom:4,fontWeight:600}}>{label}</div>}
+    <div style={{background:"#FFFFFF",border:`1px solid ${C.border}`,
+      borderRadius:8,padding:"10px 14px",fontSize:11,fontFamily:"'Inter',sans-serif",
+      boxShadow:"0 4px 12px rgba(0,0,0,0.1)"}}>
+      {label&&<div style={{color:C.text,marginBottom:4,fontWeight:700}}>{label}</div>}
       {payload.map((p,i)=>(
-        <div key={i} style={{color:p.color||C.white}}>
+        <div key={i} style={{color:p.color||C.text}}>
           {p.name}: {typeof p.value==="number"?f.$(p.value):p.value}
         </div>
       ))}
@@ -425,7 +437,7 @@ const TT=({active,payload,label})=>{
 };
 
 // ── TABS ──────────────────────────────────────────────────────────────────────
-const TABS=["Overview","Assets","Waterfall","Fund CF","G&A Model","GP Partners","Sensitivity"];
+const TABS=["Overview","Deals","Waterfall","Fund CF","G&A Model","GP Partners","Sensitivity"];
 
 // ── APP ───────────────────────────────────────────────────────────────────────
 // ── SCENARIO HELPERS ────────────────────────────────────────────────────────
@@ -479,8 +491,8 @@ export default function Portal(){
 
   const setAsset=useCallback((i,k,v)=>setA(p=>({...p,assets:p.assets.map((x,j)=>j===i?{...x,[k]:v}:x)})),[]);
   const addAsset=useCallback(()=>setA(p=>({...p,assets:[...p.assets,{
-    name:"Asset "+(p.assets.length+1),price:12000000,cap:.075,growth:.05,
-    startMonth:Math.min(36,(p.assets.length+1)*3+3)}]})),[]);
+    name:"Deal "+(p.assets.length+1),price:12000000,cap:.075,growth:.05,
+    startMonth:Math.min(36,(p.assets.length+1)*3+3),mgmtFee:.06}]})),[]);
   const removeAsset=useCallback((i)=>setA(p=>({...p,assets:p.assets.filter((_,j)=>j!==i)})),[]);
 
   const setHire=useCallback((i,k,v)=>setA(p=>({...p,hires:p.hires.map((x,j)=>j===i?{...x,[k]:v}:x)})),[]);
@@ -512,45 +524,40 @@ export default function Portal(){
   const m=useMemo(()=>{try{return run(a);}catch(e){console.error(e);return null;}},[a]);
 
   return(
-    <div style={{minHeight:"100vh",background:C.dark,fontFamily:"'DM Sans',sans-serif",color:C.white}}>
+    <div style={{minHeight:"100vh",background:C.bg,fontFamily:"'Inter',sans-serif",color:C.text}}>
       {/* NAV */}
-      <div style={{background:"rgba(13,27,42,.97)",backdropFilter:"blur(12px)",
-        borderBottom:`1px solid rgba(201,168,76,.2)`,padding:"0 24px",
+      <div style={{background:"#FFFFFF",borderBottom:`1px solid ${C.border}`,padding:"0 24px",
         display:"flex",alignItems:"center",justifyContent:"space-between",
-        height:58,position:"sticky",top:0,zIndex:100,gap:16}}>
+        height:56,position:"sticky",top:0,zIndex:100,gap:16,
+        boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
 
         {/* Logo */}
         <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
-          <div style={{width:32,height:32,background:C.gold,borderRadius:4,
+          <div style={{width:32,height:32,background:C.accent,borderRadius:8,
             display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-            <span style={{fontSize:12,fontWeight:900,color:C.navy,fontFamily:"'Playfair Display',serif"}}>F1</span>
+            <span style={{fontSize:12,fontWeight:900,color:"#FFFFFF",fontFamily:"'Inter',sans-serif"}}>F1</span>
           </div>
           <div>
-            <div style={{fontSize:14,fontWeight:800,color:C.white,letterSpacing:"0.03em",lineHeight:1.2}}>GP Fund I</div>
-            <div style={{fontSize:10,color:C.gold,letterSpacing:"0.08em",textTransform:"uppercase",lineHeight:1}}>LP Model</div>
+            <div style={{fontSize:14,fontWeight:800,color:C.text,letterSpacing:"-0.01em",lineHeight:1.2}}>GP Fund I</div>
+            <div style={{fontSize:10,color:C.textDim,letterSpacing:"0.06em",textTransform:"uppercase",lineHeight:1}}>LP Model</div>
           </div>
         </div>
 
         {/* Tabs */}
-        <div style={{display:"flex",gap:1,flex:1,justifyContent:"center",overflowX:"auto",
+        <div style={{display:"flex",gap:0,flex:1,justifyContent:"center",overflowX:"auto",
           scrollbarWidth:"none",msOverflowStyle:"none"}}>
           {TABS.map(t=>{
-            const icons={"Overview":"◈","Assets":"⬡","Waterfall":"▽","Fund CF":"⟳","G&A Model":"≡","GP Partners":"◉","Sensitivity":"⊞"};
             const active=tab===t;
             return(
               <button key={t} onClick={()=>setTab(t)} style={{
-                display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
-                gap:2,padding:"6px 14px",cursor:"pointer",border:"none",
-                borderBottom:active?`2px solid ${C.gold}`:"2px solid transparent",
+                display:"flex",alignItems:"center",justifyContent:"center",
+                padding:"8px 16px",cursor:"pointer",border:"none",
+                borderBottom:active?`2px solid ${C.accent}`:"2px solid transparent",
                 borderTop:"2px solid transparent",
-                background:active?"rgba(201,168,76,.1)":"transparent",
-                transition:"background .15s",
+                background:"transparent",
                 minWidth:72,whiteSpace:"nowrap",flexShrink:0}}>
-                <span style={{fontSize:15,color:active?C.gold:"rgba(201,168,76,.5)",lineHeight:1}}>
-                  {icons[t]||"·"}
-                </span>
-                <span style={{fontSize:11,fontWeight:active?800:600,letterSpacing:"0.05em",
-                  textTransform:"uppercase",color:active?C.gold:C.white,lineHeight:1}}>
+                <span style={{fontSize:12,fontWeight:active?700:500,letterSpacing:"0.01em",
+                  color:active?C.accent:C.textDim,lineHeight:1}}>
                   {t}
                 </span>
               </button>
@@ -559,67 +566,67 @@ export default function Portal(){
         </div>
 
         {/* Badge */}
-        <div style={{flexShrink:0,fontSize:8,color:"rgba(201,168,76,.3)",
-          letterSpacing:"0.08em",textTransform:"uppercase",textAlign:"right",lineHeight:1.6}}>
+        <div style={{flexShrink:0,fontSize:9,color:C.textFaint,
+          letterSpacing:"0.06em",textTransform:"uppercase",textAlign:"right",lineHeight:1.6}}>
           CONFIDENTIAL<br/>DRAFT
         </div>
       </div>
 
       {/* SCENARIO BAR */}
-      <div style={{background:"rgba(201,168,76,.07)",borderBottom:"1px solid rgba(201,168,76,.15)",
-        padding:"0 24px",display:"flex",alignItems:"center",gap:8,height:38,position:"sticky",top:58,zIndex:99}}>
-        <span style={{fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".1em",flexShrink:0}}>Scenario:</span>
+      <div style={{background:C.surface,borderBottom:`1px solid ${C.border}`,
+        padding:"0 24px",display:"flex",alignItems:"center",gap:8,height:38,position:"sticky",top:56,zIndex:99}}>
+        <span style={{fontSize:9,color:C.textFaint,textTransform:"uppercase",letterSpacing:".1em",flexShrink:0,fontWeight:600}}>Scenario:</span>
         {editingName
           ? <input autoFocus value={scenName} onChange={e=>setScenName(e.target.value)}
               onBlur={()=>setEditingName(false)} onKeyDown={e=>e.key==="Enter"&&setEditingName(false)}
-              style={{background:"transparent",border:"none",borderBottom:`1px solid ${C.gold}`,
-                color:C.white,fontSize:11,fontWeight:700,outline:"none",width:140,padding:"1px 0"}}/>
-          : <span onClick={()=>setEditingName(true)} style={{fontSize:11,fontWeight:700,color:C.white,
-              cursor:"pointer",borderBottom:"1px dashed rgba(201,168,76,.3)",paddingBottom:1,minWidth:80}}>
+              style={{background:"transparent",border:"none",borderBottom:`1px solid ${C.accent}`,
+                color:C.text,fontSize:12,fontWeight:700,outline:"none",width:140,padding:"1px 0"}}/>
+          : <span onClick={()=>setEditingName(true)} style={{fontSize:12,fontWeight:700,color:C.text,
+              cursor:"pointer",borderBottom:`1px dashed ${C.borderDark}`,paddingBottom:1,minWidth:80}}>
               {scenName}
             </span>
         }
-        <button onClick={saveScenario} style={{background:C.gold,color:C.navy,border:"none",
-          borderRadius:3,padding:"3px 10px",fontSize:9,fontWeight:800,letterSpacing:".07em",
+        <button onClick={saveScenario} style={{background:C.accent,color:"#FFFFFF",border:"none",
+          borderRadius:6,padding:"4px 12px",fontSize:10,fontWeight:700,letterSpacing:".04em",
           textTransform:"uppercase",cursor:"pointer",flexShrink:0}}>Save</button>
         <div style={{position:"relative"}}>
           <button onClick={()=>setShowScen(v=>!v)} style={{background:"transparent",
-            color:C.goldDim,border:`1px solid rgba(201,168,76,.25)`,borderRadius:3,
-            padding:"3px 10px",fontSize:9,fontWeight:700,letterSpacing:".07em",
+            color:C.textDim,border:`1px solid ${C.border}`,borderRadius:6,
+            padding:"4px 12px",fontSize:10,fontWeight:600,letterSpacing:".04em",
             textTransform:"uppercase",cursor:"pointer",flexShrink:0}}>
             Load ▾ {Object.keys(scenarios).length>0&&`(${Object.keys(scenarios).length})`}
           </button>
           {showScen&&(
             <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,
-              background:C.dark,border:`1px solid ${C.border}`,borderRadius:5,
-              zIndex:200,minWidth:280,boxShadow:"0 8px 24px rgba(0,0,0,0.5)"}}>
+              background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,
+              zIndex:200,minWidth:280,boxShadow:"0 8px 24px rgba(0,0,0,0.08)"}}>
               {Object.keys(scenarios).length===0
-                ? <div style={{padding:"12px 14px",color:C.whDim,fontSize:10}}>No saved scenarios yet.</div>
+                ? <div style={{padding:"12px 14px",color:C.textDim,fontSize:11}}>No saved scenarios yet.</div>
                 : Object.entries(scenarios).map(([name,s])=>(
                     <div key={name} style={{display:"flex",alignItems:"center",gap:6,
-                      padding:"8px 12px",borderBottom:"1px solid rgba(255,255,255,.05)",
-                      background:name===scenName?"rgba(201,168,76,.08)":"transparent"}}>
+                      padding:"8px 12px",borderBottom:`1px solid ${C.border}`,
+                      background:name===scenName?C.accentDim:"transparent"}}>
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:11,fontWeight:600,color:name===scenName?C.gold:C.white,
+                        <div style={{fontSize:11,fontWeight:600,color:name===scenName?C.accent:C.text,
                           overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</div>
-                        <div style={{fontSize:8,color:C.whDim}}>{s._savedAt||""}</div>
+                        <div style={{fontSize:9,color:C.textFaint}}>{s._savedAt||""}</div>
                       </div>
                       <button onClick={()=>loadScenario(name)}
-                        style={{background:"rgba(201,168,76,.15)",color:C.gold,border:"none",
-                          borderRadius:3,padding:"2px 8px",fontSize:9,cursor:"pointer",flexShrink:0}}>Load</button>
+                        style={{background:C.accentDim,color:C.accent,border:"none",
+                          borderRadius:4,padding:"3px 8px",fontSize:9,fontWeight:600,cursor:"pointer",flexShrink:0}}>Load</button>
                       <button onClick={()=>duplicateScenario(name)}
-                        style={{background:"rgba(41,128,185,.15)",color:"#5DADE2",border:"none",
-                          borderRadius:3,padding:"2px 8px",fontSize:9,cursor:"pointer",flexShrink:0}}>Copy</button>
+                        style={{background:C.blueL,color:C.blue,border:"none",
+                          borderRadius:4,padding:"3px 8px",fontSize:9,fontWeight:600,cursor:"pointer",flexShrink:0}}>Copy</button>
                       <button onClick={()=>deleteScenario(name)}
-                        style={{background:"rgba(192,57,43,.15)",color:C.red,border:"none",
-                          borderRadius:3,padding:"2px 8px",fontSize:9,cursor:"pointer",flexShrink:0}}>✕</button>
+                        style={{background:C.redL,color:C.red,border:"none",
+                          borderRadius:4,padding:"3px 8px",fontSize:9,fontWeight:600,cursor:"pointer",flexShrink:0}}>✕</button>
                     </div>
                   ))
               }
               <div style={{padding:"8px 12px",borderTop:`1px solid ${C.border}`}}>
                 <button onClick={()=>{resetToDefault&&setA(DEFAULT);setScenName("Base Case");setShowScen(false);}}
-                  style={{background:"transparent",color:C.whDim,border:`1px solid rgba(255,255,255,.1)`,
-                    borderRadius:3,padding:"3px 10px",fontSize:9,cursor:"pointer",width:"100%"}}>
+                  style={{background:"transparent",color:C.textDim,border:`1px solid ${C.border}`,
+                    borderRadius:6,padding:"4px 10px",fontSize:10,cursor:"pointer",width:"100%"}}>
                   Reset to Defaults
                 </button>
               </div>
@@ -631,10 +638,10 @@ export default function Portal(){
           <div style={{display:"flex",gap:4,overflowX:"auto",scrollbarWidth:"none"}}>
             {Object.keys(scenarios).map(name=>(
               <button key={name} onClick={()=>loadScenario(name)} style={{
-                background:name===scenName?"rgba(201,168,76,.2)":"rgba(255,255,255,.04)",
-                color:name===scenName?C.gold:C.whDim,
-                border:`1px solid ${name===scenName?"rgba(201,168,76,.4)":"rgba(255,255,255,.08)"}`,
-                borderRadius:3,padding:"2px 10px",fontSize:9,fontWeight:600,
+                background:name===scenName?C.accentDim:C.surfaceAlt,
+                color:name===scenName?C.accent:C.textDim,
+                border:`1px solid ${name===scenName?C.accent:C.border}`,
+                borderRadius:6,padding:"3px 10px",fontSize:10,fontWeight:600,
                 cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
                 {name}
               </button>
@@ -645,7 +652,7 @@ export default function Portal(){
 
       <div style={{display:"flex"}}>
         {/* SIDEBAR */}
-        <div style={{width:262,flexShrink:0,background:"rgba(31,56,100,.1)",
+        <div style={{width:262,flexShrink:0,background:C.surface,
           borderRight:`1px solid ${C.border}`,padding:"18px 14px",
           height:"calc(100vh - 52px)",overflowY:"auto",position:"sticky",top:52}}>
 
@@ -661,36 +668,36 @@ export default function Portal(){
           <Sli label="Preferred Ret." value={a.prefReturn}   min={.05}  max={.10}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("prefReturn",v)}/>
           {/* Pref type toggle */}
           <div style={{marginBottom:12}}>
-            <div style={{fontSize:9,color:C.whDim,textTransform:"uppercase",letterSpacing:".07em",marginBottom:5}}>Pref Type</div>
+            <div style={{fontSize:9,color:C.textDim,textTransform:"uppercase",letterSpacing:".07em",marginBottom:5,fontWeight:600}}>Pref Type</div>
             <div style={{display:"flex",gap:4}}>
               {[["Simple","false"],["Compound","true"]].map(([lbl,val])=>{
                 const active=String(a.compoundPref)===val;
                 return(<button key={lbl} onClick={()=>set("compoundPref",val==="true")}
-                  style={{flex:1,padding:"4px 0",fontSize:9,fontWeight:700,letterSpacing:".06em",
-                    textTransform:"uppercase",cursor:"pointer",borderRadius:3,
-                    background:active?C.gold:"transparent",color:active?C.navy:C.goldDim,
-                    border:`1px solid ${active?C.gold:"rgba(201,168,76,.2)"}`}}>{lbl}</button>);
+                  style={{flex:1,padding:"5px 0",fontSize:9,fontWeight:700,letterSpacing:".06em",
+                    textTransform:"uppercase",cursor:"pointer",borderRadius:6,
+                    background:active?C.accent:"transparent",color:active?"#FFFFFF":C.textDim,
+                    border:`1px solid ${active?C.accent:C.border}`}}>{lbl}</button>);
               })}
             </div>
-            <div style={{fontSize:8,color:"rgba(201,168,76,.3)",marginTop:3}}>
-              {a.compoundPref?"Compound: capital*(1+r)^n — institutional standard":"Simple: capital*rate*years"}
+            <div style={{fontSize:8,color:C.textFaint,marginTop:3}}>
+              {a.compoundPref?"Compound: capital*(1+r)^n":"Simple: capital*rate*years"}
             </div>
           </div>
           {/* Catch-up toggle */}
           <div style={{marginBottom:12}}>
-            <div style={{fontSize:9,color:C.whDim,textTransform:"uppercase",letterSpacing:".07em",marginBottom:5}}>GP Catch-Up</div>
+            <div style={{fontSize:9,color:C.textDim,textTransform:"uppercase",letterSpacing:".07em",marginBottom:5,fontWeight:600}}>GP Catch-Up</div>
             <div style={{display:"flex",gap:4}}>
               {[["None","false"],["Full","true"]].map(([lbl,val])=>{
                 const active=String(a.catchUp)===val;
                 return(<button key={lbl} onClick={()=>set("catchUp",val==="true")}
-                  style={{flex:1,padding:"4px 0",fontSize:9,fontWeight:700,letterSpacing:".06em",
-                    textTransform:"uppercase",cursor:"pointer",borderRadius:3,
-                    background:active?C.gold:"transparent",color:active?C.navy:C.goldDim,
-                    border:`1px solid ${active?C.gold:"rgba(201,168,76,.2)"}`}}>{lbl}</button>);
+                  style={{flex:1,padding:"5px 0",fontSize:9,fontWeight:700,letterSpacing:".06em",
+                    textTransform:"uppercase",cursor:"pointer",borderRadius:6,
+                    background:active?C.accent:"transparent",color:active?"#FFFFFF":C.textDim,
+                    border:`1px solid ${active?C.accent:C.border}`}}>{lbl}</button>);
               })}
             </div>
-            <div style={{fontSize:8,color:"rgba(201,168,76,.3)",marginTop:3}}>
-              {a.catchUp?"GP takes 100% above pref until carry% of total, then splits":"GP takes carry% of all proceeds above pref"}
+            <div style={{fontSize:8,color:C.textFaint,marginTop:3}}>
+              {a.catchUp?"GP catches up to carry% then splits":"GP takes carry% above pref"}
             </div>
           </div>
           <Sli label="GP Commitment"  value={a.gpPct}        min={.01}  max={.05}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("gpPct",v)}/>
@@ -703,23 +710,23 @@ export default function Portal(){
           <Sli label="# of Partners"  value={a.partners}     min={1}    max={5}    step={1}    disp={v=>`${v}`}                   onChange={v=>set("partners",v)}/>
 
           {m&&(
-            <div style={{marginTop:10,padding:"10px 12px",background:C.goldFaint,
-              borderRadius:4,border:`1px solid ${C.border}`}}>
-              <div style={{fontSize:9,color:C.gold,textTransform:"uppercase",letterSpacing:".1em",marginBottom:5}}>Live Output</div>
-              <div style={{fontSize:10,color:C.whDim,lineHeight:1.8}}>
+            <div style={{marginTop:10,padding:"12px",background:C.surfaceAlt,
+              borderRadius:8,border:`1px solid ${C.border}`}}>
+              <div style={{fontSize:9,color:C.accent,textTransform:"uppercase",letterSpacing:".1em",marginBottom:5,fontWeight:700}}>Live Output</div>
+              <div style={{fontSize:11,color:C.textDim,lineHeight:1.9}}>
                 <div>LP IRR: <span style={{color:m.lpIRR>a.prefReturn?C.green:C.red,fontWeight:700}}>{f.p(m.lpIRR)}</span></div>
-                <div>LP MOIC: <span style={{color:C.gold}}>{f.x(m.lpMOIC)}</span></div>
-                <div>GP Promote: <span style={{color:C.gold}}>{f.$(m.gpPromote)}</span></div>
-                <div>GP Net 7yr: <span style={{color:m.gpNetTotal>0?C.green:C.red}}>{f.$(m.gpNetTotal)}</span></div>
+                <div>LP MOIC: <span style={{color:C.accent,fontWeight:700}}>{f.x(m.lpMOIC)}</span></div>
+                <div>GP Promote: <span style={{color:C.accent,fontWeight:700}}>{f.$(m.gpPromote)}</span></div>
+                <div>GP Net 7yr: <span style={{color:m.gpNetTotal>0?C.green:C.red,fontWeight:700}}>{f.$(m.gpNetTotal)}</span></div>
               </div>
             </div>
           )}
         </div>
 
         {/* MAIN CONTENT */}
-        <div style={{flex:1,padding:"24px 28px",overflowY:"auto",minHeight:"calc(100vh - 52px)"}}>
+        <div style={{flex:1,padding:"24px 32px",overflowY:"auto",minHeight:"calc(100vh - 52px)",background:C.bg}}>
           {m&&tab==="Overview"    && <TabOverview    m={m} a={a}/>}
-          {m&&tab==="Assets"      && <TabAssets      m={m} a={a} setAsset={setAsset} addAsset={addAsset} removeAsset={removeAsset}/>}
+          {m&&tab==="Deals"       && <TabAssets      m={m} a={a} setAsset={setAsset} addAsset={addAsset} removeAsset={removeAsset}/>}
           {m&&tab==="Waterfall"   && <TabWaterfall   m={m} a={a}/>}
           {m&&tab==="Fund CF"     && <TabFundCF      m={m} a={a}/>}
           {m&&tab==="G&A Model"   && <TabGA          m={m} a={a} setHire={setHire} addHire={addHire} removeHire={removeHire} setOhead={setOhead} addOhead={addOhead} removeOhead={removeOhead} setPartnerSal={setPartnerSal} setOneTime={setOneTime} addOneTime={addOneTime} removeOneTime={removeOneTime}/>}
@@ -806,7 +813,7 @@ function TabOverview({m,a}){
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ASSETS
+// DEALS
 // ═══════════════════════════════════════════════════════════════════════════════
 function TabAssets({m,a,setAsset,addAsset,removeAsset}){
   const [sel, setSel] = useState(0);
@@ -816,21 +823,23 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
 
   // Per-asset chart data
   const noiData = r ? r.noi.map((n,y)=>({year:`Y${y}`,noi:Math.round(n)})).slice(1) : [];
+  const mf = asset?.mgmtFee||0;
   const cfData = r ? r.noi.slice(1).map((n,y)=>{
     const ds = r.annDS;
-    const ncf = n - ds;
-    return {year:`Y${y+1}`, noi:Math.round(n), debtService:Math.round(-ds), netCF:Math.round(ncf)};
+    const mgmt = n * mf;
+    const ncf = n - ds - mgmt;
+    return {year:`Y${y+1}`, noi:Math.round(n), debtService:Math.round(-ds), mgmtFee:Math.round(-mgmt), netCF:Math.round(ncf)};
   }) : [];
 
-  // Asset colors for the sidebar
-  const assetColors = ["#22D3EE","#A78BFA","#FB923C","#00C9A7","#F472B6","#FBBF24","#34D399","#818CF8"];
+  const dealColors = ["#2563EB","#7C3AED","#EA580C","#059669","#DB2777","#D97706","#0891B2","#4F46E5"];
 
-  // Slider field definitions
+  // Slider field definitions — includes Bluewater mgmt fee
   const fields = [
-    {k:"price",     l:"Acquisition Price",  min:5e6, max:50e6,step:5e5, d:v=>`$${(v/1e6).toFixed(1)}M`, color:"#22D3EE"},
-    {k:"cap",       l:"Going-In Cap Rate",  min:.05, max:.12, step:.005,d:v=>`${(v*100).toFixed(1)}%`,   color:"#A78BFA"},
-    {k:"growth",    l:"NOI Growth Rate",    min:.02, max:.12, step:.005,d:v=>`${(v*100).toFixed(1)}%`,   color:"#00C9A7"},
-    {k:"startMonth",l:"Close Month",        min:3,   max:36,  step:3,   d:v=>`Month ${v}`,               color:"#FB923C"},
+    {k:"price",     l:"Acquisition Price",     min:5e6, max:50e6,step:5e5, d:v=>`$${(v/1e6).toFixed(1)}M`, color:C.accent},
+    {k:"cap",       l:"Going-In Cap Rate",     min:.05, max:.12, step:.005,d:v=>`${(v*100).toFixed(1)}%`,   color:C.purple},
+    {k:"growth",    l:"NOI Growth Rate",       min:.02, max:.12, step:.005,d:v=>`${(v*100).toFixed(1)}%`,   color:C.green},
+    {k:"startMonth",l:"Close Month",           min:3,   max:36,  step:3,   d:v=>`Month ${v}`,               color:C.orange},
+    {k:"mgmtFee",  l:"Bluewater Mgmt Fee",    min:0,   max:.10, step:.005,d:v=>`${(v*100).toFixed(1)}%`,   color:C.cyan},
   ];
 
   // Portfolio totals
@@ -840,52 +849,44 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
   const totDebt = a.assets.reduce((s,x)=>s+x.price*a.debtPct,0);
   const avgIRR = m.assetR.reduce((s,x)=>s+(x.irr||0),0)/m.assetR.length;
   const avgMOIC = m.assetR.reduce((s,x)=>s+(x.moic||0),0)/m.assetR.length;
+  const totMgmtFee = m.assetR.reduce((s,x)=>s+(x.totMgmtFee||0),0);
 
   return(
     <div>
-      {/* Header */}
-      <div style={{marginBottom:24}}>
-        <div style={{fontSize:22,fontWeight:700,color:C.white,fontFamily:"'Playfair Display',serif",
-          marginBottom:4,letterSpacing:"-0.02em"}}>Asset Underwriting</div>
-        <div style={{fontSize:12,color:C.whDim}}>
-          {a.assets.length} assets · {f.$(totVal)} portfolio · Click any asset to drill in
-        </div>
-      </div>
+      <PHdr title="Deal Underwriting" sub={`${a.assets.length} deals · ${f.$(totVal)} portfolio · ${f.$(totMgmtFee)} Bluewater mgmt fees (7yr)`}/>
 
       {/* Portfolio KPI Strip */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:10,marginBottom:22}}>
         {[
-          {label:"Portfolio Value", value:f.$(totVal),  accent:C.cyan},
+          {label:"Portfolio Value", value:f.$(totVal),  accent:C.accent},
           {label:"Wtd Avg Cap",     value:f.p(wtdCap),  accent:C.purple},
           {label:"Total Equity",    value:f.$(totEq),   accent:C.green},
           {label:"Total Debt",      value:f.$(totDebt), accent:C.orange},
-          {label:"Avg Asset IRR",   value:f.p(avgIRR),  accent:"#00C9A7"},
+          {label:"Avg Deal IRR",    value:f.p(avgIRR),  accent:C.cyan},
           {label:"Avg MOIC",        value:f.x(avgMOIC), accent:C.gold},
         ].map(({label,value,accent})=>(
           <div key={label} style={{
-            background:"rgba(255,255,255,0.03)",
-            border:`1px solid rgba(255,255,255,0.06)`,
+            background:C.surface,border:`1px solid ${C.border}`,
             borderTop:`3px solid ${accent}`,
-            borderRadius:8,padding:"14px 16px",
+            borderRadius:10,padding:"14px 16px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)",
           }}>
-            <div style={{fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",
-              color:"rgba(255,255,255,0.45)",marginBottom:6,fontWeight:600}}>{label}</div>
-            <div style={{fontSize:20,fontWeight:700,color:C.white,
-              fontFamily:"'Playfair Display',serif",lineHeight:1.1}}>{value}</div>
+            <div style={{fontSize:9,letterSpacing:"0.08em",textTransform:"uppercase",
+              color:C.textFaint,marginBottom:6,fontWeight:600}}>{label}</div>
+            <div style={{fontSize:20,fontWeight:700,color:C.text,
+              fontFamily:"'Inter',sans-serif",lineHeight:1.1}}>{value}</div>
           </div>
         ))}
       </div>
 
       {/* View Toggle */}
-      <div style={{display:"flex",gap:3,marginBottom:18,background:"rgba(255,255,255,0.04)",
-        borderRadius:8,padding:3,width:"fit-content"}}>
-        {[["detail","Asset Detail"],["table","Comparison Table"]].map(([v,l])=>(
+      <div style={{display:"flex",gap:2,marginBottom:18,background:C.surfaceAlt,
+        borderRadius:8,padding:3,width:"fit-content",border:`1px solid ${C.border}`}}>
+        {[["detail","Deal Detail"],["table","Comparison Table"]].map(([v,l])=>(
           <button key={v} onClick={()=>setView(v)} style={{
-            background:view===v?"rgba(255,255,255,0.12)":"transparent",
-            color:view===v?C.white:"rgba(255,255,255,0.4)",
-            border:"none",borderRadius:6,padding:"7px 20px",fontSize:10,fontWeight:600,
-            letterSpacing:".04em",cursor:"pointer",
-            transition:"all 0.2s ease"}}>
+            background:view===v?C.surface:"transparent",
+            color:view===v?C.text:C.textFaint,
+            border:"none",borderRadius:6,padding:"7px 20px",fontSize:11,fontWeight:600,
+            cursor:"pointer",boxShadow:view===v?"0 1px 2px rgba(0,0,0,0.06)":"none"}}>
             {l}
           </button>
         ))}
@@ -893,127 +894,114 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
 
       {/* DETAIL VIEW */}
       {view==="detail" && (
-        <div style={{display:"grid",gridTemplateColumns:"220px 1fr",gap:18}}>
+        <div style={{display:"grid",gridTemplateColumns:"230px 1fr",gap:18}}>
 
-          {/* Left: Asset List */}
+          {/* Left: Deal List */}
           <div style={{display:"flex",flexDirection:"column",gap:6}}>
             {a.assets.map((ast,idx)=>{
               const ar = m.assetR[idx];
               const isActive = idx===sel;
-              const col = assetColors[idx%assetColors.length];
+              const col = dealColors[idx%dealColors.length];
               return(
                 <button key={idx} onClick={()=>setSel(idx)} style={{
-                  background:isActive?"rgba(255,255,255,0.08)":"rgba(255,255,255,0.02)",
-                  border:isActive?`1px solid rgba(255,255,255,0.15)`:`1px solid rgba(255,255,255,0.05)`,
+                  background:isActive?C.surface:C.surfaceAlt,
+                  border:isActive?`1px solid ${C.accent}`:`1px solid ${C.border}`,
                   borderLeft:isActive?`3px solid ${col}`:`3px solid transparent`,
-                  borderRadius:8,padding:"12px 14px",cursor:"pointer",textAlign:"left",
-                  transition:"all 0.15s ease",
+                  borderRadius:10,padding:"12px 14px",cursor:"pointer",textAlign:"left",
+                  boxShadow:isActive?"0 2px 6px rgba(37,99,235,0.1)":"none",
                 }}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                    <span style={{fontSize:12,fontWeight:700,color:isActive?C.white:"rgba(255,255,255,0.6)"}}>{ast.name}</span>
+                    <span style={{fontSize:12,fontWeight:700,color:isActive?C.text:C.textDim}}>{ast.name}</span>
                     <span style={{fontSize:10,color:col,fontWeight:700}}>{f.p(ar?.irr)}</span>
                   </div>
                   <div style={{display:"flex",justifyContent:"space-between",fontSize:10}}>
-                    <span style={{color:"rgba(255,255,255,0.35)"}}>{f.$(ast.price)}</span>
-                    <span style={{color:"rgba(255,255,255,0.35)"}}>{f.x(ar?.moic)}</span>
+                    <span style={{color:C.textFaint}}>{f.$(ast.price)}</span>
+                    <span style={{color:C.textFaint}}>{f.x(ar?.moic)}</span>
                   </div>
                 </button>
               );
             })}
             <button onClick={addAsset} style={{
-              background:"transparent",border:`1px dashed rgba(255,255,255,0.12)`,
-              borderRadius:8,padding:"10px",cursor:"pointer",
-              color:"rgba(255,255,255,0.3)",fontSize:11,fontWeight:600,
-              letterSpacing:".04em",marginTop:4,
-            }}>+ Add Asset</button>
+              background:"transparent",border:`1px dashed ${C.borderDark}`,
+              borderRadius:10,padding:"10px",cursor:"pointer",
+              color:C.textFaint,fontSize:11,fontWeight:600,marginTop:4,
+            }}>+ Add Deal</button>
           </div>
 
-          {/* Right: Asset Detail Panel */}
+          {/* Right: Deal Detail Panel */}
           <div>
-            {/* Asset Header */}
-            <div style={{
-              background:"rgba(255,255,255,0.03)",border:`1px solid rgba(255,255,255,0.07)`,
-              borderRadius:10,padding:"18px 22px",marginBottom:16,
-            }}>
+            {/* Deal Header */}
+            <Card style={{marginBottom:16,padding:"18px 22px"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                 <div style={{flex:1}}>
-                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
                     <div style={{width:4,height:28,borderRadius:2,
-                      background:assetColors[sel%assetColors.length]}}/>
+                      background:dealColors[sel%dealColors.length]}}/>
                     <input value={asset.name} onChange={e=>setAsset(sel,"name",e.target.value)}
                       style={{background:"transparent",border:"none",
-                        color:C.white,fontSize:18,fontWeight:700,outline:"none",
-                        fontFamily:"'Playfair Display',serif",width:200}}/>
+                        color:C.text,fontSize:20,fontWeight:800,outline:"none",
+                        fontFamily:"'Inter',sans-serif",width:220}}/>
                   </div>
-                  <div style={{display:"flex",gap:6,marginLeft:14}}>
-                    <span style={{background:"rgba(0,201,167,0.12)",color:"#00C9A7",
-                      padding:"3px 10px",borderRadius:20,fontSize:10,fontWeight:700}}>
-                      IRR {f.p(r?.irr)}
-                    </span>
-                    <span style={{background:"rgba(212,175,55,0.12)",color:C.gold,
-                      padding:"3px 10px",borderRadius:20,fontSize:10,fontWeight:700}}>
-                      MOIC {f.x(r?.moic)}
-                    </span>
-                    <span style={{background:"rgba(78,168,222,0.12)",color:C.blue,
-                      padding:"3px 10px",borderRadius:20,fontSize:10,fontWeight:700}}>
-                      Equity {f.$(r?.eq)}
-                    </span>
-                    <span style={{background:"rgba(167,139,250,0.12)",color:C.purple,
-                      padding:"3px 10px",borderRadius:20,fontSize:10,fontWeight:700}}>
-                      Debt {f.$(r?.debt)}
-                    </span>
+                  <div style={{display:"flex",gap:6,marginLeft:14,flexWrap:"wrap"}}>
+                    {[
+                      {l:`IRR ${f.p(r?.irr)}`,bg:C.greenL,c:C.green},
+                      {l:`MOIC ${f.x(r?.moic)}`,bg:C.accentDim,c:C.accent},
+                      {l:`Equity ${f.$(r?.eq)}`,bg:C.blueL,c:C.blue},
+                      {l:`Debt ${f.$(r?.debt)}`,bg:"rgba(124,58,237,0.08)",c:C.purple},
+                      {l:`BW Fee ${f.p(asset.mgmtFee||0)}`,bg:"rgba(8,145,178,0.08)",c:C.cyan},
+                    ].map(({l,bg,c})=>(
+                      <span key={l} style={{background:bg,color:c,padding:"4px 12px",borderRadius:20,fontSize:10,fontWeight:700}}>{l}</span>
+                    ))}
                   </div>
                 </div>
                 {a.assets.length>1&&(
                   <button onClick={()=>{removeAsset(sel);setSel(Math.max(0,sel-1));}}
-                    style={{background:"rgba(255,107,107,0.08)",border:`1px solid rgba(255,107,107,0.2)`,
+                    style={{background:C.redL,border:`1px solid rgba(220,38,38,0.2)`,
                       color:C.red,borderRadius:6,padding:"5px 12px",fontSize:10,fontWeight:600,
-                      cursor:"pointer",letterSpacing:".03em"}}>Remove</button>
+                      cursor:"pointer"}}>Remove</button>
                 )}
               </div>
-            </div>
+            </Card>
 
-            {/* Metric Cards Row */}
-            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:16}}>
+            {/* Metric Cards */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10,marginBottom:16}}>
               {[
                 {label:"Exit Value",       value:f.$(r?.exitVal), accent:C.green},
                 {label:"Net Sale Proceeds", value:f.$(r?.saleNet), accent:C.cyan},
                 {label:"Annual Debt Svc",   value:f.$(r?.annDS),  accent:C.orange},
                 {label:"Loan Balance",      value:f.$(r?.lb),     accent:C.purple},
+                {label:"7yr Mgmt Fees",     value:f.$(r?.totMgmtFee), accent:C.cyan},
               ].map(({label,value,accent})=>(
                 <div key={label} style={{
-                  background:"rgba(255,255,255,0.03)",border:`1px solid rgba(255,255,255,0.06)`,
-                  borderRadius:8,padding:"12px 14px",borderLeft:`3px solid ${accent}`,
+                  background:C.surface,border:`1px solid ${C.border}`,
+                  borderRadius:10,padding:"12px 14px",borderLeft:`3px solid ${accent}`,
+                  boxShadow:"0 1px 3px rgba(0,0,0,0.04)",
                 }}>
-                  <div style={{fontSize:8,letterSpacing:"0.1em",textTransform:"uppercase",
-                    color:"rgba(255,255,255,0.4)",marginBottom:5,fontWeight:600}}>{label}</div>
-                  <div style={{fontSize:16,fontWeight:700,color:C.white,fontFamily:"'Playfair Display',serif"}}>{value}</div>
+                  <div style={{fontSize:9,letterSpacing:"0.08em",textTransform:"uppercase",
+                    color:C.textFaint,marginBottom:5,fontWeight:600}}>{label}</div>
+                  <div style={{fontSize:16,fontWeight:700,color:C.text}}>{value}</div>
                 </div>
               ))}
             </div>
 
-            {/* Parameter Sliders */}
-            <div style={{
-              background:"rgba(255,255,255,0.03)",border:`1px solid rgba(255,255,255,0.06)`,
-              borderRadius:10,padding:"16px 20px",marginBottom:16,
-            }}>
-              <div style={{fontSize:9,letterSpacing:"0.12em",textTransform:"uppercase",
-                color:"rgba(255,255,255,0.35)",marginBottom:14,fontWeight:700}}>Assumptions</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"18px 28px"}}>
+            {/* Deal Assumptions */}
+            <Card style={{marginBottom:16,padding:"18px 22px"}}>
+              <CT c="Deal Assumptions"/>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"16px 28px"}}>
                 {fields.map(fi=>{
                   const pct = Math.min(100,Math.max(0,((asset[fi.k]-fi.min)/(fi.max-fi.min))*100));
                   return(
                     <div key={fi.k}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                        <span style={{fontSize:10,color:"rgba(255,255,255,0.5)",fontWeight:600}}>{fi.l}</span>
+                        <span style={{fontSize:10,color:C.textDim,fontWeight:600}}>{fi.l}</span>
                         <span style={{fontSize:13,color:fi.color,fontWeight:700}}>{fi.d(asset[fi.k])}</span>
                       </div>
-                      <div style={{position:"relative",height:5,background:"rgba(255,255,255,0.06)",borderRadius:4}}>
+                      <div style={{position:"relative",height:5,background:C.border,borderRadius:4}}>
                         <div style={{position:"absolute",left:0,width:`${pct}%`,height:"100%",
-                          background:`linear-gradient(90deg, ${fi.color}88, ${fi.color})`,borderRadius:4}}/>
+                          background:fi.color,borderRadius:4}}/>
                         <div style={{position:"absolute",left:`calc(${pct}% - 7px)`,top:-4,
                           width:13,height:13,borderRadius:"50%",background:fi.color,
-                          boxShadow:`0 0 8px ${fi.color}66`,pointerEvents:"none"}}/>
+                          boxShadow:`0 1px 4px rgba(0,0,0,0.2)`,pointerEvents:"none"}}/>
                         <input type="range" min={fi.min} max={fi.max} step={fi.step} value={asset[fi.k]}
                           onChange={e=>setAsset(sel,fi.k,Number(e.target.value))}
                           style={{position:"absolute",top:-8,left:0,width:"100%",height:22,
@@ -1023,60 +1011,51 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                   );
                 })}
               </div>
-            </div>
+            </Card>
 
             {/* Charts Row */}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
-              {/* NOI Growth Chart */}
-              <div style={{
-                background:"rgba(255,255,255,0.03)",border:`1px solid rgba(255,255,255,0.06)`,
-                borderRadius:10,padding:"16px 18px",
-              }}>
-                <div style={{fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",
-                  color:"rgba(255,255,255,0.35)",marginBottom:12,fontWeight:700}}>NOI Trajectory</div>
+              <Card>
+                <CT c="NOI Trajectory"/>
                 <ResponsiveContainer width="100%" height={180}>
                   <AreaChart data={noiData}>
                     <defs>
                       <linearGradient id={`noi-g-${sel}`} x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#00C9A7" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="#00C9A7" stopOpacity={0}/>
+                        <stop offset="5%" stopColor={C.green} stopOpacity={0.2}/>
+                        <stop offset="95%" stopColor={C.green} stopOpacity={0}/>
                       </linearGradient>
                     </defs>
-                    <XAxis dataKey="year" tick={{fill:"rgba(255,255,255,0.35)",fontSize:9}} axisLine={false} tickLine={false}/>
-                    <YAxis tickFormatter={v=>`$${(v/1e6).toFixed(1)}M`} tick={{fill:"rgba(255,255,255,0.35)",fontSize:9}} axisLine={false} tickLine={false} width={48}/>
+                    <XAxis dataKey="year" tick={{fill:C.textFaint,fontSize:9}} axisLine={false} tickLine={false}/>
+                    <YAxis tickFormatter={v=>`$${(v/1e6).toFixed(1)}M`} tick={{fill:C.textFaint,fontSize:9}} axisLine={false} tickLine={false} width={48}/>
                     <Tooltip content={<TT/>}/>
-                    <Area type="monotone" dataKey="noi" stroke="#00C9A7" strokeWidth={2.5}
-                      fill={`url(#noi-g-${sel})`} name="NOI" dot={{fill:"#00C9A7",r:3,strokeWidth:0}}/>
+                    <Area type="monotone" dataKey="noi" stroke={C.green} strokeWidth={2.5}
+                      fill={`url(#noi-g-${sel})`} name="NOI" dot={{fill:C.green,r:3,strokeWidth:0}}/>
                   </AreaChart>
                 </ResponsiveContainer>
-              </div>
+              </Card>
 
-              {/* Annual Cash Flow Chart */}
-              <div style={{
-                background:"rgba(255,255,255,0.03)",border:`1px solid rgba(255,255,255,0.06)`,
-                borderRadius:10,padding:"16px 18px",
-              }}>
-                <div style={{fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",
-                  color:"rgba(255,255,255,0.35)",marginBottom:12,fontWeight:700}}>Annual Cash Flow Breakdown</div>
+              <Card>
+                <CT c="Annual Cash Flow Breakdown"/>
                 <ResponsiveContainer width="100%" height={180}>
                   <BarChart data={cfData}>
-                    <XAxis dataKey="year" tick={{fill:"rgba(255,255,255,0.35)",fontSize:9}} axisLine={false} tickLine={false}/>
+                    <XAxis dataKey="year" tick={{fill:C.textFaint,fontSize:9}} axisLine={false} tickLine={false}/>
                     <YAxis tickFormatter={v=>v>=0?`$${(v/1e6).toFixed(1)}M`:`-$${(Math.abs(v)/1e6).toFixed(1)}M`}
-                      tick={{fill:"rgba(255,255,255,0.35)",fontSize:9}} axisLine={false} tickLine={false} width={52}/>
+                      tick={{fill:C.textFaint,fontSize:9}} axisLine={false} tickLine={false} width={52}/>
                     <Tooltip content={<TT/>}/>
-                    <ReferenceLine y={0} stroke="rgba(255,255,255,0.1)"/>
-                    <Bar dataKey="noi" name="NOI" fill="#00C9A7" radius={[3,3,0,0]} stackId="pos"/>
-                    <Bar dataKey="debtService" name="Debt Service" fill="#FF6B6B" radius={[0,0,3,3]} stackId="neg"/>
+                    <ReferenceLine y={0} stroke={C.border}/>
+                    <Bar dataKey="noi" name="NOI" fill={C.green} radius={[3,3,0,0]} stackId="pos"/>
+                    <Bar dataKey="debtService" name="Debt Service" fill={C.red} radius={[0,0,3,3]} stackId="neg"/>
+                    <Bar dataKey="mgmtFee" name="BW Mgmt Fee" fill={C.cyan} radius={[0,0,3,3]} stackId="neg"/>
                   </BarChart>
                 </ResponsiveContainer>
                 <div style={{display:"flex",gap:14,marginTop:8,justifyContent:"center"}}>
-                  {[{l:"NOI",c:"#00C9A7"},{l:"Debt Svc",c:"#FF6B6B"}].map(({l,c})=>(
-                    <div key={l} style={{display:"flex",alignItems:"center",gap:5,fontSize:9,color:"rgba(255,255,255,0.4)"}}>
+                  {[{l:"NOI",c:C.green},{l:"Debt Svc",c:C.red},{l:"BW Mgmt Fee",c:C.cyan}].map(({l,c})=>(
+                    <div key={l} style={{display:"flex",alignItems:"center",gap:5,fontSize:9,color:C.textFaint}}>
                       <div style={{width:8,height:8,borderRadius:2,background:c}}/>{l}
                     </div>
                   ))}
                 </div>
-              </div>
+              </Card>
             </div>
           </div>
         </div>
@@ -1084,123 +1063,107 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
 
       {/* TABLE VIEW */}
       {view==="table" && (
-        <div style={{
-          background:"rgba(255,255,255,0.03)",border:`1px solid rgba(255,255,255,0.06)`,
-          borderRadius:10,overflow:"hidden",
-        }}>
+        <Card style={{overflow:"hidden",padding:0}}>
           <div style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
               <thead>
-                <tr style={{background:"rgba(255,255,255,0.04)"}}>
-                  {["Asset","Price","Cap Rate","NOI Growth","Close","Equity","Debt","Exit Value",
-                    "Ann. Debt Svc","IRR","MOIC",""].map(h=>(
-                    <th key={h} style={{padding:"10px 12px",color:"rgba(255,255,255,0.4)",fontSize:9,
+                <tr style={{background:C.surfaceAlt}}>
+                  {["Deal","Price","Cap Rate","Growth","BW Fee","Close","Equity","Debt","Exit Value","IRR","MOIC",""].map(h=>(
+                    <th key={h} style={{padding:"10px 12px",color:C.textFaint,fontSize:9,
                       textTransform:"uppercase",letterSpacing:".08em",fontWeight:700,
-                      textAlign:h==="Asset"?"left":"center",
-                      borderBottom:"1px solid rgba(255,255,255,0.06)",whiteSpace:"nowrap"}}>{h}</th>
+                      textAlign:h==="Deal"?"left":"center",
+                      borderBottom:`1px solid ${C.border}`,whiteSpace:"nowrap"}}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {a.assets.map((ast,idx)=>{
                   const ar = m.assetR[idx];
-                  const col = assetColors[idx%assetColors.length];
+                  const col = dealColors[idx%dealColors.length];
                   return(
                     <tr key={idx} onClick={()=>{setSel(idx);setView("detail");}}
-                      style={{cursor:"pointer",borderBottom:"1px solid rgba(255,255,255,0.04)",
-                        background:idx%2===0?"transparent":"rgba(255,255,255,0.015)",
-                        transition:"background 0.15s",
-                      }}
-                      onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,0.06)"}
-                      onMouseLeave={e=>e.currentTarget.style.background=idx%2===0?"transparent":"rgba(255,255,255,0.015)"}>
+                      style={{cursor:"pointer",borderBottom:`1px solid ${C.border}`,
+                        background:idx%2===0?"transparent":C.surfaceAlt}}>
                       <td style={{padding:"10px 12px"}}>
                         <div style={{display:"flex",alignItems:"center",gap:8}}>
                           <div style={{width:3,height:22,borderRadius:2,background:col}}/>
-                          <span style={{color:C.white,fontWeight:600}}>{ast.name}</span>
+                          <span style={{color:C.text,fontWeight:600}}>{ast.name}</span>
                         </div>
                       </td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:C.white}}>{f.$(ast.price)}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:C.text}}>{f.$(ast.price)}</td>
                       <td style={{padding:"10px 12px",textAlign:"center",color:C.purple}}>{f.p(ast.cap)}</td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:"#00C9A7"}}>{f.p(ast.growth)}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:C.green}}>{f.p(ast.growth)}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:C.cyan}}>{f.p(ast.mgmtFee||0)}</td>
                       <td style={{padding:"10px 12px",textAlign:"center",color:C.orange}}>M{ast.startMonth}</td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:C.white}}>{f.$(ar?.eq)}</td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:C.whDim}}>{f.$(ar?.debt)}</td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:C.cyan}}>{f.$(ar?.exitVal)}</td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:C.whDim}}>{f.$(ar?.annDS)}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:C.text}}>{f.$(ar?.eq)}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:C.textDim}}>{f.$(ar?.debt)}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:C.accent}}>{f.$(ar?.exitVal)}</td>
                       <td style={{padding:"10px 12px",textAlign:"center"}}>
-                        <span style={{background:ar?.irr>=a.prefReturn?"rgba(0,201,167,0.12)":"rgba(255,107,107,0.12)",
-                          color:ar?.irr>=a.prefReturn?"#00C9A7":"#FF6B6B",
+                        <span style={{background:ar?.irr>=a.prefReturn?C.greenL:C.redL,
+                          color:ar?.irr>=a.prefReturn?C.green:C.red,
                           padding:"3px 8px",borderRadius:20,fontSize:10,fontWeight:700}}>
                           {f.p(ar?.irr)}
                         </span>
                       </td>
-                      <td style={{padding:"10px 12px",textAlign:"center"}}>
-                        <span style={{color:C.gold,fontWeight:700}}>{f.x(ar?.moic)}</span>
-                      </td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:C.accent,fontWeight:700}}>{f.x(ar?.moic)}</td>
                       <td style={{padding:"10px 12px",textAlign:"center"}}>
                         {a.assets.length>1&&(
                           <button onClick={e=>{e.stopPropagation();removeAsset(idx);if(sel>=a.assets.length-1)setSel(Math.max(0,sel-1));}}
-                            style={{background:"rgba(255,107,107,0.08)",border:`1px solid rgba(255,107,107,0.2)`,
+                            style={{background:C.redL,border:"none",
                               color:C.red,borderRadius:5,padding:"3px 8px",fontSize:9,cursor:"pointer"}}>✕</button>
                         )}
                       </td>
                     </tr>
                   );
                 })}
-                {/* Totals Row */}
-                <tr style={{borderTop:"2px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.04)"}}>
-                  <td style={{padding:"10px 12px",color:C.gold,fontWeight:700}}>Portfolio Total</td>
-                  <td style={{padding:"10px 12px",textAlign:"center",color:C.gold,fontWeight:700}}>{f.$(totVal)}</td>
+                <tr style={{borderTop:`2px solid ${C.borderDark}`,background:C.surfaceAlt}}>
+                  <td style={{padding:"10px 12px",color:C.accent,fontWeight:700}}>Portfolio Total</td>
+                  <td style={{padding:"10px 12px",textAlign:"center",color:C.accent,fontWeight:700}}>{f.$(totVal)}</td>
                   <td style={{padding:"10px 12px",textAlign:"center",color:C.purple,fontWeight:700}}>{f.p(wtdCap)}</td>
-                  <td colSpan={2}/>
-                  <td style={{padding:"10px 12px",textAlign:"center",color:C.gold,fontWeight:700}}>{f.$(totEq)}</td>
-                  <td style={{padding:"10px 12px",textAlign:"center",color:C.gold,fontWeight:700}}>{f.$(totDebt)}</td>
-                  <td colSpan={2}/>
+                  <td colSpan={3}/>
+                  <td style={{padding:"10px 12px",textAlign:"center",color:C.accent,fontWeight:700}}>{f.$(totEq)}</td>
+                  <td style={{padding:"10px 12px",textAlign:"center",color:C.accent,fontWeight:700}}>{f.$(totDebt)}</td>
+                  <td/>
                   <td style={{padding:"10px 12px",textAlign:"center"}}>
-                    <span style={{background:"rgba(0,201,167,0.12)",color:"#00C9A7",
-                      padding:"3px 8px",borderRadius:20,fontSize:10,fontWeight:700}}>{f.p(avgIRR)}</span>
+                    <span style={{background:C.greenL,color:C.green,padding:"3px 8px",borderRadius:20,fontSize:10,fontWeight:700}}>{f.p(avgIRR)}</span>
                   </td>
-                  <td style={{padding:"10px 12px",textAlign:"center",color:C.gold,fontWeight:700}}>{f.x(avgMOIC)}</td>
+                  <td style={{padding:"10px 12px",textAlign:"center",color:C.accent,fontWeight:700}}>{f.x(avgMOIC)}</td>
                   <td/>
                 </tr>
               </tbody>
             </table>
           </div>
-          <div style={{padding:"12px 16px",borderTop:"1px solid rgba(255,255,255,0.06)"}}>
+          <div style={{padding:"12px 16px",borderTop:`1px solid ${C.border}`}}>
             <button onClick={addAsset} style={{
-              background:"transparent",border:`1px dashed rgba(255,255,255,0.12)`,
+              background:"transparent",border:`1px dashed ${C.borderDark}`,
               borderRadius:6,padding:"8px 18px",cursor:"pointer",
-              color:"rgba(255,255,255,0.3)",fontSize:10,fontWeight:600}}>+ Add Asset</button>
+              color:C.textFaint,fontSize:10,fontWeight:600}}>+ Add Deal</button>
           </div>
-        </div>
+        </Card>
       )}
 
-      {/* Portfolio IRR Comparison Bar — always visible below */}
-      <div style={{
-        background:"rgba(255,255,255,0.03)",border:`1px solid rgba(255,255,255,0.06)`,
-        borderRadius:10,padding:"16px 18px",marginTop:18,
-      }}>
-        <div style={{fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",
-          color:"rgba(255,255,255,0.35)",marginBottom:14,fontWeight:700}}>Asset IRR Comparison</div>
+      {/* Deal IRR Comparison */}
+      <Card style={{marginTop:18}}>
+        <CT c="Deal IRR Comparison"/>
         <ResponsiveContainer width="100%" height={140}>
           <BarChart data={m.assetR.map((ar,i)=>({name:ar.name,irr:ar.irr,idx:i}))} layout="vertical"
             margin={{left:10,right:20,top:0,bottom:0}}>
             <XAxis type="number" tickFormatter={v=>`${(v*100).toFixed(0)}%`}
-              tick={{fill:"rgba(255,255,255,0.35)",fontSize:9}} axisLine={false} tickLine={false}/>
+              tick={{fill:C.textFaint,fontSize:9}} axisLine={false} tickLine={false}/>
             <YAxis type="category" dataKey="name" width={70}
-              tick={{fill:"rgba(255,255,255,0.5)",fontSize:9}} axisLine={false} tickLine={false}/>
+              tick={{fill:C.textDim,fontSize:9}} axisLine={false} tickLine={false}/>
             <Tooltip content={<TT/>} formatter={v=>`${(v*100).toFixed(1)}%`}/>
             <ReferenceLine x={a.prefReturn} stroke={C.gold} strokeDasharray="4 4"
               label={{value:`${(a.prefReturn*100)}% Pref`,fill:C.gold,fontSize:9,position:"top"}}/>
             <Bar dataKey="irr" name="IRR" radius={[0,4,4,0]}>
               {m.assetR.map((e,i)=>(
-                <Cell key={i} fill={i===sel?assetColors[i%assetColors.length]:
-                  e.irr>=a.prefReturn?"rgba(0,201,167,0.4)":"rgba(255,107,107,0.4)"}/>
+                <Cell key={i} fill={i===sel?dealColors[i%dealColors.length]:
+                  e.irr>=a.prefReturn?"rgba(5,150,105,0.35)":"rgba(220,38,38,0.3)"}/>
               ))}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
-      </div>
+      </Card>
     </div>
   );
 }
