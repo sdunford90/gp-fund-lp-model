@@ -3,13 +3,16 @@ import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContai
   ReferenceLine, Cell, AreaChart, Area, ComposedChart } from "recharts";
 
 const C = {
-  navy:"#1F3864", dark:"#0D1B2A", mid:"#2C4A7C",
-  gold:"#C9A84C", goldDim:"rgba(201,168,76,0.45)", goldFaint:"rgba(201,168,76,0.09)",
-  white:"#E8E4DA", whDim:"rgba(232,228,218,0.5)", whFaint:"rgba(232,228,218,0.06)",
-  green:"#1E8449", greenL:"rgba(30,132,73,0.15)",
-  red:"#C0392B",   redL:"rgba(192,57,43,0.15)",
-  blue:"#2980B9",  blueL:"rgba(41,128,185,0.15)",
-  border:"rgba(201,168,76,0.12)",
+  navy:"#0F1A2E", dark:"#0A1628", mid:"#1E3A5F",
+  gold:"#D4AF37", goldDim:"rgba(212,175,55,0.50)", goldFaint:"rgba(212,175,55,0.08)",
+  white:"#F0EDE6", whDim:"rgba(240,237,230,0.55)", whFaint:"rgba(240,237,230,0.06)",
+  green:"#00C9A7", greenL:"rgba(0,201,167,0.12)",
+  red:"#FF6B6B",   redL:"rgba(255,107,107,0.12)",
+  blue:"#4EA8DE",  blueL:"rgba(78,168,222,0.12)",
+  cyan:"#22D3EE", purple:"#A78BFA", orange:"#FB923C",
+  border:"rgba(212,175,55,0.10)",
+  cardBg:"rgba(255,255,255,0.04)", cardBorder:"rgba(255,255,255,0.08)",
+  glass:"rgba(15,26,46,0.70)",
 };
 
 // ── DEFAULT STATE ─────────────────────────────────────────────────────────────
@@ -72,7 +75,7 @@ const DEF_PARTNER_SALARIES = [
 const DEFAULT = {
   fundTerm:7, debtPct:.60, interestRate:.065, amortYears:25,
   exitCapRate:.075, saleCosts:.02, carry:.20, prefReturn:.07,
-  gpPct:.02, amFee:.01, pmFee:.06, benefitsRate:.22, salaryGrowth:.03,
+  gpPct:.02, amFee:0, pmFee:0, benefitsRate:.22, salaryGrowth:.03,
   partners:3, compoundPref:false, catchUp:false,
   assets:DEF_ASSETS, hires:DEF_HIRES, overhead:DEF_OVERHEAD, oneTime:DEF_ONE_TIME, partnerSalaries:DEF_PARTNER_SALARIES,
 };
@@ -175,32 +178,26 @@ function run(a){
       invEq+=x.price*(1-debtPct);
       ds+=Math.abs(pmt(interestRate,amortYears,x.price*debtPct))/12;
     });
-    const amFeeM=invEq*amFee/12;
-    const pmFeeM=noi*pmFee;
-    const netOpCF=noi-ds-pmFeeM-amFeeM;  // AM fee is fund expense, flows to GP entity separately
+    const ga=gaMonthly[i].total;
+    const netOpCF=noi-ds-ga;  // G&A flows directly as fund overhead
     const lpCall=assets.reduce((s,x)=>x.startMonth===mo?s+x.price*(1-debtPct)*(1-gpPct):s,0);
     const gpCall=assets.reduce((s,x)=>x.startMonth===mo?s+x.price*(1-debtPct)*gpPct:s,0);
-    return{mo,noi,invEq,ds,amFeeM,pmFeeM,netOpCF,lpCall,gpCall,
-      ga:gaMonthly[i].total};
+    return{mo,noi,invEq,ds,netOpCF,lpCall,gpCall,ga};
   });
 
-  // Totals — declare fees/GA first so shortfall calc can use them
+  // Totals
   const totLPCalled=monthly.reduce((s,x)=>s+x.lpCall,0);
   const totGPCalled=monthly.reduce((s,x)=>s+x.gpCall,0);
   const totSaleProc=assetR.reduce((s,x)=>s+x.saleNet,0);
-  const totOpCF=monthly.reduce((s,x)=>s+Math.max(0,x.netOpCF),0);
-  const totAMFee=monthly.reduce((s,x)=>s+x.amFeeM,0);
-  const totPMFee=monthly.reduce((s,x)=>s+x.pmFeeM,0);
-  const totFees=totAMFee+totPMFee;
+  const totOpCF=monthly.reduce((s,x)=>s+x.netOpCF,0);  // net of G&A already
   const totGA=gaMonthly.reduce((s,x)=>s+x.total,0);
   const totPartnerSal=gaMonthly.reduce((s,x)=>s+(x.partnerSalCost||0),0);
 
-  // G&A shortfall: LP funds the gap when G&A exceeds fee income.
-  // Shortfall is an additional LP capital contribution — added to LP basis,
-  // returned to LP first in Tier 1 ROC before pref or promote.
-  const totGAShortfall = Math.max(0, totGA - totAMFee - totPMFee);
-  const lpActualCapital = totLPCalled + totGAShortfall;
-  const gpActualCapital = totGPCalled; // GP basis = equity co-invest only
+  // No fees — G&A is deducted directly from operating cash flow
+  const totFees=0;
+  const totGAShortfall=0;
+  const lpActualCapital = totLPCalled;
+  const gpActualCapital = totGPCalled;
 
   // WATERFALL
   const pool=totSaleProc+totOpCF;
@@ -248,22 +245,20 @@ function run(a){
   const lpIRR=irr(lpCF);
 
   // ── GP ENTITY cash flow (month by month)
-  // GP earns: AM fees + PM fees (received as fee income from fund)
-  // GP earns: promote at exit (month 84)
-  // GP earns: shortfall ROC returned at exit (from waterfall tier 1)
-  // GP spends: co-invest capital calls + G&A
-  // Note: netOpCF is already net of AM+PM fees, so opDist here is GP's share of residual op CF
+  // GP earns: promote at exit + pro-rata share of operating CF
+  // GP spends: co-invest capital calls
+  // G&A is already deducted from fund operating CF directly
   const gpEntity=monthly.map((m,i)=>{
-    const fees=m.amFeeM+m.pmFeeM;             // fee income paid to GP by fund each month
-    const opDist=Math.max(0,m.netOpCF)*gpPct; // GP's pro-rata share of residual op CF
-    const coInvest=-m.gpCall;                  // co-invest equity outflow at deal close
-    const ga=-gaMonthly[i].total;              // G&A outflow (personnel + overhead + partner sals)
-    const net=fees+opDist+coInvest+ga;
+    const fees=0;
+    const opDist=Math.max(0,m.netOpCF)*gpPct; // GP's pro-rata share of net op CF (after G&A)
+    const coInvest=-m.gpCall;
+    const ga=0;  // G&A already in fund CF
+    const net=opDist+coInvest;
     return{mo:m.mo,fees,opDist,coInvest,ga,net,promote:0,shortfallROC:0};
   });
-  // Month 84: promote + shortfall ROC returned from waterfall
+  // Month 84: promote from waterfall
   gpEntity[MO-1].promote=gpPromote;
-  gpEntity[MO-1].net+=gpPromote;  // GP gets promote only; shortfall was LP capital, returned to LP in Tier 1
+  gpEntity[MO-1].net+=gpPromote;
 
   // Cumulative GP position
   let gpCum=0;
@@ -321,16 +316,16 @@ function run(a){
     gpROC,gpPromote,gpFundTotal,
     totEqDep,totLPIn,totLPCalled,totGPCalled,totGPIn,
     totGAShortfall,lpActualCapital,gpActualCapital,
-    totSaleProc,totOpCF,pool,totAMFee,totPMFee,totFees,totGA,
+    totSaleProc,totOpCF,pool,totFees,totGA,
     gpEntity,gpCumData,gpNetTotal,gpBreakeven,
     promPP,drawsPP,rocPP,coInvPP,totalPP,netPP,
     partnerMonthly,partnerCum,
     totPartnerSal,
-    noiChart,fundCFAnnual,deplCurve,gaMonthly,gaChart,
+    noiChart,fundCFAnnual,deplCurve,gaMonthly,gaChart,monthly,
     waterfall:[
-      {name:"LP Capital", value:lpROC,      fill:"#2980B9"},
-      {name:"LP Pref",    value:lpPref,     fill:"#1A5276"},
-      {name:"LP Residual",value:lpResid,    fill:"#5DADE2"},
+      {name:"LP Capital", value:lpROC,      fill:"#4EA8DE"},
+      {name:"LP Pref",    value:lpPref,     fill:"#1E3A5F"},
+      {name:"LP Residual",value:lpResid,    fill:"#22D3EE"},
       {name:"GP Co-inv",  value:gpROC,      fill:"#8B7536"},
       {name:"GP Promote", value:gpPromote,  fill:C.gold},
     ],
@@ -661,9 +656,7 @@ export default function Portal(){
           <Sli label="Hold Period"    value={a.fundTerm}     min={5}    max={10}   step={1}    disp={v=>`${v} yrs`}               onChange={v=>set("fundTerm",v)}/>
 
           <div style={{height:1,background:C.border,margin:"12px 0"}}/>
-          <SHdr t="Fees & Carry"/>
-          <Sli label="AM Fee"         value={a.amFee}        min={.005} max={.02}  step={.0025} disp={v=>`${(v*100).toFixed(2)}%`} onChange={v=>set("amFee",v)} sub="% invested capital/yr"/>
-          <Sli label="PM Fee"         value={a.pmFee}        min={.03}  max={.10}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("pmFee",v)} sub="% gross NOI"/>
+          <SHdr t="Waterfall & Carry"/>
           <Sli label="Carried Int."   value={a.carry}        min={.10}  max={.30}  step={.025}  disp={v=>`${(v*100).toFixed(0)}%`} onChange={v=>set("carry",v)}/>
           <Sli label="Preferred Ret." value={a.prefReturn}   min={.05}  max={.10}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("prefReturn",v)}/>
           {/* Pref type toggle */}
@@ -758,9 +751,9 @@ function TabOverview({m,a}){
       <div style={{fontSize:9,color:C.gold,letterSpacing:".12em",textTransform:"uppercase",marginBottom:7,fontWeight:700}}>GP Economics</div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:22}}>
         <KPI label="GP Promote"   value={f.$(m.gpPromote)}    sub={`${f.p(a.carry)} carry above pref`} gold/>
-        <KPI label="AM + PM Fees" value={f.$(m.totFees)}      sub="7-yr fee income"/>
+        <KPI label="Total G&A"    value={f.$(m.totGA)}        sub="Fund overhead (7-yr)"/>
         <KPI label="Per Partner"  value={f.$(m.promPP)}       sub={`1 of ${a.partners} partners`}/>
-        <KPI label="GP Net 7-yr"  value={f.$(m.gpNetTotal)}   sub="After co-invest (LP funds G&A gap)"/>
+        <KPI label="GP Net 7-yr"  value={f.$(m.gpNetTotal)}   sub="After co-invest"/>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
         <Card>
@@ -816,63 +809,397 @@ function TabOverview({m,a}){
 // ASSETS
 // ═══════════════════════════════════════════════════════════════════════════════
 function TabAssets({m,a,setAsset,addAsset,removeAsset}){
+  const [sel, setSel] = useState(0);
+  const [view, setView] = useState("detail"); // detail | table
+  const asset = a.assets[sel];
+  const r = m.assetR[sel];
+
+  // Per-asset chart data
+  const noiData = r ? r.noi.map((n,y)=>({year:`Y${y}`,noi:Math.round(n)})).slice(1) : [];
+  const cfData = r ? r.noi.slice(1).map((n,y)=>{
+    const ds = r.annDS;
+    const ncf = n - ds;
+    return {year:`Y${y+1}`, noi:Math.round(n), debtService:Math.round(-ds), netCF:Math.round(ncf)};
+  }) : [];
+
+  // Asset colors for the sidebar
+  const assetColors = ["#22D3EE","#A78BFA","#FB923C","#00C9A7","#F472B6","#FBBF24","#34D399","#818CF8"];
+
+  // Slider field definitions
+  const fields = [
+    {k:"price",     l:"Acquisition Price",  min:5e6, max:50e6,step:5e5, d:v=>`$${(v/1e6).toFixed(1)}M`, color:"#22D3EE"},
+    {k:"cap",       l:"Going-In Cap Rate",  min:.05, max:.12, step:.005,d:v=>`${(v*100).toFixed(1)}%`,   color:"#A78BFA"},
+    {k:"growth",    l:"NOI Growth Rate",    min:.02, max:.12, step:.005,d:v=>`${(v*100).toFixed(1)}%`,   color:"#00C9A7"},
+    {k:"startMonth",l:"Close Month",        min:3,   max:36,  step:3,   d:v=>`Month ${v}`,               color:"#FB923C"},
+  ];
+
+  // Portfolio totals
+  const totVal = a.assets.reduce((s,x)=>s+x.price,0);
+  const wtdCap = a.assets.reduce((s,x)=>s+x.cap*x.price,0)/totVal;
+  const totEq = a.assets.reduce((s,x)=>s+x.price*(1-a.debtPct),0);
+  const totDebt = a.assets.reduce((s,x)=>s+x.price*a.debtPct,0);
+  const avgIRR = m.assetR.reduce((s,x)=>s+(x.irr||0),0)/m.assetR.length;
+  const avgMOIC = m.assetR.reduce((s,x)=>s+(x.moic||0),0)/m.assetR.length;
+
   return(
     <div>
-      <PHdr title="Asset Assumptions" sub="Adjust per-asset parameters — returns update live"/>
-      {a.assets.map((asset,idx)=>{
-        const r=m.assetR[idx];
-        return(
-          <div key={idx} style={{background:C.whFaint,border:`1px solid ${C.border}`,
-            borderRadius:5,padding:"12px 14px",marginBottom:8}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <input value={asset.name} onChange={e=>setAsset(idx,"name",e.target.value)}
-                  style={{background:"transparent",border:"none",borderBottom:`1px solid rgba(201,168,76,.3)`,
-                    color:C.white,fontSize:12,fontWeight:700,outline:"none",width:120,padding:"1px 0"}}/>
-              </div>
-              <div style={{display:"flex",gap:14,alignItems:"center"}}>
-                <span style={{fontSize:11,color:C.green}}>IRR: {f.p(r?.irr)}</span>
-                <span style={{fontSize:11,color:C.gold}}>MOIC: {f.x(r?.moic)}</span>
-                <span style={{fontSize:11,color:C.whDim}}>Equity: {f.$(r?.eq)}</span>
+      {/* Header */}
+      <div style={{marginBottom:24}}>
+        <div style={{fontSize:22,fontWeight:700,color:C.white,fontFamily:"'Playfair Display',serif",
+          marginBottom:4,letterSpacing:"-0.02em"}}>Asset Underwriting</div>
+        <div style={{fontSize:12,color:C.whDim}}>
+          {a.assets.length} assets · {f.$(totVal)} portfolio · Click any asset to drill in
+        </div>
+      </div>
+
+      {/* Portfolio KPI Strip */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:10,marginBottom:22}}>
+        {[
+          {label:"Portfolio Value", value:f.$(totVal),  accent:C.cyan},
+          {label:"Wtd Avg Cap",     value:f.p(wtdCap),  accent:C.purple},
+          {label:"Total Equity",    value:f.$(totEq),   accent:C.green},
+          {label:"Total Debt",      value:f.$(totDebt), accent:C.orange},
+          {label:"Avg Asset IRR",   value:f.p(avgIRR),  accent:"#00C9A7"},
+          {label:"Avg MOIC",        value:f.x(avgMOIC), accent:C.gold},
+        ].map(({label,value,accent})=>(
+          <div key={label} style={{
+            background:"rgba(255,255,255,0.03)",
+            border:`1px solid rgba(255,255,255,0.06)`,
+            borderTop:`3px solid ${accent}`,
+            borderRadius:8,padding:"14px 16px",
+          }}>
+            <div style={{fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",
+              color:"rgba(255,255,255,0.45)",marginBottom:6,fontWeight:600}}>{label}</div>
+            <div style={{fontSize:20,fontWeight:700,color:C.white,
+              fontFamily:"'Playfair Display',serif",lineHeight:1.1}}>{value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* View Toggle */}
+      <div style={{display:"flex",gap:3,marginBottom:18,background:"rgba(255,255,255,0.04)",
+        borderRadius:8,padding:3,width:"fit-content"}}>
+        {[["detail","Asset Detail"],["table","Comparison Table"]].map(([v,l])=>(
+          <button key={v} onClick={()=>setView(v)} style={{
+            background:view===v?"rgba(255,255,255,0.12)":"transparent",
+            color:view===v?C.white:"rgba(255,255,255,0.4)",
+            border:"none",borderRadius:6,padding:"7px 20px",fontSize:10,fontWeight:600,
+            letterSpacing:".04em",cursor:"pointer",
+            transition:"all 0.2s ease"}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {/* DETAIL VIEW */}
+      {view==="detail" && (
+        <div style={{display:"grid",gridTemplateColumns:"220px 1fr",gap:18}}>
+
+          {/* Left: Asset List */}
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {a.assets.map((ast,idx)=>{
+              const ar = m.assetR[idx];
+              const isActive = idx===sel;
+              const col = assetColors[idx%assetColors.length];
+              return(
+                <button key={idx} onClick={()=>setSel(idx)} style={{
+                  background:isActive?"rgba(255,255,255,0.08)":"rgba(255,255,255,0.02)",
+                  border:isActive?`1px solid rgba(255,255,255,0.15)`:`1px solid rgba(255,255,255,0.05)`,
+                  borderLeft:isActive?`3px solid ${col}`:`3px solid transparent`,
+                  borderRadius:8,padding:"12px 14px",cursor:"pointer",textAlign:"left",
+                  transition:"all 0.15s ease",
+                }}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                    <span style={{fontSize:12,fontWeight:700,color:isActive?C.white:"rgba(255,255,255,0.6)"}}>{ast.name}</span>
+                    <span style={{fontSize:10,color:col,fontWeight:700}}>{f.p(ar?.irr)}</span>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:10}}>
+                    <span style={{color:"rgba(255,255,255,0.35)"}}>{f.$(ast.price)}</span>
+                    <span style={{color:"rgba(255,255,255,0.35)"}}>{f.x(ar?.moic)}</span>
+                  </div>
+                </button>
+              );
+            })}
+            <button onClick={addAsset} style={{
+              background:"transparent",border:`1px dashed rgba(255,255,255,0.12)`,
+              borderRadius:8,padding:"10px",cursor:"pointer",
+              color:"rgba(255,255,255,0.3)",fontSize:11,fontWeight:600,
+              letterSpacing:".04em",marginTop:4,
+            }}>+ Add Asset</button>
+          </div>
+
+          {/* Right: Asset Detail Panel */}
+          <div>
+            {/* Asset Header */}
+            <div style={{
+              background:"rgba(255,255,255,0.03)",border:`1px solid rgba(255,255,255,0.07)`,
+              borderRadius:10,padding:"18px 22px",marginBottom:16,
+            }}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                    <div style={{width:4,height:28,borderRadius:2,
+                      background:assetColors[sel%assetColors.length]}}/>
+                    <input value={asset.name} onChange={e=>setAsset(sel,"name",e.target.value)}
+                      style={{background:"transparent",border:"none",
+                        color:C.white,fontSize:18,fontWeight:700,outline:"none",
+                        fontFamily:"'Playfair Display',serif",width:200}}/>
+                  </div>
+                  <div style={{display:"flex",gap:6,marginLeft:14}}>
+                    <span style={{background:"rgba(0,201,167,0.12)",color:"#00C9A7",
+                      padding:"3px 10px",borderRadius:20,fontSize:10,fontWeight:700}}>
+                      IRR {f.p(r?.irr)}
+                    </span>
+                    <span style={{background:"rgba(212,175,55,0.12)",color:C.gold,
+                      padding:"3px 10px",borderRadius:20,fontSize:10,fontWeight:700}}>
+                      MOIC {f.x(r?.moic)}
+                    </span>
+                    <span style={{background:"rgba(78,168,222,0.12)",color:C.blue,
+                      padding:"3px 10px",borderRadius:20,fontSize:10,fontWeight:700}}>
+                      Equity {f.$(r?.eq)}
+                    </span>
+                    <span style={{background:"rgba(167,139,250,0.12)",color:C.purple,
+                      padding:"3px 10px",borderRadius:20,fontSize:10,fontWeight:700}}>
+                      Debt {f.$(r?.debt)}
+                    </span>
+                  </div>
+                </div>
                 {a.assets.length>1&&(
-                  <button onClick={()=>removeAsset(idx)}
-                    style={{background:"rgba(192,57,43,.2)",border:`1px solid ${C.red}`,
-                      color:C.red,borderRadius:3,padding:"2px 8px",fontSize:9,cursor:"pointer"}}>✕</button>
+                  <button onClick={()=>{removeAsset(sel);setSel(Math.max(0,sel-1));}}
+                    style={{background:"rgba(255,107,107,0.08)",border:`1px solid rgba(255,107,107,0.2)`,
+                      color:C.red,borderRadius:6,padding:"5px 12px",fontSize:10,fontWeight:600,
+                      cursor:"pointer",letterSpacing:".03em"}}>Remove</button>
                 )}
               </div>
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
+
+            {/* Metric Cards Row */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:16}}>
               {[
-                {k:"price",     l:"Price",       min:5e6, max:50e6,step:5e5, d:v=>`$${(v/1e6).toFixed(1)}M`},
-                {k:"cap",       l:"Going-In Cap",min:.05, max:.12, step:.005,d:v=>`${(v*100).toFixed(1)}%`},
-                {k:"growth",    l:"NOI Growth",  min:.02, max:.12, step:.005,d:v=>`${(v*100).toFixed(1)}%`},
-                {k:"startMonth",l:"Close Month", min:3,   max:36,  step:3,   d:v=>`M${v}`},
-              ].map(fi=>(
-                <div key={fi.k}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
-                    <span style={{fontSize:9,color:C.goldDim,textTransform:"uppercase",letterSpacing:".06em"}}>{fi.l}</span>
-                    <span style={{fontSize:10,color:C.gold}}>{fi.d(asset[fi.k])}</span>
-                  </div>
-                  <input type="range" min={fi.min} max={fi.max} step={fi.step} value={asset[fi.k]}
-                    onChange={e=>setAsset(idx,fi.k,Number(e.target.value))}
-                    style={{width:"100%",accentColor:C.gold,cursor:"pointer",
-                      background:`linear-gradient(to right, ${C.gold} ${Math.min(100,Math.max(0,((asset[fi.k]-fi.min)/(fi.max-fi.min))*100))}%, rgba(255,255,255,0.07) 0%)`}}/>
+                {label:"Exit Value",       value:f.$(r?.exitVal), accent:C.green},
+                {label:"Net Sale Proceeds", value:f.$(r?.saleNet), accent:C.cyan},
+                {label:"Annual Debt Svc",   value:f.$(r?.annDS),  accent:C.orange},
+                {label:"Loan Balance",      value:f.$(r?.lb),     accent:C.purple},
+              ].map(({label,value,accent})=>(
+                <div key={label} style={{
+                  background:"rgba(255,255,255,0.03)",border:`1px solid rgba(255,255,255,0.06)`,
+                  borderRadius:8,padding:"12px 14px",borderLeft:`3px solid ${accent}`,
+                }}>
+                  <div style={{fontSize:8,letterSpacing:"0.1em",textTransform:"uppercase",
+                    color:"rgba(255,255,255,0.4)",marginBottom:5,fontWeight:600}}>{label}</div>
+                  <div style={{fontSize:16,fontWeight:700,color:C.white,fontFamily:"'Playfair Display',serif"}}>{value}</div>
                 </div>
               ))}
             </div>
+
+            {/* Parameter Sliders */}
+            <div style={{
+              background:"rgba(255,255,255,0.03)",border:`1px solid rgba(255,255,255,0.06)`,
+              borderRadius:10,padding:"16px 20px",marginBottom:16,
+            }}>
+              <div style={{fontSize:9,letterSpacing:"0.12em",textTransform:"uppercase",
+                color:"rgba(255,255,255,0.35)",marginBottom:14,fontWeight:700}}>Assumptions</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"18px 28px"}}>
+                {fields.map(fi=>{
+                  const pct = Math.min(100,Math.max(0,((asset[fi.k]-fi.min)/(fi.max-fi.min))*100));
+                  return(
+                    <div key={fi.k}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                        <span style={{fontSize:10,color:"rgba(255,255,255,0.5)",fontWeight:600}}>{fi.l}</span>
+                        <span style={{fontSize:13,color:fi.color,fontWeight:700}}>{fi.d(asset[fi.k])}</span>
+                      </div>
+                      <div style={{position:"relative",height:5,background:"rgba(255,255,255,0.06)",borderRadius:4}}>
+                        <div style={{position:"absolute",left:0,width:`${pct}%`,height:"100%",
+                          background:`linear-gradient(90deg, ${fi.color}88, ${fi.color})`,borderRadius:4}}/>
+                        <div style={{position:"absolute",left:`calc(${pct}% - 7px)`,top:-4,
+                          width:13,height:13,borderRadius:"50%",background:fi.color,
+                          boxShadow:`0 0 8px ${fi.color}66`,pointerEvents:"none"}}/>
+                        <input type="range" min={fi.min} max={fi.max} step={fi.step} value={asset[fi.k]}
+                          onChange={e=>setAsset(sel,fi.k,Number(e.target.value))}
+                          style={{position:"absolute",top:-8,left:0,width:"100%",height:22,
+                            opacity:0,cursor:"pointer",margin:0,padding:0}}/>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Charts Row */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+              {/* NOI Growth Chart */}
+              <div style={{
+                background:"rgba(255,255,255,0.03)",border:`1px solid rgba(255,255,255,0.06)`,
+                borderRadius:10,padding:"16px 18px",
+              }}>
+                <div style={{fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",
+                  color:"rgba(255,255,255,0.35)",marginBottom:12,fontWeight:700}}>NOI Trajectory</div>
+                <ResponsiveContainer width="100%" height={180}>
+                  <AreaChart data={noiData}>
+                    <defs>
+                      <linearGradient id={`noi-g-${sel}`} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#00C9A7" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#00C9A7" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <XAxis dataKey="year" tick={{fill:"rgba(255,255,255,0.35)",fontSize:9}} axisLine={false} tickLine={false}/>
+                    <YAxis tickFormatter={v=>`$${(v/1e6).toFixed(1)}M`} tick={{fill:"rgba(255,255,255,0.35)",fontSize:9}} axisLine={false} tickLine={false} width={48}/>
+                    <Tooltip content={<TT/>}/>
+                    <Area type="monotone" dataKey="noi" stroke="#00C9A7" strokeWidth={2.5}
+                      fill={`url(#noi-g-${sel})`} name="NOI" dot={{fill:"#00C9A7",r:3,strokeWidth:0}}/>
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Annual Cash Flow Chart */}
+              <div style={{
+                background:"rgba(255,255,255,0.03)",border:`1px solid rgba(255,255,255,0.06)`,
+                borderRadius:10,padding:"16px 18px",
+              }}>
+                <div style={{fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",
+                  color:"rgba(255,255,255,0.35)",marginBottom:12,fontWeight:700}}>Annual Cash Flow Breakdown</div>
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={cfData}>
+                    <XAxis dataKey="year" tick={{fill:"rgba(255,255,255,0.35)",fontSize:9}} axisLine={false} tickLine={false}/>
+                    <YAxis tickFormatter={v=>v>=0?`$${(v/1e6).toFixed(1)}M`:`-$${(Math.abs(v)/1e6).toFixed(1)}M`}
+                      tick={{fill:"rgba(255,255,255,0.35)",fontSize:9}} axisLine={false} tickLine={false} width={52}/>
+                    <Tooltip content={<TT/>}/>
+                    <ReferenceLine y={0} stroke="rgba(255,255,255,0.1)"/>
+                    <Bar dataKey="noi" name="NOI" fill="#00C9A7" radius={[3,3,0,0]} stackId="pos"/>
+                    <Bar dataKey="debtService" name="Debt Service" fill="#FF6B6B" radius={[0,0,3,3]} stackId="neg"/>
+                  </BarChart>
+                </ResponsiveContainer>
+                <div style={{display:"flex",gap:14,marginTop:8,justifyContent:"center"}}>
+                  {[{l:"NOI",c:"#00C9A7"},{l:"Debt Svc",c:"#FF6B6B"}].map(({l,c})=>(
+                    <div key={l} style={{display:"flex",alignItems:"center",gap:5,fontSize:9,color:"rgba(255,255,255,0.4)"}}>
+                      <div style={{width:8,height:8,borderRadius:2,background:c}}/>{l}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
-        );
-      })}
-      <button onClick={addAsset} style={{
-        width:"100%",padding:"10px",marginBottom:12,marginTop:4,
-        background:"rgba(201,168,76,.07)",border:`1px dashed rgba(201,168,76,.3)`,
-        color:C.goldDim,borderRadius:5,fontSize:11,fontWeight:600,cursor:"pointer",
-        letterSpacing:".05em"}}>+ Add Asset</button>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginTop:0}}>
-        <KPI label="Wtd Avg Cap" value={f.p(a.assets.reduce((s,x)=>s+x.cap*x.price,0)/a.assets.reduce((s,x)=>s+x.price,0))}/>
-        <KPI label="Portfolio Value" value={f.$(a.assets.reduce((s,x)=>s+x.price,0))}/>
-        <KPI label="Total Equity" value={f.$(a.assets.reduce((s,x)=>s+x.price*(1-a.debtPct),0))}/>
-        <KPI label="Total Debt" value={f.$(a.assets.reduce((s,x)=>s+x.price*a.debtPct,0))}/>
+        </div>
+      )}
+
+      {/* TABLE VIEW */}
+      {view==="table" && (
+        <div style={{
+          background:"rgba(255,255,255,0.03)",border:`1px solid rgba(255,255,255,0.06)`,
+          borderRadius:10,overflow:"hidden",
+        }}>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+              <thead>
+                <tr style={{background:"rgba(255,255,255,0.04)"}}>
+                  {["Asset","Price","Cap Rate","NOI Growth","Close","Equity","Debt","Exit Value",
+                    "Ann. Debt Svc","IRR","MOIC",""].map(h=>(
+                    <th key={h} style={{padding:"10px 12px",color:"rgba(255,255,255,0.4)",fontSize:9,
+                      textTransform:"uppercase",letterSpacing:".08em",fontWeight:700,
+                      textAlign:h==="Asset"?"left":"center",
+                      borderBottom:"1px solid rgba(255,255,255,0.06)",whiteSpace:"nowrap"}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {a.assets.map((ast,idx)=>{
+                  const ar = m.assetR[idx];
+                  const col = assetColors[idx%assetColors.length];
+                  return(
+                    <tr key={idx} onClick={()=>{setSel(idx);setView("detail");}}
+                      style={{cursor:"pointer",borderBottom:"1px solid rgba(255,255,255,0.04)",
+                        background:idx%2===0?"transparent":"rgba(255,255,255,0.015)",
+                        transition:"background 0.15s",
+                      }}
+                      onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,0.06)"}
+                      onMouseLeave={e=>e.currentTarget.style.background=idx%2===0?"transparent":"rgba(255,255,255,0.015)"}>
+                      <td style={{padding:"10px 12px"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <div style={{width:3,height:22,borderRadius:2,background:col}}/>
+                          <span style={{color:C.white,fontWeight:600}}>{ast.name}</span>
+                        </div>
+                      </td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:C.white}}>{f.$(ast.price)}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:C.purple}}>{f.p(ast.cap)}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:"#00C9A7"}}>{f.p(ast.growth)}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:C.orange}}>M{ast.startMonth}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:C.white}}>{f.$(ar?.eq)}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:C.whDim}}>{f.$(ar?.debt)}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:C.cyan}}>{f.$(ar?.exitVal)}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:C.whDim}}>{f.$(ar?.annDS)}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center"}}>
+                        <span style={{background:ar?.irr>=a.prefReturn?"rgba(0,201,167,0.12)":"rgba(255,107,107,0.12)",
+                          color:ar?.irr>=a.prefReturn?"#00C9A7":"#FF6B6B",
+                          padding:"3px 8px",borderRadius:20,fontSize:10,fontWeight:700}}>
+                          {f.p(ar?.irr)}
+                        </span>
+                      </td>
+                      <td style={{padding:"10px 12px",textAlign:"center"}}>
+                        <span style={{color:C.gold,fontWeight:700}}>{f.x(ar?.moic)}</span>
+                      </td>
+                      <td style={{padding:"10px 12px",textAlign:"center"}}>
+                        {a.assets.length>1&&(
+                          <button onClick={e=>{e.stopPropagation();removeAsset(idx);if(sel>=a.assets.length-1)setSel(Math.max(0,sel-1));}}
+                            style={{background:"rgba(255,107,107,0.08)",border:`1px solid rgba(255,107,107,0.2)`,
+                              color:C.red,borderRadius:5,padding:"3px 8px",fontSize:9,cursor:"pointer"}}>✕</button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {/* Totals Row */}
+                <tr style={{borderTop:"2px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.04)"}}>
+                  <td style={{padding:"10px 12px",color:C.gold,fontWeight:700}}>Portfolio Total</td>
+                  <td style={{padding:"10px 12px",textAlign:"center",color:C.gold,fontWeight:700}}>{f.$(totVal)}</td>
+                  <td style={{padding:"10px 12px",textAlign:"center",color:C.purple,fontWeight:700}}>{f.p(wtdCap)}</td>
+                  <td colSpan={2}/>
+                  <td style={{padding:"10px 12px",textAlign:"center",color:C.gold,fontWeight:700}}>{f.$(totEq)}</td>
+                  <td style={{padding:"10px 12px",textAlign:"center",color:C.gold,fontWeight:700}}>{f.$(totDebt)}</td>
+                  <td colSpan={2}/>
+                  <td style={{padding:"10px 12px",textAlign:"center"}}>
+                    <span style={{background:"rgba(0,201,167,0.12)",color:"#00C9A7",
+                      padding:"3px 8px",borderRadius:20,fontSize:10,fontWeight:700}}>{f.p(avgIRR)}</span>
+                  </td>
+                  <td style={{padding:"10px 12px",textAlign:"center",color:C.gold,fontWeight:700}}>{f.x(avgMOIC)}</td>
+                  <td/>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div style={{padding:"12px 16px",borderTop:"1px solid rgba(255,255,255,0.06)"}}>
+            <button onClick={addAsset} style={{
+              background:"transparent",border:`1px dashed rgba(255,255,255,0.12)`,
+              borderRadius:6,padding:"8px 18px",cursor:"pointer",
+              color:"rgba(255,255,255,0.3)",fontSize:10,fontWeight:600}}>+ Add Asset</button>
+          </div>
+        </div>
+      )}
+
+      {/* Portfolio IRR Comparison Bar — always visible below */}
+      <div style={{
+        background:"rgba(255,255,255,0.03)",border:`1px solid rgba(255,255,255,0.06)`,
+        borderRadius:10,padding:"16px 18px",marginTop:18,
+      }}>
+        <div style={{fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",
+          color:"rgba(255,255,255,0.35)",marginBottom:14,fontWeight:700}}>Asset IRR Comparison</div>
+        <ResponsiveContainer width="100%" height={140}>
+          <BarChart data={m.assetR.map((ar,i)=>({name:ar.name,irr:ar.irr,idx:i}))} layout="vertical"
+            margin={{left:10,right:20,top:0,bottom:0}}>
+            <XAxis type="number" tickFormatter={v=>`${(v*100).toFixed(0)}%`}
+              tick={{fill:"rgba(255,255,255,0.35)",fontSize:9}} axisLine={false} tickLine={false}/>
+            <YAxis type="category" dataKey="name" width={70}
+              tick={{fill:"rgba(255,255,255,0.5)",fontSize:9}} axisLine={false} tickLine={false}/>
+            <Tooltip content={<TT/>} formatter={v=>`${(v*100).toFixed(1)}%`}/>
+            <ReferenceLine x={a.prefReturn} stroke={C.gold} strokeDasharray="4 4"
+              label={{value:`${(a.prefReturn*100)}% Pref`,fill:C.gold,fontSize:9,position:"top"}}/>
+            <Bar dataKey="irr" name="IRR" radius={[0,4,4,0]}>
+              {m.assetR.map((e,i)=>(
+                <Cell key={i} fill={i===sel?assetColors[i%assetColors.length]:
+                  e.irr>=a.prefReturn?"rgba(0,201,167,0.4)":"rgba(255,107,107,0.4)"}/>
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );
@@ -969,41 +1296,18 @@ function TabWaterfall({m,a}){
 function TabFundCF({m,a}){
   const [view, setView] = useState("charts");
 
-  // Monthly fund CF table
-  const moTable = m.gpEntity.map((gp,i)=>{
-    const mo = m.gpEntity[i].mo;
-    const portNOI = m.gaMonthly[i] ? m.gpEntity[i].opDist/a.gpPct : 0;
-    const ds = m.gaMonthly[i] ? (portNOI - m.gpEntity[i].opDist/a.gpPct*(1)) : 0;
-    const lpCall = m.fundCFAnnual ? 0 : 0;
+  // Monthly fund CF — built from model monthly data (G&A already deducted from netOpCF)
+  const moDetail = (m.monthly||[]).map((x,i)=>{
+    const portOpCF = x.netOpCF;  // net of DS + G&A
     return {
-      mo,
-      noi:   Math.round(m.gaMonthly[i] ? m.gaMonthly[i].mo && 0 : 0), // placeholder
-      lpDist: Math.round(Math.max(0,gp.opDist/Math.max(a.gpPct,0.001)*(1-a.gpPct))),
-      gpDist: Math.round(Math.max(0,gp.opDist)),
-      amFee:  Math.round(gp.fees - gp.opDist),
-      pmFee:  Math.round(0),
-    };
-  });
-
-  // Rebuild from monthly source data directly
-  const moDetail = Array.from({length:a.fundTerm*12},(_,i)=>{
-    const mo=i+1;
-    // Reconstruct from gpEntity
-    const gp = m.gpEntity[i]||{};
-    const totalFees = gp.fees||0;
-    const opDist = gp.opDist||0;
-    const portOpCF = opDist/Math.max(a.gpPct,0.001); // total fund op CF
-    return {
-      mo,
+      mo: x.mo,
       portOpCF: Math.round(portOpCF),
-      amFee:    Math.round(totalFees - opDist),
-      pmFeeEst: 0,
+      ga: Math.round(x.ga),
       lpShare:  Math.round(portOpCF*(1-a.gpPct)),
       gpShare:  Math.round(portOpCF*a.gpPct),
       cumLP:    0,
     };
   });
-  // Build cumulative LP
   let cumLP=0;
   moDetail.forEach(r=>{cumLP+=r.lpShare;r.cumLP=Math.round(cumLP);});
 
@@ -1012,7 +1316,7 @@ function TabFundCF({m,a}){
       <PHdr title="Fund Cash Flow" sub="LP capital calls, operating CF, and monthly distribution detail"/>
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:18}}>
         <KPI label="Total LP Called"   value={f.$(m.totLPCalled)} sub="Investment period"/>
-        <KPI label="Total Op CF"       value={f.$(m.totOpCF)}     sub="Net of DS + PM fees"/>
+        <KPI label="Total Op CF"       value={f.$(m.totOpCF)}     sub="Net of DS + G&A"/>
         <KPI label="Sale Proceeds"     value={f.$(m.totSaleProc)} sub="All 8 exits" gold/>
         <KPI label="Total Pool"        value={f.$(m.pool)}        sub="Available for distribution"/>
       </div>
@@ -1086,13 +1390,12 @@ function TabFundCF({m,a}){
           </div>
 
           {/* Column legend */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6,marginBottom:14}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginBottom:14}}>
             {[
-              {col:"Portfolio CF",  color:C.green,   desc:"Total fund cash flow net of DS, PM & AM fees"},
-              {col:"Mgmt Fee",      color:"#E8D5A3",  desc:"Asset mgmt fee to GP entity that quarter"},
-              {col:"LP Distribution", color:"#5DADE2",desc:"LP 98% share of portfolio cash flow"},
-              {col:"GP Distribution", color:C.gold,  desc:"GP 2% co-invest share"},
-              {col:"LP Called (cumul)", color:C.whDim,desc:"Cumulative LP capital drawn through end of quarter"},
+              {col:"Portfolio CF",    color:C.green,   desc:"Fund cash flow net of DS + G&A overhead"},
+              {col:"LP Distribution", color:"#5DADE2", desc:`LP ${f.p(1-a.gpPct)} share of portfolio cash flow`},
+              {col:"GP Distribution", color:C.gold,    desc:`GP ${f.p(a.gpPct)} co-invest share`},
+              {col:"LP Called (cumul)", color:C.whDim,  desc:"Cumulative LP capital drawn through end of quarter"},
             ].map(({col,color,desc})=>(
               <div key={col} style={{background:"rgba(255,255,255,.04)",borderRadius:4,
                 padding:"7px 9px",borderTop:`2px solid ${color}`}}>
@@ -1110,7 +1413,6 @@ function TabFundCF({m,a}){
                   {[
                     {h:"Quarter",align:"left"},
                     {h:"Portfolio CF",      align:"right",color:C.green},
-                    {h:"Mgmt Fee",          align:"right",color:"#E8D5A3"},
                     {h:"LP Distribution",  align:"right",color:"#5DADE2"},
                     {h:"GP Distribution",  align:"right",color:C.gold},
                     {h:"LP Called (cumul)",align:"right",color:C.whDim},
@@ -1123,19 +1425,17 @@ function TabFundCF({m,a}){
               </thead>
               <tbody>
                 {(()=>{
-                  // Roll up moDetail into quarters
                   const qtrs=[];
-                  let cumLP=0;
+                  let cumLP2=0;
                   for(let q=0;q<a.fundTerm*4;q++){
                     const mos=moDetail.slice(q*3,(q+1)*3);
                     const portCF=mos.reduce((s,r)=>s+r.portOpCF,0);
-                    const fee=mos.reduce((s,r)=>s+r.amFee,0);
                     const lp=mos.reduce((s,r)=>s+r.lpShare,0);
                     const gp=mos.reduce((s,r)=>s+r.gpShare,0);
-                    cumLP+=lp;
+                    cumLP2+=lp;
                     const yr=Math.floor(q/4)+1;
                     const qn=(q%4)+1;
-                    qtrs.push({label:`Y${yr} Q${qn}`,portCF,fee,lp,gp,cumLP:Math.round(cumLP)});
+                    qtrs.push({label:`Y${yr} Q${qn}`,portCF,lp,gp,cumLP:Math.round(cumLP2)});
                   }
                   return qtrs.map((row,i)=>{
                     const isYrEnd=(i+1)%4===0;
@@ -1147,7 +1447,6 @@ function TabFundCF({m,a}){
                           fontWeight:isYrEnd?700:400}}>{row.label}</td>
                         <td style={{padding:"5px 10px",textAlign:"right",
                           color:row.portCF>=0?C.green:C.red}}>{f.$(row.portCF)}</td>
-                        <td style={{padding:"5px 10px",textAlign:"right",color:"#E8D5A3"}}>{f.$(row.fee)}</td>
                         <td style={{padding:"5px 10px",textAlign:"right",color:"#5DADE2"}}>{f.$(row.lp)}</td>
                         <td style={{padding:"5px 10px",textAlign:"right",color:C.gold}}>{f.$(row.gp)}</td>
                         <td style={{padding:"5px 10px",textAlign:"right",color:C.whDim}}>{f.$(row.cumLP)}</td>
@@ -1158,7 +1457,6 @@ function TabFundCF({m,a}){
                 <tr style={{borderTop:`2px solid ${C.border}`,background:"rgba(201,168,76,.06)"}}>
                   <td style={{padding:"7px 10px",color:C.gold,fontWeight:700}}>7-YR TOTAL</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:C.green,fontWeight:700}}>{f.$(m.totOpCF)}</td>
-                  <td style={{padding:"7px 10px",textAlign:"right",color:"#E8D5A3",fontWeight:700}}>{f.$(m.totAMFee)}</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:"#5DADE2",fontWeight:700}}>{f.$(m.totOpCF*(1-a.gpPct))}</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:C.gold,fontWeight:700}}>{f.$(m.totOpCF*a.gpPct)}</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:C.whDim,fontWeight:700}}>{f.$(m.lpActualCapital)}</td>
@@ -1174,18 +1472,16 @@ function TabFundCF({m,a}){
           <CT c="Monthly Fund Cash Flow — All 84 Months"/>
 
           {/* Column explainer */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6,marginBottom:14}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginBottom:14}}>
             {[
               {col:"Portfolio Cash Flow", color:C.green,
-                desc:"NOI from all properties minus debt service, property mgmt fees, and asset mgmt fees. Cash the fund actually produces each month."},
-              {col:"Mgmt Fee to GP", color:"#E8D5A3",
-                desc:"Asset management fee paid monthly by the fund to the GP entity. 1% of invested capital per year, earned as properties close."},
+                desc:"NOI from all properties minus debt service and G&A overhead. Net cash the fund produces each month."},
               {col:"LP Cash Flow", color:"#5DADE2",
-                desc:"LP's proportional share of portfolio cash flow (98%). This is the running income return distributed to LP investors."},
+                desc:`LP's ${f.p(1-a.gpPct)} share of portfolio cash flow. Running income return distributed to LP investors.`},
               {col:"GP Cash Flow", color:C.gold,
-                desc:"GP's 2% co-invest share of portfolio cash flow. Separate from fees — this is GP's return on equity invested alongside LPs."},
+                desc:`GP's ${f.p(a.gpPct)} co-invest share of portfolio cash flow. Return on equity invested alongside LPs.`},
               {col:"Cumul. LP Called", color:C.whDim,
-                desc:"Running total of LP capital drawn down. Grows as each asset closes. Full drawdown complete by month 27."},
+                desc:"Running total of LP capital drawn down. Grows as each asset closes."},
             ].map(({col,color,desc})=>(
               <div key={col} style={{background:"rgba(255,255,255,.04)",borderRadius:4,padding:"8px 10px",
                 borderTop:`2px solid ${color}`}}>
@@ -1203,7 +1499,6 @@ function TabFundCF({m,a}){
                   {[
                     {h:"Mo",        align:"left"},
                     {h:"Portfolio Cash Flow", align:"right", color:C.green},
-                    {h:"Mgmt Fee to GP",      align:"right", color:"#E8D5A3"},
                     {h:"LP Cash Flow",        align:"right", color:"#5DADE2"},
                     {h:"GP Cash Flow",        align:"right", color:C.gold},
                     {h:"Cumul. LP Called",    align:"right", color:C.whDim},
@@ -1221,7 +1516,6 @@ function TabFundCF({m,a}){
                     <td style={{padding:"5px 10px",color:C.gold,fontWeight:600}}>M{row.mo}</td>
                     <td style={{padding:"5px 10px",textAlign:"right",
                       color:row.portOpCF>=0?C.green:C.red}}>{f.$(row.portOpCF)}</td>
-                    <td style={{padding:"5px 10px",textAlign:"right",color:"#E8D5A3"}}>{f.$(row.amFee)}</td>
                     <td style={{padding:"5px 10px",textAlign:"right",color:"#5DADE2"}}>{f.$(row.lpShare)}</td>
                     <td style={{padding:"5px 10px",textAlign:"right",color:C.gold}}>{f.$(row.gpShare)}</td>
                     <td style={{padding:"5px 10px",textAlign:"right",color:C.whDim}}>{f.$(row.cumLP)}</td>
@@ -1230,7 +1524,6 @@ function TabFundCF({m,a}){
                 <tr style={{borderTop:`2px solid ${C.border}`,background:"rgba(201,168,76,.06)"}}>
                   <td style={{padding:"7px 10px",color:C.gold,fontWeight:700}}>7-YR TOTAL</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:C.green,fontWeight:700}}>{f.$(m.totOpCF)}</td>
-                  <td style={{padding:"7px 10px",textAlign:"right",color:"#E8D5A3",fontWeight:700}}>{f.$(m.totAMFee)}</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:"#5DADE2",fontWeight:700}}>{f.$(m.totOpCF*(1-a.gpPct))}</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:C.gold,fontWeight:700}}>{f.$(m.totOpCF*a.gpPct)}</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:C.whDim,fontWeight:700}}>{f.$(m.totLPCalled)}</td>
@@ -1248,7 +1541,6 @@ function TabFundCF({m,a}){
 // G&A MODEL
 // ═══════════════════════════════════════════════════════════════════════════════
 function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,setPartnerSal,setOneTime,addOneTime,removeOneTime}){
-  const feeCoverage=m.totFees/m.totGA;
   const [gaView, setGaView] = useState("chart"); // chart | gantt | monthly
 
   // Build full 84-month G&A detail table with all expense categories
@@ -1259,8 +1551,6 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
     overhead:   Math.round(x.fix),
     oneTime:    Math.round(x.oneTimeHit||0),
     total:      Math.round(x.total),
-    fees:       Math.round(m.gpEntity[i]?.fees||0),
-    net:        Math.round((m.gpEntity[i]?.fees||0) - x.total),
   }));
 
   // Quarterly rollup — 28 quarters
@@ -1274,8 +1564,6 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
       overhead:   slice.reduce((s,r)=>s+r.overhead,0),
       oneTime:    slice.reduce((s,r)=>s+r.oneTime,0),
       total:      slice.reduce((s,r)=>s+r.total,0),
-      fees:       slice.reduce((s,r)=>s+r.fees,0),
-      net:        slice.reduce((s,r)=>s+r.net,0),
     };
   });
 
@@ -1286,26 +1574,12 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
 
   return(
     <div>
-      <PHdr title="G&A Model" sub="Hire timing, salaries, overhead, and fee coverage — monthly detail"/>
+      <PHdr title="G&A Model" sub="Hire timing, salaries, and overhead — flows directly as fund operating expense"/>
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:18}}>
-        <KPI label="Total G&A (7yr)"       value={f.$(m.totGA)}             sub="All-in incl. partner salaries"/>
+        <KPI label="Total G&A (7yr)"       value={f.$(m.totGA)}             sub="All-in incl. partner salaries" gold/>
         <KPI label="Partner Salaries (7yr)" value={f.$(m.totPartnerSal)}    sub="Base comp, excl. promote"/>
-        <KPI label="Total Fee Income"       value={f.$(m.totFees)}          sub="AM + PM fees received by GP"/>
-        <KPI label="Fee Coverage"           value={f.p(feeCoverage)}        sub="Fees ÷ total G&A" gold/>
-        <KPI label="Net G&A Burden"         value={f.$(m.totGA-m.totFees)}  sub="After fee offset"/>
-      </div>
-
-      {/* AM fee explainer */}
-      <div style={{background:"rgba(201,168,76,.06)",border:`1px solid rgba(201,168,76,.25)`,
-        borderRadius:5,padding:"11px 15px",marginBottom:16,display:"flex",gap:20,flexWrap:"wrap"}}>
-        <div style={{fontSize:11,color:C.whDim}}>
-          <span style={{color:C.gold,fontWeight:700}}>Where does the AM fee go? </span>
-          The {f.p(a.amFee)} annual asset management fee is paid by the fund to the GP entity on invested capital.
-          It flows directly into GP operating cash — first offsetting G&A, then available as partner distributions.
-          Total 7-yr AM income: <span style={{color:C.gold,fontWeight:600}}>{f.$(m.totAMFee)}</span> · 
-          PM fee: <span style={{color:C.gold,fontWeight:600}}>{f.$(m.totPMFee)}</span> · 
-          Combined covers <span style={{color:C.gold,fontWeight:600}}>{f.p(m.totFees/m.totGA)}</span> of G&A. Any shortfall (<span style={{color:C.gold}}>{f.$(m.totGAShortfall)}</span>) is funded by LP as additional capital.
-        </div>
+        <KPI label="Staff & Overhead"       value={f.$(m.totGA-m.totPartnerSal)} sub="Non-partner G&A"/>
+        <KPI label="Monthly Avg"            value={f.$(m.totGA/(a.fundTerm*12))} sub="G&A run-rate"/>
       </div>
 
       {/* View toggle */}
@@ -1356,19 +1630,22 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
               </ResponsiveContainer>
             </Card>
             <Card>
-              <CT c="Fee Income vs G&A — Monthly Net"/>
+              <CT c="Cumulative G&A — Running Total"/>
               <ResponsiveContainer width="100%" height={180}>
-                <ComposedChart data={m.gpEntity.map(x=>({
-                  mo:x.mo,fees:Math.round(x.fees),ga:Math.round(-x.ga),net:Math.round(x.fees+x.ga)
-                }))}>
+                <AreaChart data={m.gaMonthly.map((x,i)=>{
+                  const cumGA=m.gaMonthly.slice(0,i+1).reduce((s,g)=>s+g.total,0);
+                  return{mo:x.mo,cumGA:Math.round(cumGA)};
+                })}>
+                  <defs>
+                    <linearGradient id="gcum" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={C.orange} stopOpacity={.3}/><stop offset="95%" stopColor={C.orange} stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
                   <XAxis dataKey="mo" tickFormatter={v=>v%12===0?`M${v}`:""} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false}/>
-                  <YAxis tickFormatter={v=>`$${(v/1000).toFixed(0)}K`} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false} width={44}/>
+                  <YAxis tickFormatter={v=>`$${(v/1e6).toFixed(1)}M`} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false} width={48}/>
                   <Tooltip content={<TT/>}/>
-                  <ReferenceLine y={0} stroke="rgba(255,255,255,.2)"/>
-                  <Bar dataKey="fees" name="Fee Income" fill={C.green} radius={[1,1,0,0]}/>
-                  <Bar dataKey="ga"   name="G&A Spend"  fill={C.red}   radius={[1,1,0,0]}/>
-                  <Line type="monotone" dataKey="net" name="Net" stroke={C.gold} strokeWidth={2} dot={false}/>
-                </ComposedChart>
+                  <Area type="monotone" dataKey="cumGA" stroke={C.orange} strokeWidth={2} fill="url(#gcum)" name="Cumul. G&A"/>
+                </AreaChart>
               </ResponsiveContainer>
             </Card>
           </div>
@@ -1427,15 +1704,13 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
       {(gaView==="quarterly"||gaView==="monthly") && (() => {
         // Shared column legend
         const legend = (
-          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:5,marginBottom:14}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:5,marginBottom:14}}>
             {[
               {col:"Partner Salaries", color:"#E8D5A3", desc:"CEO/COO/CIO base comp + benefits"},
-              {col:"Staff G&A",        color:C.blue,    desc:"All hires × salary × benefits allocation %"},
+              {col:"Staff G&A",        color:C.blue,    desc:"All hires x salary x benefits allocation %"},
               {col:"Overhead",         color:C.whDim,   desc:"Recurring overhead ramping to full run-rate"},
               {col:"One-Time",         color:"#A569BD", desc:"Setup, build-out, implementation costs"},
-              {col:"Total G&A",        color:C.white,   desc:"All expenses combined"},
-              {col:"Fee Income",       color:C.green,   desc:"AM fees + PM fees received by GP entity"},
-              {col:"Net (Fee − G&A)",  color:C.gold,    desc:"Positive = fees cover expenses. Negative = LP-funded shortfall"},
+              {col:"Total G&A",        color:C.white,   desc:"All expenses combined — flows as fund overhead"},
             ].map(({col,color,desc})=>(
               <div key={col} style={{background:"rgba(255,255,255,.04)",borderRadius:4,
                 padding:"6px 8px",borderTop:`2px solid ${color}`}}>
@@ -1454,8 +1729,6 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
           {h:"Overhead",      align:"right", color:C.whDim},
           {h:"One-Time",      align:"right", color:"#A569BD"},
           {h:"Total G&A",     align:"right", color:C.white},
-          {h:"Fee Income",    align:"right", color:C.green},
-          {h:"Net",           align:"right", color:C.gold},
         ];
 
         const renderRow = (row, key, label, isYrEnd=false, isTotals=false) => (
@@ -1475,10 +1748,6 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
               fontWeight:isTotals?700:400}}>{row.oneTime>0?f.$(row.oneTime):"—"}</td>
             <td style={{padding:"5px 8px",textAlign:"right",color:C.white,
               fontWeight:isTotals||isYrEnd?700:400}}>{f.$(row.total)}</td>
-            <td style={{padding:"5px 8px",textAlign:"right",color:C.green,
-              fontWeight:isTotals?700:400}}>{f.$(row.fees)}</td>
-            <td style={{padding:"5px 8px",textAlign:"right",fontWeight:isTotals||isYrEnd?700:400,
-              color:row.net>=0?C.green:C.red}}>{f.$(row.net)}</td>
           </tr>
         );
 
@@ -1488,8 +1757,6 @@ function TabGA({m,a,setHire,addHire,removeHire,setOhead,addOhead,removeOhead,set
           overhead:   monthlyTable.reduce((s,r)=>s+r.overhead,0),
           oneTime:    monthlyTable.reduce((s,r)=>s+r.oneTime,0),
           total:      monthlyTable.reduce((s,r)=>s+r.total,0),
-          fees:       monthlyTable.reduce((s,r)=>s+r.fees,0),
-          net:        monthlyTable.reduce((s,r)=>s+r.net,0),
         };
 
         const tableHead = (
