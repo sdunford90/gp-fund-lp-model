@@ -3,20 +3,19 @@ import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContai
   ReferenceLine, Cell, AreaChart, Area, ComposedChart } from "recharts";
 
 const C = {
-  // Light theme
-  bg:"#F8F9FC",       surface:"#FFFFFF",   surfaceAlt:"#F1F3F8",
-  navy:"#1B2A4A",     dark:"#0F172A",      mid:"#475569",
-  text:"#1E293B",     textDim:"#64748B",   textFaint:"#94A3B8",
-  accent:"#2563EB",   accentDim:"rgba(37,99,235,0.12)", accentLight:"#DBEAFE",
-  green:"#059669",    greenL:"rgba(5,150,105,0.08)",
-  red:"#DC2626",      redL:"rgba(220,38,38,0.08)",
-  blue:"#2563EB",     blueL:"rgba(37,99,235,0.08)",
-  cyan:"#0891B2",     purple:"#7C3AED",    orange:"#EA580C",
-  gold:"#D97706",     goldDim:"rgba(217,119,6,0.5)", goldFaint:"rgba(217,119,6,0.06)",
-  border:"#E2E8F0",   borderDark:"#CBD5E1",
-  cardBg:"#FFFFFF",   cardBorder:"#E2E8F0",
-  // Legacy aliases for components that still use old names
-  white:"#1E293B", whDim:"#64748B", whFaint:"#F1F3F8",
+  // Helm brand palette
+  bg:"#FAFAF8",           surface:"#FFFFFF",      surfaceAlt:"#F4F5F7",
+  navy:"#0A2342",         navyDim:"rgba(10,35,66,0.06)",
+  text:"#1A2E44",         textDim:"#64748B",       textFaint:"#94A3B8",
+  accent:"#00D4FF",       accentDim:"rgba(0,212,255,0.12)", accentLight:"rgba(0,212,255,0.08)",
+  green:"#059669",        greenL:"rgba(5,150,105,0.08)",
+  red:"#DC2626",          redL:"rgba(220,38,38,0.08)",
+  blue:"#2563EB",         blueL:"rgba(37,99,235,0.08)",
+  gold:"#D4AF37",         goldDim:"rgba(212,175,55,0.5)", goldFaint:"rgba(212,175,55,0.06)",
+  border:"#E2E8F0",       borderDark:"#CBD5E1",
+  cardBg:"#FFFFFF",       cardBorder:"#E2E8F0",
+  // Nav-surface text (white on navy)
+  navText:"#FFFFFF",      navTextDim:"rgba(255,255,255,0.55)",
 };
 
 // ── DEFAULT STATE ─────────────────────────────────────────────────────────────
@@ -420,14 +419,15 @@ const f={
 
 // ── UI ATOMS ──────────────────────────────────────────────────────────────────
 const KPI=({label,value,sub,gold})=>(
-  <div style={{background:gold?C.accent:C.surface,border:`1px solid ${gold?C.accent:C.border}`,
-    borderRadius:8,padding:"16px 18px",flex:1,minWidth:120,
-    boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
-    <div style={{fontSize:10,letterSpacing:"0.08em",textTransform:"uppercase",
-      color:gold?"rgba(255,255,255,.7)":C.textDim,marginBottom:5,fontWeight:600}}>{label}</div>
-    <div style={{fontSize:22,fontWeight:700,color:gold?"#FFFFFF":C.text,
-      fontFamily:"'Inter',sans-serif",lineHeight:1.1}}>{value}</div>
-    {sub&&<div style={{fontSize:9,color:gold?"rgba(255,255,255,.5)":C.textFaint,marginTop:3}}>{sub}</div>}
+  <div style={{background:gold?C.navy:C.surface,border:`1px solid ${gold?C.navy:C.border}`,
+    borderRadius:10,padding:"16px 20px",flex:1,minWidth:120,
+    boxShadow:gold?"0 2px 8px rgba(10,35,66,0.20)":"0 1px 4px rgba(10,35,66,0.06)"}}>
+    <div style={{fontSize:9,letterSpacing:"0.10em",textTransform:"uppercase",
+      color:gold?C.navTextDim:C.textDim,marginBottom:5,fontWeight:600,
+      fontFamily:"'JetBrains Mono',monospace"}}>{label}</div>
+    <div style={{fontSize:22,fontWeight:700,color:gold?C.navText:C.text,
+      fontFamily:"'DM Serif Display',serif",lineHeight:1.1}}>{value}</div>
+    {sub&&<div style={{fontSize:10,color:gold?"rgba(255,255,255,.45)":C.textFaint,marginTop:4}}>{sub}</div>}
   </div>
 );
 
@@ -436,16 +436,16 @@ const Sli=({label,value,min,max,step,disp,onChange,sub})=>{
   return(
     <div style={{marginBottom:15}}>
       <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-        <span style={{fontSize:9,color:C.textDim,textTransform:"uppercase",letterSpacing:"0.07em",fontWeight:600}}>{label}</span>
-        <span style={{fontSize:11,color:C.accent,fontWeight:700}}>{disp(value)}</span>
+        <span style={{fontSize:9,color:"rgba(255,255,255,0.5)",textTransform:"uppercase",letterSpacing:"0.07em",fontFamily:"'JetBrains Mono',monospace"}}>{label}</span>
+        <span style={{fontSize:11,color:C.gold,fontWeight:600,fontFamily:"'JetBrains Mono',monospace"}}>{disp(value)}</span>
       </div>
-      <div style={{position:"relative",height:4,background:C.border,borderRadius:3}}>
-        <div style={{position:"absolute",left:0,width:`${p}%`,height:"100%",background:C.accent,borderRadius:3}}/>
+      <div style={{position:"relative",height:3,background:"rgba(255,255,255,0.12)",borderRadius:2}}>
+        <div style={{position:"absolute",left:0,width:`${p}%`,height:"100%",background:C.gold,borderRadius:2}}/>
         <input type="range" min={min} max={max} step={step} value={value}
           onChange={e=>onChange(Number(e.target.value))}
           style={{position:"absolute",top:-7,left:0,width:"100%",height:18,opacity:0,cursor:"pointer",margin:0,padding:0}}/>
       </div>
-      {sub&&<div style={{fontSize:9,color:C.textFaint,marginTop:2}}>{sub}</div>}
+      {sub&&<div style={{fontSize:9,color:"rgba(255,255,255,0.3)",marginTop:2}}>{sub}</div>}
     </div>
   );
 };
@@ -469,14 +469,15 @@ const MiniSlider=({value,min,max,step,onChange,color=C.accent,width=80})=>{
 };
 
 const SHdr=({t})=>(
-  <div style={{fontSize:9,letterSpacing:"0.12em",textTransform:"uppercase",color:C.accent,
-    fontWeight:700,marginBottom:9,paddingBottom:5,borderBottom:`1px solid ${C.border}`}}>{t}</div>
+  <div style={{fontSize:9,letterSpacing:"0.14em",textTransform:"uppercase",color:C.gold,
+    fontWeight:700,marginBottom:9,paddingBottom:5,borderBottom:"1px solid rgba(212,175,55,0.25)",
+    fontFamily:"'JetBrains Mono',monospace"}}>{t}</div>
 );
 
 const PHdr=({title,sub})=>(
   <div style={{marginBottom:22}}>
-    <div style={{fontSize:22,fontWeight:800,color:C.text,fontFamily:"'Inter',sans-serif",marginBottom:3,
-      letterSpacing:"-0.02em"}}>{title}</div>
+    <div style={{fontSize:22,fontWeight:700,color:C.text,fontFamily:"'DM Serif Display',serif",marginBottom:3,
+      letterSpacing:"-0.01em"}}>{title}</div>
     {sub&&<div style={{fontSize:12,color:C.textDim}}>{sub}</div>}
   </div>
 );
@@ -594,22 +595,21 @@ export default function Portal(){
   const m=useMemo(()=>{try{return run(a);}catch(e){console.error(e);return null;}},[a]);
 
   return(
-    <div style={{minHeight:"100vh",background:C.bg,fontFamily:"'Inter',sans-serif",color:C.text}}>
+    <div style={{minHeight:"100vh",background:C.bg,fontFamily:"'DM Sans',sans-serif",color:C.text}}>
       {/* NAV */}
-      <div style={{background:"#FFFFFF",borderBottom:`1px solid ${C.border}`,padding:"0 24px",
+      <div style={{background:C.navy,borderBottom:"1px solid rgba(255,255,255,0.08)",padding:"0 24px",
         display:"flex",alignItems:"center",justifyContent:"space-between",
-        height:56,position:"sticky",top:0,zIndex:100,gap:16,
-        boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+        height:56,position:"sticky",top:0,zIndex:100,gap:16}}>
 
         {/* Logo */}
         <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
-          <div style={{width:32,height:32,background:C.accent,borderRadius:8,
+          <div style={{width:32,height:32,background:C.gold,borderRadius:6,
             display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-            <span style={{fontSize:12,fontWeight:900,color:"#FFFFFF",fontFamily:"'Inter',sans-serif"}}>F1</span>
+            <span style={{fontSize:12,fontWeight:900,color:C.navy,fontFamily:"'DM Sans',sans-serif"}}>F1</span>
           </div>
           <div>
-            <div style={{fontSize:14,fontWeight:800,color:C.text,letterSpacing:"-0.01em",lineHeight:1.2}}>GP Fund I</div>
-            <div style={{fontSize:10,color:C.textDim,letterSpacing:"0.06em",textTransform:"uppercase",lineHeight:1}}>LP Model</div>
+            <div style={{fontSize:14,fontWeight:700,color:C.navText,letterSpacing:"0.01em",lineHeight:1.2,fontFamily:"'DM Sans',sans-serif"}}>GP Fund I</div>
+            <div style={{fontSize:10,color:C.gold,letterSpacing:"0.08em",textTransform:"uppercase",lineHeight:1}}>LP Model</div>
           </div>
         </div>
 
@@ -622,12 +622,13 @@ export default function Portal(){
               <button key={t} onClick={()=>setTab(t)} style={{
                 display:"flex",alignItems:"center",justifyContent:"center",
                 padding:"8px 16px",cursor:"pointer",border:"none",
-                borderBottom:active?`2px solid ${C.accent}`:"2px solid transparent",
+                borderBottom:active?`2px solid ${C.gold}`:"2px solid transparent",
                 borderTop:"2px solid transparent",
-                background:"transparent",
-                minWidth:72,whiteSpace:"nowrap",flexShrink:0}}>
-                <span style={{fontSize:12,fontWeight:active?700:500,letterSpacing:"0.01em",
-                  color:active?C.accent:C.textDim,lineHeight:1}}>
+                background:active?"rgba(212,175,55,0.08)":"transparent",
+                minWidth:72,whiteSpace:"nowrap",flexShrink:0,transition:"background .15s"}}>
+                <span style={{fontSize:11,fontWeight:active?700:500,letterSpacing:"0.04em",
+                  textTransform:"uppercase",color:active?C.gold:C.navTextDim,lineHeight:1,
+                  fontFamily:"'DM Sans',sans-serif"}}>
                   {t}
                 </span>
               </button>
@@ -636,7 +637,7 @@ export default function Portal(){
         </div>
 
         {/* Badge */}
-        <div style={{flexShrink:0,fontSize:9,color:C.textFaint,
+        <div style={{flexShrink:0,fontSize:9,color:C.navTextDim,
           letterSpacing:"0.06em",textTransform:"uppercase",textAlign:"right",lineHeight:1.6}}>
           CONFIDENTIAL<br/>DRAFT
         </div>
@@ -722,8 +723,8 @@ export default function Portal(){
 
       <div style={{display:"flex"}}>
         {/* SIDEBAR */}
-        <div style={{width:262,flexShrink:0,background:C.surface,
-          borderRight:`1px solid ${C.border}`,padding:"18px 14px",
+        <div style={{width:262,flexShrink:0,background:C.navy,
+          borderRight:"none",padding:"18px 14px",
           height:"calc(100vh - 52px)",overflowY:"auto",position:"sticky",top:52}}>
 
           <SHdr t="Fund Structure"/>
@@ -738,56 +739,56 @@ export default function Portal(){
           <Sli label="Preferred Ret." value={a.prefReturn}   min={.05}  max={.10}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("prefReturn",v)}/>
           {/* Pref type toggle */}
           <div style={{marginBottom:12}}>
-            <div style={{fontSize:9,color:C.textDim,textTransform:"uppercase",letterSpacing:".07em",marginBottom:5,fontWeight:600}}>Pref Type</div>
+            <div style={{fontSize:9,color:"rgba(255,255,255,0.5)",textTransform:"uppercase",letterSpacing:".07em",marginBottom:5,fontWeight:600,fontFamily:"'JetBrains Mono',monospace"}}>Pref Type</div>
             <div style={{display:"flex",gap:4}}>
               {[["Simple","false"],["Compound","true"]].map(([lbl,val])=>{
                 const active=String(a.compoundPref)===val;
                 return(<button key={lbl} onClick={()=>set("compoundPref",val==="true")}
                   style={{flex:1,padding:"5px 0",fontSize:9,fontWeight:700,letterSpacing:".06em",
                     textTransform:"uppercase",cursor:"pointer",borderRadius:6,
-                    background:active?C.accent:"transparent",color:active?"#FFFFFF":C.textDim,
-                    border:`1px solid ${active?C.accent:C.border}`}}>{lbl}</button>);
+                    background:active?C.gold:"transparent",color:active?C.navy:C.navTextDim,
+                    border:`1px solid ${active?C.gold:"rgba(255,255,255,0.2)"}`}}>{lbl}</button>);
               })}
             </div>
-            <div style={{fontSize:8,color:C.textFaint,marginTop:3}}>
+            <div style={{fontSize:8,color:"rgba(255,255,255,0.3)",marginTop:3}}>
               {a.compoundPref?"Compound: capital*(1+r)^n":"Simple: capital*rate*years"}
             </div>
           </div>
           {/* Catch-up toggle */}
           <div style={{marginBottom:12}}>
-            <div style={{fontSize:9,color:C.textDim,textTransform:"uppercase",letterSpacing:".07em",marginBottom:5,fontWeight:600}}>GP Catch-Up</div>
+            <div style={{fontSize:9,color:"rgba(255,255,255,0.5)",textTransform:"uppercase",letterSpacing:".07em",marginBottom:5,fontWeight:600,fontFamily:"'JetBrains Mono',monospace"}}>GP Catch-Up</div>
             <div style={{display:"flex",gap:4}}>
               {[["None","false"],["Full","true"]].map(([lbl,val])=>{
                 const active=String(a.catchUp)===val;
                 return(<button key={lbl} onClick={()=>set("catchUp",val==="true")}
                   style={{flex:1,padding:"5px 0",fontSize:9,fontWeight:700,letterSpacing:".06em",
                     textTransform:"uppercase",cursor:"pointer",borderRadius:6,
-                    background:active?C.accent:"transparent",color:active?"#FFFFFF":C.textDim,
-                    border:`1px solid ${active?C.accent:C.border}`}}>{lbl}</button>);
+                    background:active?C.gold:"transparent",color:active?C.navy:C.navTextDim,
+                    border:`1px solid ${active?C.gold:"rgba(255,255,255,0.2)"}`}}>{lbl}</button>);
               })}
             </div>
-            <div style={{fontSize:8,color:C.textFaint,marginTop:3}}>
+            <div style={{fontSize:8,color:"rgba(255,255,255,0.3)",marginTop:3}}>
               {a.catchUp?"GP catches up to carry% then splits":"GP takes carry% above pref"}
             </div>
           </div>
           <Sli label="GP Commitment"  value={a.gpPct}        min={.01}  max={.05}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("gpPct",v)}/>
           <Sli label="Sale Costs"     value={a.saleCosts}    min={.01}  max={.04}  step={.005}  disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("saleCosts",v)}/>
 
-          <div style={{height:1,background:C.border,margin:"12px 0"}}/>
+          <div style={{height:1,background:"rgba(255,255,255,0.1)",margin:"12px 0"}}/>
           <SHdr t="G&A Globals"/>
           <Sli label="Benefits Rate"  value={a.benefitsRate} min={.15}  max={.30}  step={.01}  disp={v=>`${(v*100).toFixed(0)}%`} onChange={v=>set("benefitsRate",v)}/>
           <Sli label="Salary Growth"  value={a.salaryGrowth} min={.01}  max={.06}  step={.005} disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("salaryGrowth",v)}/>
           <Sli label="# of Partners"  value={a.partners}     min={1}    max={5}    step={1}    disp={v=>`${v}`}                   onChange={v=>set("partners",v)}/>
 
           {m&&(
-            <div style={{marginTop:10,padding:"12px",background:C.surfaceAlt,
-              borderRadius:8,border:`1px solid ${C.border}`}}>
-              <div style={{fontSize:9,color:C.accent,textTransform:"uppercase",letterSpacing:".1em",marginBottom:5,fontWeight:700}}>Live Output</div>
-              <div style={{fontSize:11,color:C.textDim,lineHeight:1.9}}>
-                <div>LP IRR: <span style={{color:m.lpIRR>a.prefReturn?C.green:C.red,fontWeight:700}}>{f.p(m.lpIRR)}</span></div>
-                <div>LP MOIC: <span style={{color:C.accent,fontWeight:700}}>{f.x(m.lpMOIC)}</span></div>
-                <div>GP Promote: <span style={{color:C.accent,fontWeight:700}}>{f.$(m.gpPromote)}</span></div>
-                <div>GP Net 7yr: <span style={{color:m.gpNetTotal>0?C.green:C.red,fontWeight:700}}>{f.$(m.gpNetTotal)}</span></div>
+            <div style={{marginTop:10,padding:"12px",background:"rgba(255,255,255,0.06)",
+              borderRadius:8,border:"1px solid rgba(255,255,255,0.1)"}}>
+              <div style={{fontSize:9,color:C.gold,textTransform:"uppercase",letterSpacing:".1em",marginBottom:5,fontWeight:700,fontFamily:"'JetBrains Mono',monospace"}}>Live Output</div>
+              <div style={{fontSize:11,color:"rgba(255,255,255,0.6)",lineHeight:1.9,fontFamily:"'JetBrains Mono',monospace"}}>
+                <div>LP IRR: <span style={{color:m.lpIRR>a.prefReturn?C.green:"#F87171",fontWeight:700}}>{f.p(m.lpIRR)}</span></div>
+                <div>LP MOIC: <span style={{color:C.gold,fontWeight:700}}>{f.x(m.lpMOIC)}</span></div>
+                <div>GP Promote: <span style={{color:C.gold,fontWeight:700}}>{f.$(m.gpPromote)}</span></div>
+                <div>GP Net 7yr: <span style={{color:m.gpNetTotal>0?C.green:"#F87171",fontWeight:700}}>{f.$(m.gpNetTotal)}</span></div>
               </div>
             </div>
           )}
