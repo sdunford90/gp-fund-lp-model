@@ -204,9 +204,9 @@ function run(a){
   }
 
   // ── BW management fee helper (per deal, per year) ──
-  function calcBWFees(a, grossRev){
+  function calcBWFees(a, noiAmt){
     const fixed = (a.bwMarketing||0)+(a.bwAccounting||0)+(a.bwIT||0);
-    const revMgmt = grossRev*(a.bwRevMgmt||0);
+    const revMgmt = noiAmt*(a.bwRevMgmt||0);
     return {fixed, revMgmt, total:fixed+revMgmt,
       marketing:a.bwMarketing||0, accounting:a.bwAccounting||0, it:a.bwIT||0, revMgmtPct:a.bwRevMgmt||0};
   }
@@ -275,7 +275,8 @@ function run(a){
     ecf[fundTerm] += saleNet;
     const eqIRR = irr(ecf);
     const totalEquityIn = eq + day1Capex + txCosts;
-    const moic = (saleNet + ecf.slice(1,fundTerm).reduce((s,v)=>s+v,0) + totalEquityIn) / totalEquityIn;
+    // MOIC = total distributions / equity invested. ecf[fundTerm] already includes saleNet.
+    const moic = ecf.slice(1).reduce((s,v)=>s+v,0) / totalEquityIn;
     const totBWFee = bwAnn.reduce((s,v)=>s+v,0);
 
     return {...asset, eq, debt, annDS, noi, bwFees, bwAnn, totBWFee, totalCapex, day1Capex, capexByYear, txCosts,
@@ -411,7 +412,7 @@ function run(a){
   // Portfolio NOI chart
   const noiChart=Array.from({length:fundTerm},(_,y)=>({
     year:`Yr ${y+1}`,
-    noi:assets.reduce((s,x)=>s+x.price*x.cap*Math.pow(1+x.growth,y),0),
+    noi:assetR.reduce((s,ar)=>s+(ar.noi[y+1]||0),0),
   }));
 
   // Fund CF by year
@@ -744,7 +745,7 @@ export default function Portal(){
                   ))
               }
               <div style={{padding:"8px 12px",borderTop:`1px solid ${C.border}`}}>
-                <button onClick={()=>{resetToDefault&&setA(DEFAULT);setScenName("Base Case");setShowScen(false);}}
+                <button onClick={()=>{setA(DEFAULT);setScenName("Base Case");setShowScen(false);}}
                   style={{background:"transparent",color:C.textDim,border:`1px solid ${C.border}`,
                     borderRadius:6,padding:"4px 10px",fontSize:10,cursor:"pointer",width:"100%"}}>
                   Reset to Defaults
@@ -1378,7 +1379,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
               <Card style={{marginBottom:16}}>
                 <CT c="Bluewater Management Fee Structure"/>
                 <div style={{fontSize:10,color:C.textDim,marginBottom:14,padding:"8px 12px",background:C.surfaceAlt,borderRadius:6}}>
-                  Fixed fees are annual amounts. Revenue management is a % of gross revenue/NOI.
+                  Fixed fees are annual amounts. Revenue management is a % of NOI.
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 28px"}}>
                   <div>
@@ -1557,7 +1558,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
                     <thead>
                       <tr style={{borderBottom:`1px solid ${C.borderDark}`}}>
-                        {["","NOI","Growth","OpEx","BW Fees","Net CF (pre-debt)"].map(h=>(
+                        {["","NOI","Growth","OpEx (embedded)","BW Fees","Net CF (pre-debt)"].map(h=>(
                           <th key={h} style={{padding:"5px 8px",fontSize:9,color:C.textFaint,fontWeight:700,
                             textTransform:"uppercase",letterSpacing:".06em",textAlign:h===""?"left":"right"}}>{h}</th>
                         ))}
@@ -1567,7 +1568,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                       {r.noi && r.noi.slice(1).map((n,y)=>{
                         const opx = r.opexByYear?.[y+1]||0;
                         const bw = r.bwAnn?.[y+1]||0;
-                        const netCF = n - opx - bw;
+                        const netCF = n - bw; // opex already embedded in NOI
                         const yoyGrowth = y>0 ? n/r.noi[y]-1 : null;
                         return(
                           <tr key={y} style={{borderBottom:`1px solid ${C.border}`,
