@@ -220,30 +220,68 @@ function run(a){
     const bwFees = noi.map((n,y)=> y===0 ? {fixed:0,revMgmt:0,total:0} : calcBWFees(asset, n));
     const bwAnn = bwFees.map(f=>f.total);
 
-    // Equity cash flow — I/O period, capex, tx costs
+    // CapEx funded 50/50 debt/equity — each tranche creates additional debt
     const txCosts = asset.txCosts||0;
+    const capexEqByYear = {};  // equity portion of capex per year
+    const capexDebtByYear = {}; // debt portion of capex per year
+    Object.entries(capexByYear).forEach(([yr,amt])=>{
+      capexEqByYear[yr] = amt * (1 - debtPct);
+      capexDebtByYear[yr] = amt * debtPct;
+    });
+
+    // Build annual debt service schedule including capex debt tranches
+    // Each capex debt tranche gets its own I/O period then amortizes
+    const dsByYear = Array.from({length:fundTerm+1},(_,y)=>{
+      if(y===0) return 0;
+      // Acquisition debt
+      let ds = y<=ioYrs ? ioAnnDS : amAnnDS;
+      // CapEx debt tranches — each starts I/O from its deployment year
+      Object.entries(capexDebtByYear).forEach(([cy,cd])=>{
+        const capYr = Number(cy);
+        const yrsActive = y - capYr;
+        if(yrsActive<=0) return; // not yet deployed
+        const capIO = Math.ceil((asset.ioPeriod||0)/12);
+        if(yrsActive<=capIO) ds += cd*interestRate; // I/O
+        else ds += pmt(interestRate,amortYears,cd); // amortizing
+      });
+      return ds;
+    });
+
+    // Total loan balance at exit (acquisition + all capex tranches)
+    const acqAmYrs = Math.max(0, fundTerm - ioYrs);
+    let totalLB = acqAmYrs>0 ? Math.abs(fvLoan(interestRate,acqAmYrs,amAnnDS,debt)) : debt;
+    Object.entries(capexDebtByYear).forEach(([cy,cd])=>{
+      const capYr = Number(cy);
+      const capIO = Math.ceil((asset.ioPeriod||0)/12);
+      const yrsHeld = fundTerm - capYr;
+      if(yrsHeld<=0){ totalLB += cd; return; }
+      const capAmYrs = Math.max(0, yrsHeld - capIO);
+      totalLB += capAmYrs>0 ? Math.abs(fvLoan(interestRate,capAmYrs,pmt(interestRate,amortYears,cd),cd)) : cd;
+    });
+
+    // Equity cash flow
     const ecf = noi.map((n,y)=>{
-      const yrCapex = capexByYear[y]||0;
-      if(y===0) return -(eq + day1Capex + txCosts);
-      const ds = y<=ioYrs ? ioAnnDS : amAnnDS; // I/O in early years, then amortizing
-      return n - ds - bwAnn[y] - yrCapex;
+      const capEq = capexEqByYear[y]||0; // equity portion of capex
+      if(y===0) return -(eq + capEq + txCosts);
+      return n - dsByYear[y] - bwAnn[y] - capEq; // deduct capex equity + all debt service
     });
 
     const exitNOI = noi[fundTerm];
     const exitVal = exitNOI / exitCapRate;
-    // Loan balance: no principal reduction during I/O, then amortize
-    const amYrs = Math.max(0, fundTerm - ioYrs);
-    const lb = amYrs>0 ? Math.abs(fvLoan(interestRate,amYrs,amAnnDS,debt)) : debt;
+    const lb = totalLB;
     const saleNet = exitVal - lb - exitVal*saleCosts;
     ecf[fundTerm] += saleNet;
     const eqIRR = irr(ecf);
-    const totalEquityIn = eq + day1Capex + txCosts;
-    // MOIC = total distributions / equity invested. ecf[fundTerm] already includes saleNet.
+    const totalEquityIn = eq + Object.values(capexEqByYear).reduce((s,v)=>s+v,0) + txCosts;
+    const totalDebt = debt + Object.values(capexDebtByYear).reduce((s,v)=>s+v,0);
+    // MOIC = total distributions / equity invested
     const moic = ecf.slice(1).reduce((s,v)=>s+v,0) / totalEquityIn;
     const totBWFee = bwAnn.reduce((s,v)=>s+v,0);
 
-    return {...asset, eq, debt, annDS, ioAnnDS, amAnnDS, ioYrs, noi, bwFees, bwAnn, totBWFee, totalCapex, day1Capex, capexByYear, txCosts,
-      buRev, buRevY1, buRevY2, grossRev, grossRevY2, baseNOIY2, y1Opex, opexByYear, saleNet, exitVal, lb, irr:eqIRR, moic, baseNOI, totalEquityIn};
+    return {...asset, eq, debt, totalDebt, annDS, ioAnnDS, amAnnDS, ioYrs, dsByYear, noi, bwFees, bwAnn, totBWFee,
+      totalCapex, day1Capex, capexByYear, capexEqByYear, capexDebtByYear, txCosts,
+      buRev, buRevY1, buRevY2, grossRev, grossRevY2, baseNOIY2, y1Opex, opexByYear,
+      saleNet, exitVal, lb, irr:eqIRR, moic, baseNOI, totalEquityIn};
   });
 
   // Monthly portfolio
@@ -261,15 +299,13 @@ function run(a){
       noi+=moNOI;
       const bwYear = yr<=fundTerm ? ar.bwAnn[yr] : ar.bwAnn[fundTerm];
       bwF+=bwYear/12;
-      // Year-specific capex spread across the year's months
-      const yrCapex = ar.capexByYear?.[yr]||0;
-      if(yrCapex>0) capxF+=yrCapex/12;
+      // Capex equity portion spread across the year's months
+      const yrCapexEq = ar.capexEqByYear?.[yr]||0;
+      if(yrCapexEq>0) capxF+=yrCapexEq/12;
       invEq+=x.price*(1-debtPct);
-      // Debt service: per-deal I/O period, then amortizing
-      const assetIoYrs = Math.ceil((x.ioPeriod||0)/12);
-      const assetDebt=x.price*debtPct;
-      const moDS = yr<=assetIoYrs ? (assetDebt*interestRate/12) : Math.abs(pmt(interestRate,amortYears,assetDebt))/12;
-      ds+=moDS;
+      // Total debt service (acq + capex tranches) from precomputed annual schedule
+      const yrDS = yr<=fundTerm ? (ar.dsByYear?.[yr]||0) : (ar.dsByYear?.[fundTerm]||0);
+      ds+=yrDS/12;
     });
     const ga=gaMonthly[i].total;
     const netOpCF=noi-ds-bwF-capxF-ga;
@@ -1176,10 +1212,13 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                     <div style={{fontSize:9,color:C.textFaint,marginTop:3}}>Legal, title, survey, due diligence, lender fees — added to day-1 equity requirement</div>
                   </div>
                   <div style={{padding:"10px 14px",background:C.surfaceAlt,borderRadius:8,border:`1px solid ${C.border}`}}>
-                    <div style={{fontSize:9,color:C.textFaint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6,fontWeight:600}}>Total Day-1 Capital Required</div>
+                    <div style={{fontSize:9,color:C.textFaint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6,fontWeight:600}}>Total Equity Required</div>
                     <div style={{fontSize:18,fontWeight:700,color:C.text}}>{f.$(r.totalEquityIn)}</div>
                     <div style={{fontSize:9,color:C.textFaint,marginTop:3}}>
-                      Equity {f.$(r.eq)} + CapEx {f.$(r.day1Capex)} + Tx Costs {f.$(r.txCosts)}
+                      Acq Equity {f.$(r.eq)} + CapEx Equity {f.$(Object.values(r.capexEqByYear||{}).reduce((s,v)=>s+v,0))} + Tx {f.$(r.txCosts)}
+                    </div>
+                    <div style={{fontSize:9,color:C.textFaint,marginTop:2}}>
+                      Total Debt: {f.$(r.totalDebt)} (Acq {f.$(r.debt)} + CapEx {f.$(Object.values(r.capexDebtByYear||{}).reduce((s,v)=>s+v,0))})
                     </div>
                   </div>
                 </div>
