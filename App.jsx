@@ -284,8 +284,8 @@ function run(a){
       saleNet, exitVal, lb, irr:eqIRR, moic, baseNOI, totalEquityIn};
   });
 
-  // Monthly portfolio
-  const totEqDep=assets.reduce((s,x)=>s+x.price*(1-debtPct),0);
+  // Monthly portfolio — total equity includes acq equity + capex equity + tx costs
+  const totEqDep=assetR.reduce((s,x)=>s+(x.totalEquityIn||0),0);
   const totGPIn=totEqDep*gpPct,totLPIn=totEqDep*(1-gpPct);
 
   const monthly=Array.from({length:MO},(_,i)=>{
@@ -993,11 +993,13 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
 
   const dealColors = ["#2563EB","#7C3AED","#EA580C","#059669","#DB2777","#D97706","#0891B2","#4F46E5"];
 
-  // Portfolio totals
-  const totVal = a.assets.reduce((s,x)=>s+x.price,0);
-  const wtdCap = a.assets.reduce((s,x)=>s+x.cap*x.price,0)/totVal;
-  const totEq = a.assets.reduce((s,x)=>s+x.price*(1-a.debtPct),0);
-  const totDebt = a.assets.reduce((s,x)=>s+x.price*a.debtPct,0);
+  // Portfolio totals — use computed assetR (includes capex, tx costs, debt)
+  const totAcqPrice = a.assets.reduce((s,x)=>s+x.price,0);
+  const totCost = m.assetR.reduce((s,x)=>s+x.price+(x.totalCapex||0)+(x.txCosts||0),0);
+  const totExitVal = m.assetR.reduce((s,x)=>s+(x.exitVal||0),0);
+  const wtdCap = a.assets.reduce((s,x)=>s+x.cap*x.price,0)/totAcqPrice;
+  const totEq = m.assetR.reduce((s,x)=>s+(x.totalEquityIn||0),0);
+  const totDebt = m.assetR.reduce((s,x)=>s+(x.totalDebt||0),0);
   const avgIRR = m.assetR.reduce((s,x)=>s+(x.irr||0),0)/m.assetR.length;
   const avgMOIC = m.assetR.reduce((s,x)=>s+(x.moic||0),0)/m.assetR.length;
   const totBWFee = m.assetR.reduce((s,x)=>s+(x.totBWFee||0),0);
@@ -1041,17 +1043,18 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
 
   return(
     <div>
-      <PHdr title="Deal Underwriting" sub={`${a.assets.length} deals · ${f.$(totVal)} portfolio · ${f.$(totBWFee)} Bluewater fees (7yr)`}/>
+      <PHdr title="Deal Underwriting" sub={`${a.assets.length} deals · ${f.$(totCost)} total cost basis · ${f.$(totExitVal)} exit valuation (Y${a.fundTerm} NOI @ ${f.p(a.exitCapRate)} cap)`}/>
 
       {/* Portfolio KPI Strip */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:10,marginBottom:22}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:8,marginBottom:22}}>
         {[
-          {label:"Portfolio Value", value:f.$(totVal),  accent:C.accent},
-          {label:"Wtd Avg Cap",     value:f.p(wtdCap),  accent:C.purple},
-          {label:"Total Equity",    value:f.$(totEq),   accent:C.green},
-          {label:"Total Debt",      value:f.$(totDebt), accent:C.orange},
-          {label:"Avg Deal IRR",    value:f.p(avgIRR),  accent:C.cyan},
-          {label:"Avg MOIC",        value:f.x(avgMOIC), accent:C.gold},
+          {label:"Total Cost Basis", value:f.$(totCost),    accent:C.accent},
+          {label:"Exit Valuation",   value:f.$(totExitVal), accent:C.green},
+          {label:"Wtd Avg Cap",      value:f.p(wtdCap),     accent:C.purple},
+          {label:"Total Equity",     value:f.$(totEq),      accent:C.cyan},
+          {label:"Total Debt",       value:f.$(totDebt),    accent:C.orange},
+          {label:"Avg Deal IRR",     value:f.p(avgIRR),     accent:"#059669"},
+          {label:"Avg MOIC",         value:f.x(avgMOIC),    accent:C.gold},
         ].map(({label,value,accent})=>(
           <div key={label} style={{
             background:C.surface,border:`1px solid ${C.border}`,
@@ -1824,7 +1827,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                 })}
                 <tr style={{borderTop:`2px solid ${C.borderDark}`,background:C.surfaceAlt}}>
                   <td style={{padding:"10px 12px",color:C.accent,fontWeight:700}}>Portfolio Total</td>
-                  <td style={{padding:"10px 12px",textAlign:"center",color:C.accent,fontWeight:700}}>{f.$(totVal)}</td>
+                  <td style={{padding:"10px 12px",textAlign:"center",color:C.accent,fontWeight:700}}>{f.$(totAcqPrice)}</td>
                   <td style={{padding:"10px 12px",textAlign:"center",color:C.purple,fontWeight:700}}>{f.p(wtdCap)}</td>
                   <td/>
                   <td style={{padding:"10px 12px",textAlign:"center",color:C.accent,fontWeight:700}}>{a.assets.reduce((s,x)=>s+(x.slips||[]).reduce((t,r)=>t+r.count,0),0)}</td>
