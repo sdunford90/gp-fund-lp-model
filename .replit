@@ -42,4 +42,4 @@ waitForPort = 5000
 deploymentTarget = "autoscale"
 build = ["npm", "run", "build"]
 publicDir = "dist"
-run = ["node", "server/index.js"]
+run = ["bash", "-c", "NODE_ENV=production node server/index.js"]

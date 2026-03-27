@@ -8,7 +8,7 @@ import { existsSync } from "fs";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const isProd = process.env.NODE_ENV === "production";
-const PORT = isProd ? 5000 : 3001;
+const PORT = process.env.PORT || (isProd ? 5000 : 3001);
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
