@@ -27,7 +27,7 @@ const DEF_ASSET_BASE = {
   price:4500000, cap:.075, growth:.034,
   slips:[],lodging:[],fuelGallons:0,fuelMargin:0,upland:[],otherIncome:0,
   opex:[],capexItems:[],
-  noiY1Growth:1.012, noiY2Growth:.034,
+  noiY1Growth:1.012, noiY2Growth:.03,
   noiPlug:463125,   // Y1 NOI: hotel(15×$325×90×50%margin) + slips(65×$5K×75%margin)
   txCosts:700000,
   ioPeriod:12,    // months of interest-only before amortizing (per deal)
@@ -43,10 +43,12 @@ const DEF_ASSETS = Array.from({length:30},(_,i)=>{
     name:`Marina ${i+1}`,
     startMonth,
     slips:[
-      {type:"Marina Slips (Y1: 65, Y2+: 50)",count:50,rate:417,occ:1.0},
+      {type:"Marina Slips (Y1)",count:65,rate:417,occ:1.0,period:"y1"},
+      {type:"Marina Slips (Y2+)",count:50,rate:438,occ:1.0,period:"y2"},
     ],
     lodging:[
-      {type:"Hotel Units (Y1: 15, Y2+: 30)",units:30,adr:134,occ:1.0},
+      {type:"Hotel Units",units:15,adr:325,occ:.247,period:"y1"},   // 90 nights / 365 = .247
+      {type:"Hotel Units",units:30,adr:325,occ:.411,period:"y2"},   // 150 nights / 365 = .411
     ],
     opex:[
       {label:"Hotel Operating Costs (50% margin)",amount:219375,growth:.03},
@@ -71,7 +73,7 @@ const DEF_PARTNER_SALARIES = [];
 
 const DEFAULT = {
   fundTerm:6, debtPct:.50, interestRate:.07, amortYears:25,
-  exitCapRate:.08, saleCosts:.02, carry:.20, prefReturn:.07,
+  exitCapRate:.08, saleCosts:.02, carry:.20, prefReturn:.08,
   gpPct:0, amFee:0, pmFee:0, benefitsRate:.22, salaryGrowth:.03,
   partners:3, compoundPref:false, catchUp:false,
   assets:DEF_ASSETS, hires:DEF_HIRES, overhead:DEF_OVERHEAD, oneTime:DEF_ONE_TIME, partnerSalaries:DEF_PARTNER_SALARIES,
@@ -141,10 +143,11 @@ function run(a){
       total:sal+ben+fix+oneTimeHit,partnerSalCost:partnerSal*(1+benefitsRate)};
   });
 
-  // ── Bottom-up revenue helper ──
-  function calcBottomUpRevenue(a){
-    const slipRev = (a.slips||[]).reduce((s,r)=>s + r.count*r.rate*12*r.occ, 0);
-    const lodgingRev = (a.lodging||[]).reduce((s,r)=>s + r.units*r.adr*365*r.occ, 0);
+  // ── Bottom-up revenue helper (period: "y1" or "y2" to filter) ──
+  function calcBottomUpRevenue(a, period){
+    const pf = r => !period || !r.period || r.period===period || (period==="y2" && r.period==="y2+");
+    const slipRev = (a.slips||[]).filter(pf).reduce((s,r)=>s + r.count*r.rate*12*r.occ, 0);
+    const lodgingRev = (a.lodging||[]).filter(pf).reduce((s,r)=>s + r.units*r.adr*365*r.occ, 0);
     const fuel = (a.fuelGallons||0)*(a.fuelMargin||0);
     const uplandRev = (a.upland||[]).reduce((s,r)=>s + r.rent*12, 0);
     const other = a.otherIncome||0;
@@ -182,18 +185,24 @@ function run(a){
       return opexItems.reduce((s,o)=>s + o.amount*Math.pow(1+(o.growth||0), y-1), 0);
     });
 
-    // Compute gross revenue and base NOI
-    const buRev = calcBottomUpRevenue(asset);
-    let grossRev, baseNOI;
+    // Compute gross revenue and base NOI (Y1 and Y2 separately)
+    const buRevY1 = calcBottomUpRevenue(asset, "y1");
+    const buRevY2 = calcBottomUpRevenue(asset, "y2");
+    const buRev = buRevY1; // default display = Y1
+    let grossRev, baseNOI, grossRevY2, baseNOIY2;
     if(asset.noiPlug!=null && asset.noiPlug>0){
-      baseNOI = asset.noiPlug; // manual override
-      grossRev = baseNOI + y1Opex; // implied
-    } else if(asset.revenueMode==="bottomup" && buRev.total>0){
-      grossRev = buRev.total;
-      baseNOI = grossRev - y1Opex; // revenue minus opex
+      baseNOI = asset.noiPlug;
+      grossRev = baseNOI + y1Opex;
+      grossRevY2 = grossRev; baseNOIY2 = baseNOI;
+    } else if(asset.revenueMode==="bottomup" && buRevY1.total>0){
+      grossRev = buRevY1.total;
+      baseNOI = grossRev - y1Opex;
+      grossRevY2 = buRevY2.total;
+      baseNOIY2 = grossRevY2 - y1Opex; // Y2 opex uses same base (growth handled separately)
     } else {
       baseNOI = asset.price*asset.cap;
-      grossRev = baseNOI + y1Opex; // implied
+      grossRev = baseNOI + y1Opex;
+      grossRevY2 = grossRev; baseNOIY2 = baseNOI;
     }
 
     // NOI schedule: Y1 uses noiY1Growth, Y2+ uses noiY2Growth
@@ -234,7 +243,7 @@ function run(a){
     const totBWFee = bwAnn.reduce((s,v)=>s+v,0);
 
     return {...asset, eq, debt, annDS, ioAnnDS, amAnnDS, ioYrs, noi, bwFees, bwAnn, totBWFee, totalCapex, day1Capex, capexByYear, txCosts,
-      buRev, grossRev, y1Opex, opexByYear, saleNet, exitVal, lb, irr:eqIRR, moic, baseNOI, totalEquityIn};
+      buRev, buRevY1, buRevY2, grossRev, grossRevY2, baseNOIY2, y1Opex, opexByYear, saleNet, exitVal, lb, irr:eqIRR, moic, baseNOI, totalEquityIn};
   });
 
   // Monthly portfolio
@@ -1192,12 +1201,18 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,
                     paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>
                     <span style={{fontSize:10,fontWeight:700,color:C.accent,textTransform:"uppercase",letterSpacing:".06em"}}>Slips / Berths</span>
-                    <button onClick={()=>{const s=[...(asset.slips||[]),{type:"New Slip Type",count:20,rate:400,occ:.85}];setAsset(sel,"slips",s);}}
+                    <button onClick={()=>{const s=[...(asset.slips||[]),{type:"New Slip Type",count:20,rate:400,occ:.85,period:"y2"}];setAsset(sel,"slips",s);}}
                       style={{background:C.accentDim,color:C.accent,border:"none",borderRadius:5,padding:"3px 10px",fontSize:9,fontWeight:700,cursor:"pointer"}}>+ Add Type</button>
                   </div>
                   {(asset.slips||[]).map((s,si)=>(
-                    <div key={si} style={{display:"grid",gridTemplateColumns:"1.5fr 1fr 1fr 1fr auto",gap:8,alignItems:"center",
-                      padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+                    <div key={si} style={{display:"grid",gridTemplateColumns:"auto 1.3fr 1fr 1fr 1fr auto",gap:8,alignItems:"center",
+                      padding:"8px 0",borderBottom:`1px solid ${C.border}`,
+                      background:s.period==="y1"?"rgba(37,99,235,0.03)":"transparent"}}>
+                      <select value={s.period||"y2"} onChange={e=>{const arr=[...(asset.slips||[])];arr[si]={...arr[si],period:e.target.value};setAsset(sel,"slips",arr);}}
+                        style={{background:s.period==="y1"?"rgba(37,99,235,0.1)":C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,
+                          padding:"4px 4px",fontSize:9,color:s.period==="y1"?C.orange:C.accent,fontWeight:700,cursor:"pointer",outline:"none",width:42}}>
+                        <option value="y1">Y1</option><option value="y2">Y2+</option>
+                      </select>
                       <input value={s.type} onChange={e=>{const arr=[...(asset.slips||[])];arr[si]={...arr[si],type:e.target.value};setAsset(sel,"slips",arr);}}
                         style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"5px 8px",fontSize:11,color:C.text,outline:"none",fontWeight:600}}/>
                       <div style={{display:"flex",alignItems:"center",gap:4}}>
@@ -1224,9 +1239,11 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                     </div>
                   ))}
                   {(asset.slips||[]).length>0&&(
-                    <div style={{display:"flex",justifyContent:"flex-end",padding:"6px 0",fontSize:11}}>
-                      <span style={{color:C.textDim}}>Slip Revenue: </span>
-                      <span style={{color:C.green,fontWeight:700,marginLeft:6}}>{f.$((asset.slips||[]).reduce((s,r)=>s+r.count*r.rate*12*r.occ,0))}</span>
+                    <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",fontSize:11}}>
+                      <div style={{display:"flex",gap:12}}>
+                        <span style={{color:C.orange}}>Y1: {f.$((asset.slips||[]).filter(r=>r.period==="y1").reduce((s,r)=>s+r.count*r.rate*12*r.occ,0))}</span>
+                        <span style={{color:C.accent}}>Y2+: {f.$((asset.slips||[]).filter(r=>r.period!=="y1").reduce((s,r)=>s+r.count*r.rate*12*r.occ,0))}</span>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1236,12 +1253,18 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,
                     paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>
                     <span style={{fontSize:10,fontWeight:700,color:C.orange,textTransform:"uppercase",letterSpacing:".06em"}}>Hotel / Lodging</span>
-                    <button onClick={()=>{const l=[...(asset.lodging||[]),{type:"New Room Type",units:5,adr:200,occ:.70}];setAsset(sel,"lodging",l);}}
+                    <button onClick={()=>{const l=[...(asset.lodging||[]),{type:"New Room Type",units:5,adr:200,occ:.70,period:"y2"}];setAsset(sel,"lodging",l);}}
                       style={{background:"rgba(234,88,12,0.08)",color:C.orange,border:"none",borderRadius:5,padding:"3px 10px",fontSize:9,fontWeight:700,cursor:"pointer"}}>+ Add Type</button>
                   </div>
                   {(asset.lodging||[]).map((l,li)=>(
-                    <div key={li} style={{display:"grid",gridTemplateColumns:"1.5fr 1fr 1fr 1fr auto",gap:8,alignItems:"center",
-                      padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+                    <div key={li} style={{display:"grid",gridTemplateColumns:"auto 1.3fr 1fr 1fr 1fr auto",gap:8,alignItems:"center",
+                      padding:"8px 0",borderBottom:`1px solid ${C.border}`,
+                      background:l.period==="y1"?"rgba(234,88,12,0.03)":"transparent"}}>
+                      <select value={l.period||"y2"} onChange={e=>{const arr=[...(asset.lodging||[])];arr[li]={...arr[li],period:e.target.value};setAsset(sel,"lodging",arr);}}
+                        style={{background:l.period==="y1"?"rgba(234,88,12,0.1)":C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,
+                          padding:"4px 4px",fontSize:9,color:l.period==="y1"?C.orange:C.accent,fontWeight:700,cursor:"pointer",outline:"none",width:42}}>
+                        <option value="y1">Y1</option><option value="y2">Y2+</option>
+                      </select>
                       <input value={l.type} onChange={e=>{const arr=[...(asset.lodging||[])];arr[li]={...arr[li],type:e.target.value};setAsset(sel,"lodging",arr);}}
                         style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"5px 8px",fontSize:11,color:C.text,outline:"none",fontWeight:600}}/>
                       <div style={{display:"flex",alignItems:"center",gap:4}}>
@@ -1255,10 +1278,9 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                           style={{width:55,background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"4px 6px",fontSize:11,color:C.green,fontWeight:700,textAlign:"right",outline:"none"}}/>
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:4}}>
-                        <span style={{fontSize:9,color:C.textFaint}}>Occ</span>
+                        <span style={{fontSize:9,color:C.textFaint}}>Occ%</span>
                         <input type="number" value={Math.round(l.occ*100)} min={0} max={100} onChange={e=>{const arr=[...(asset.lodging||[])];arr[li]={...arr[li],occ:Number(e.target.value)/100};setAsset(sel,"lodging",arr);}}
                           style={{width:42,background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"4px 6px",fontSize:11,color:C.cyan,fontWeight:700,textAlign:"right",outline:"none"}}/>
-                        <span style={{fontSize:9,color:C.textFaint}}>%</span>
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
                         <span style={{fontSize:10,color:C.green,fontWeight:600,minWidth:55,textAlign:"right"}}>{f.$(l.units*l.adr*365*l.occ)}</span>
@@ -1268,9 +1290,11 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                     </div>
                   ))}
                   {(asset.lodging||[]).length>0&&(
-                    <div style={{display:"flex",justifyContent:"flex-end",padding:"6px 0",fontSize:11}}>
-                      <span style={{color:C.textDim}}>Lodging Revenue: </span>
-                      <span style={{color:C.green,fontWeight:700,marginLeft:6}}>{f.$((asset.lodging||[]).reduce((s,r)=>s+r.units*r.adr*365*r.occ,0))}</span>
+                    <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",fontSize:11}}>
+                      <div style={{display:"flex",gap:12}}>
+                        <span style={{color:C.orange}}>Y1: {f.$((asset.lodging||[]).filter(r=>r.period==="y1").reduce((s,r)=>s+r.units*r.adr*365*r.occ,0))}</span>
+                        <span style={{color:C.accent}}>Y2+: {f.$((asset.lodging||[]).filter(r=>r.period!=="y1").reduce((s,r)=>s+r.units*r.adr*365*r.occ,0))}</span>
+                      </div>
                     </div>
                   )}
                 </div>
