@@ -24,109 +24,53 @@ const C = {
 // ── DEFAULT STATE ─────────────────────────────────────────────────────────────
 const DEF_ASSET_BASE = {
   revenueMode: "topdown",
-  price:15000000, cap:.070, growth:.05,
-  // Dynamic arrays
-  slips:[],       // [{type,count,rate,occ}]  — monthly rate
-  lodging:[],     // [{type,units,adr,occ}]   — daily rate
-  fuelGallons:0, fuelMargin:0.50,
-  upland:[],      // [{name,rent}]            — monthly rent
-  otherIncome:0,
-  opex:[],        // [{label,amount,growth}]  — annual recurring expenses
-  capexItems:[],  // [{label,amount,year}]    — year 0 = day-1
-  noiY1Growth:.03, noiY2Growth:.05,
-  noiPlug:null,   // manual NOI override (null = use computed)
-  txCosts:0,      // transaction/closing costs ($ amount, added to day-1 equity)
-  bwMarketing:12000, bwAccounting:18000, bwIT:6000, bwRevMgmt:.04,
-  startMonth:6,
+  price:4500000, cap:.075, growth:.034,
+  slips:[],lodging:[],fuelGallons:0,fuelMargin:0,upland:[],otherIncome:0,
+  opex:[],capexItems:[],
+  noiY1Growth:1.012, noiY2Growth:.034,
+  noiPlug:463125,   // Y1 NOI: hotel(15×$325×90×50%margin) + slips(65×$5K×75%margin)
+  txCosts:700000,
+  bwMarketing:50000, bwAccounting:40000, bwIT:35000, bwRevMgmt:0,
+  startMonth:1,
 };
-const DEF_ASSETS = [
-  {...DEF_ASSET_BASE, name:"Deal 1", price:15000000, cap:.070, growth:.07, startMonth:6,
-    slips:[{type:"Wet 40ft",count:80,rate:550,occ:.88},{type:"Wet 60ft",count:40,rate:800,occ:.85},{type:"Dry Rack",count:60,rate:280,occ:.92}],
-    lodging:[], fuelGallons:200000, fuelMargin:.55,
-    upland:[{name:"Restaurant",rent:4000},{name:"Ship Store",rent:2500},{name:"Bait Shop",rent:1500}],
-    opex:[{label:"Property Taxes",amount:95000,growth:.02},{label:"Insurance",amount:48000,growth:.03},{label:"Utilities",amount:36000,growth:.02},{label:"R&M / Maintenance",amount:55000,growth:.02},{label:"On-Site Payroll",amount:180000,growth:.03}]},
-  {...DEF_ASSET_BASE, name:"Deal 2", price:12000000, cap:.070, growth:.07, startMonth:9,
-    slips:[{type:"Wet 30ft",count:60,rate:420,occ:.86},{type:"Wet 50ft",count:30,rate:680,occ:.83},{type:"Dry Rack",count:40,rate:240,occ:.90}],
-    fuelGallons:120000, fuelMargin:.50,
-    upland:[{name:"Café",rent:3000},{name:"Chandlery",rent:2200}]},
-  {...DEF_ASSET_BASE, name:"Deal 3", price:18000000, cap:.075, growth:.06, startMonth:12,
-    slips:[{type:"Wet 40ft",count:100,rate:580,occ:.87},{type:"Wet 80ft",count:50,rate:1100,occ:.82},{type:"Dry Rack",count:80,rate:300,occ:.91}],
-    lodging:[{type:"Standard Room",units:10,adr:220,occ:.72},{type:"Suite",units:2,adr:380,occ:.65}],
-    fuelGallons:280000, fuelMargin:.52,
-    upland:[{name:"Restaurant",rent:5000},{name:"Market",rent:3000},{name:"Kayak Rental",rent:1800},{name:"Ship Store",rent:2200}]},
-  {...DEF_ASSET_BASE, name:"Deal 4", price:20000000, cap:.080, growth:.05, startMonth:15,
-    slips:[{type:"Wet 40ft",count:100,rate:520,occ:.84},{type:"Wet 60ft",count:50,rate:780,occ:.81},{type:"Mega Yacht 100ft+",count:30,rate:2200,occ:.70},{type:"Dry Rack",count:100,rate:260,occ:.88}],
-    lodging:[{type:"King Room",units:14,adr:250,occ:.68},{type:"Double Queen",units:6,adr:230,occ:.72}],
-    fuelGallons:350000, fuelMargin:.48,
-    upland:[{name:"Full-Service Restaurant",rent:6000},{name:"Pool Bar",rent:3500},{name:"Ship Store",rent:2800},{name:"Charter Office",rent:2000},{name:"Dive Shop",rent:1800}],
-    capexItems:[{label:"Dock Renovation",amount:800000,year:0},{label:"Pool Deck",amount:250000,year:2}]},
-  {...DEF_ASSET_BASE, name:"Deal 5", price:16000000, cap:.082, growth:.05, startMonth:18,
-    slips:[{type:"Wet 35ft",count:90,rate:460,occ:.86},{type:"Wet 55ft",count:40,rate:720,occ:.83},{type:"Dry Stack",count:50,rate:250,occ:.89}],
-    fuelGallons:180000, fuelMargin:.50,
-    upland:[{name:"Tiki Bar",rent:3200},{name:"Bait & Tackle",rent:1800}]},
-  {...DEF_ASSET_BASE, name:"Deal 6", price:14000000, cap:.081, growth:.05, startMonth:21,
-    slips:[{type:"Wet 30ft",count:70,rate:440,occ:.85},{type:"Wet 50ft",count:30,rate:650,occ:.82},{type:"Dry Rack",count:45,rate:230,occ:.87}],
-    fuelGallons:140000, fuelMargin:.50,
-    upland:[{name:"Grill",rent:3500},{name:"Convenience Store",rent:2000},{name:"Kayak/Paddle",rent:1500}]},
-  {...DEF_ASSET_BASE, name:"Deal 7", price:14000000, cap:.075, growth:.05, startMonth:24,
-    slips:[{type:"Wet 40ft",count:70,rate:510,occ:.83},{type:"Wet 70ft",count:40,rate:950,occ:.78},{type:"Dry Rack",count:55,rate:260,occ:.88}],
-    lodging:[{type:"Houseboat",units:6,adr:190,occ:.65},{type:"Floating Cabin",units:2,adr:280,occ:.60}],
-    fuelGallons:160000, fuelMargin:.50,
-    upland:[{name:"Bar & Grill",rent:3000},{name:"Outfitter",rent:1800}]},
-  {...DEF_ASSET_BASE, name:"Deal 8", price:12000000, cap:.078, growth:.05, startMonth:27,
-    slips:[{type:"Wet 30ft",count:50,rate:420,occ:.86},{type:"Wet 45ft",count:30,rate:580,occ:.84},{type:"Dry Rack",count:35,rate:240,occ:.90}],
-    fuelGallons:100000, fuelMargin:.48,
-    upland:[{name:"Snack Bar",rent:2000}]},
-];
 
-const DEF_HIRES = [
-  {role:"HR Manager",               salary:95000, start:1,  alloc:1.00},
-  {role:"Controller",               salary:130000,start:7,  alloc:1.00},
-  {role:"Staff Accountant",         salary:75000, start:7,  alloc:1.00},
-  {role:"IT Manager (50% G&A)",     salary:55000, start:13, alloc:0.50},
-  {role:"Executive Assistant",      salary:65000, start:13, alloc:1.00},
-  {role:"Regional Ops Mgr #1",      salary:135000,start:15, alloc:1.00},
-  {role:"Acquisitions Analyst",     salary:80000, start:15, alloc:1.00},
-  {role:"Maint & Capital Coord.",   salary:72000, start:19, alloc:1.00},
-  {role:"Training & Standards(80%)",salary:64000, start:19, alloc:0.80},
-  {role:"Regional Ops Mgr #2",      salary:135000,start:21, alloc:1.00},
-];
+// Generate 30 marina deals: 3 at closing, then 1 every 2 months
+const DEF_ASSETS = Array.from({length:30},(_,i)=>{
+  const startMonth = i<3 ? 1 : 1+(i-2)*2; // deals 1-3 at M1, deal 4 at M3, deal 5 at M5...
+  return {
+    ...DEF_ASSET_BASE,
+    name:`Marina ${i+1}`,
+    startMonth,
+    slips:[
+      {type:"Marina Slips (Y1: 65, Y2+: 50)",count:50,rate:417,occ:1.0},
+    ],
+    lodging:[
+      {type:"Hotel Units (Y1: 15, Y2+: 30)",units:30,adr:134,occ:1.0},
+    ],
+    opex:[
+      {label:"Hotel Operating Costs (50% margin)",amount:219375,growth:.03},
+      {label:"Marina Operating Costs (25% margin)",amount:81250,growth:.05},
+    ],
+    capexItems:[
+      {label:"Hotel Conversion Phase 1 (15 units @ $175K)",amount:2600000,year:0},
+      {label:"Hotel Conversion Phase 2 (15 units @ $175K)",amount:2600000,year:1},
+    ],
+  };
+});
+
+const DEF_HIRES = [];
 
 const DEF_OVERHEAD = [
-  // label, annual (full run-rate $), start month, rampMonths (months to reach full rate), growth/yr, ramps w/ deals
-  {label:"Legal & Compliance",    annual:55000, start:1,  rampMo:6,  growth:.02, ramps:false, scope:"global"},
-  {label:"Audit & Tax",           annual:42000, start:1,  rampMo:12, growth:.02, ramps:false, scope:"global"},
-  {label:"D&O / EPLI Insurance",  annual:32000, start:1,  rampMo:3,  growth:.02, ramps:false, scope:"global"},
-  {label:"Accounting Software",   annual:18000, start:1,  rampMo:3,  growth:.00, ramps:false, scope:"global"},
-  {label:"Travel — Acquisitions", scope:"scenario", annual:45000, start:1,  rampMo:6,  growth:.02, ramps:false},
-  {label:"Travel — Operations",  scope:"scenario", annual:28000, start:6,  rampMo:12, growth:.02, ramps:false},
-  {label:"Technology / Data Room", scope:"scenario",annual:15000, start:1,  rampMo:6,  growth:.00, ramps:false},
-  {label:"Office / Utilities",  scope:"scenario",  annual:18000, start:3,  rampMo:6,  growth:.02, ramps:false},
-  {label:"Marketing / Comms",  scope:"scenario",   annual:12000, start:6,  rampMo:9,  growth:.01, ramps:false},
-  {label:"Contingency",  scope:"scenario",         annual:12000, start:1,  rampMo:1,  growth:.02, ramps:false},
-  {label:"ASAP Platform",  scope:"scenario",       annual:3000,  start:6,  rampMo:1,  growth:.00, ramps:true },
+  {label:"NewCo Corporate G&A", annual:1500000, start:1, rampMo:1, growth:.075, ramps:false, scope:"global"},
 ];
 
-// One-time / irregular expenses: hit in a specific month, no recurrence
-const DEF_ONE_TIME = [
-  {label:"Entity Setup & Formation",  amount:18000, month:1,  category:"Legal",  scope:"global"},
-  {label:"Office Build-Out",          amount:35000, month:3,  category:"CapEx",  scope:"global"},
-  {label:"HR / Payroll System Setup", amount:8000,  month:3,  category:"Tech",   scope:"global"},
-  {label:"CRM / Software Onboarding", amount:12000, month:6,  category:"Tech",   scope:"scenario"},
-  {label:"Fund Launch Marketing",     amount:15000, month:1,  category:"Marketing", scope:"scenario"},
-  {label:"Year 2 Compliance Review",  amount:22000, month:13, category:"Legal",  scope:"global"},
-];
+const DEF_ONE_TIME = [];
 
-
-const DEF_PARTNER_SALARIES = [
-  {role:"Managing Partner / CEO",  salary:250000, start:1},
-  {role:"Managing Partner / COO",  salary:220000, start:1},
-  {role:"Managing Partner / CIO",  salary:220000, start:1},
-];
+const DEF_PARTNER_SALARIES = [];
 
 const DEFAULT = {
-  fundTerm:7, debtPct:.60, interestRate:.065, amortYears:25,
-  exitCapRate:.075, saleCosts:.02, carry:.20, prefReturn:.07,
+  fundTerm:6, debtPct:.50, interestRate:.07, amortYears:25, ioPeriod:12,
+  exitCapRate:.08, saleCosts:.02, carry:.20, prefReturn:.07,
   gpPct:0, amFee:0, pmFee:0, benefitsRate:.22, salaryGrowth:.03,
   partners:3, compoundPref:false, catchUp:false,
   assets:DEF_ASSETS, hires:DEF_HIRES, overhead:DEF_OVERHEAD, oneTime:DEF_ONE_TIME, partnerSalaries:DEF_PARTNER_SALARIES,
@@ -150,7 +94,7 @@ function irr(cfs,g=.1){
 
 // ── MODEL ─────────────────────────────────────────────────────────────────────
 function run(a){
-  const {assets,hires,overhead,fundTerm,debtPct,interestRate,amortYears,
+  const {assets,hires,overhead,fundTerm,debtPct,interestRate,amortYears,ioPeriod=0,
     exitCapRate,saleCosts,carry,prefReturn,gpPct,amFee,pmFee,
     benefitsRate,salaryGrowth,partners,partnerSalaries,oneTime=[],
     compoundPref=false,catchUp=false}=a;
@@ -215,9 +159,12 @@ function run(a){
   }
 
   // ── Asset calcs ──
+  const ioYrs = Math.ceil((ioPeriod||0)/12); // I/O period in whole years
   const assetR=assets.map(asset=>{
     const eq=asset.price*(1-debtPct), debt=asset.price*debtPct;
-    const annDS=pmt(interestRate,amortYears,debt);
+    const ioAnnDS = debt*interestRate; // interest-only annual payment
+    const amAnnDS = pmt(interestRate,amortYears,debt); // fully amortizing annual payment
+    const annDS = amAnnDS; // legacy reference (amortizing rate)
 
     // CapEx: sum items by year
     const capexItems = asset.capexItems||[];
@@ -263,17 +210,20 @@ function run(a){
     const bwFees = noi.map((n,y)=> y===0 ? {fixed:0,revMgmt:0,total:0} : calcBWFees(asset, n));
     const bwAnn = bwFees.map(f=>f.total);
 
-    // Equity cash flow — includes day-1 capex, transaction costs, year-specific capex
+    // Equity cash flow — I/O period, capex, tx costs
     const txCosts = asset.txCosts||0;
     const ecf = noi.map((n,y)=>{
       const yrCapex = capexByYear[y]||0;
       if(y===0) return -(eq + day1Capex + txCosts);
-      return n - annDS - bwAnn[y] - yrCapex;
+      const ds = y<=ioYrs ? ioAnnDS : amAnnDS; // I/O in early years, then amortizing
+      return n - ds - bwAnn[y] - yrCapex;
     });
 
     const exitNOI = noi[fundTerm];
     const exitVal = exitNOI / exitCapRate;
-    const lb = Math.abs(fvLoan(interestRate,fundTerm,annDS,debt));
+    // Loan balance: no principal reduction during I/O, then amortize
+    const amYrs = Math.max(0, fundTerm - ioYrs);
+    const lb = amYrs>0 ? Math.abs(fvLoan(interestRate,amYrs,amAnnDS,debt)) : debt;
     const saleNet = exitVal - lb - exitVal*saleCosts;
     ecf[fundTerm] += saleNet;
     const eqIRR = irr(ecf);
@@ -305,7 +255,10 @@ function run(a){
       const yrCapex = ar.capexByYear?.[yr]||0;
       if(yrCapex>0) capxF+=yrCapex/12;
       invEq+=x.price*(1-debtPct);
-      ds+=Math.abs(pmt(interestRate,amortYears,x.price*debtPct))/12;
+      // Debt service: I/O during first ioYrs, then amortizing
+      const assetDebt=x.price*debtPct;
+      const moDS = yr<=ioYrs ? (assetDebt*interestRate/12) : Math.abs(pmt(interestRate,amortYears,assetDebt))/12;
+      ds+=moDS;
     });
     const ga=gaMonthly[i].total;
     const netOpCF=noi-ds-bwF-capxF-ga;
@@ -573,7 +526,7 @@ export default function Portal(){
   const [tab,setTab]=useState("Overview");
   const [a,setA]=useState(DEFAULT);
   const [scenarios,setScenarios]=useState(()=>loadScenarios());
-  const [scenName,setScenName]=useState("Base Case");
+  const [scenName,setScenName]=useState("RDM Base Case");
   const [showScen,setShowScen]=useState(false);
   const [editingName,setEditingName]=useState(false);
 
@@ -749,7 +702,7 @@ export default function Portal(){
                   ))
               }
               <div style={{padding:"8px 12px",borderTop:`1px solid ${C.border}`}}>
-                <button onClick={()=>{setA(DEFAULT);setScenName("Base Case");setShowScen(false);}}
+                <button onClick={()=>{setA(DEFAULT);setScenName("RDM Base Case");setShowScen(false);}}
                   style={{background:"transparent",color:C.textDim,border:`1px solid ${C.border}`,
                     borderRadius:6,padding:"4px 10px",fontSize:10,cursor:"pointer",width:"100%"}}>
                   Reset to Defaults
@@ -782,10 +735,11 @@ export default function Portal(){
           height:"calc(100vh - 52px)",overflowY:"auto",position:"sticky",top:52}}>
 
           <SHdr t="Fund Structure"/>
-          <Sli label="Exit Cap Rate"  value={a.exitCapRate}  min={.055} max={.12}  step={.005} disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("exitCapRate",v)}  sub="All 8 exits"/>
+          <Sli label="Exit Cap Rate"  value={a.exitCapRate}  min={.055} max={.12}  step={.005} disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("exitCapRate",v)}  sub="All exits"/>
           <Sli label="Interest Rate"  value={a.interestRate} min={.04}  max={.10}  step={.005} disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("interestRate",v)}/>
           <Sli label="LTV (Debt %)"   value={a.debtPct}      min={.40}  max={.75}  step={.05}  disp={v=>`${(v*100).toFixed(0)}%`} onChange={v=>set("debtPct",v)}/>
           <Sli label="Hold Period"    value={a.fundTerm}     min={5}    max={10}   step={1}    disp={v=>`${v} yrs`}               onChange={v=>set("fundTerm",v)}/>
+          <Sli label="I/O Period"     value={a.ioPeriod||0}  min={0}    max={36}   step={6}    disp={v=>`${v} mo`}                onChange={v=>set("ioPeriod",v)} sub="Interest-only before amortizing"/>
 
           <div style={{height:1,background:C.border,margin:"12px 0"}}/>
           <SHdr t="Waterfall & Carry"/>
@@ -1934,7 +1888,7 @@ function TabFundCF({m,a}){
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:18}}>
         <KPI label="Total LP Called"   value={f.$(m.totLPCalled)} sub="Investment period"/>
         <KPI label="Total Op CF"       value={f.$(m.totOpCF)}     sub="Net of DS + G&A"/>
-        <KPI label="Sale Proceeds"     value={f.$(m.totSaleProc)} sub="All 8 exits" gold/>
+        <KPI label="Sale Proceeds"     value={f.$(m.totSaleProc)} sub="All exits" gold/>
         <KPI label="Total Pool"        value={f.$(m.pool)}        sub="Available for distribution"/>
       </div>
 
