@@ -30,6 +30,7 @@ const DEF_ASSET_BASE = {
   noiY1Growth:1.012, noiY2Growth:.034,
   noiPlug:463125,   // Y1 NOI: hotel(15×$325×90×50%margin) + slips(65×$5K×75%margin)
   txCosts:700000,
+  ioPeriod:12,    // months of interest-only before amortizing (per deal)
   bwMarketing:50000, bwAccounting:40000, bwIT:35000, bwRevMgmt:0,
   startMonth:1,
 };
@@ -69,7 +70,7 @@ const DEF_ONE_TIME = [];
 const DEF_PARTNER_SALARIES = [];
 
 const DEFAULT = {
-  fundTerm:6, debtPct:.50, interestRate:.07, amortYears:25, ioPeriod:12,
+  fundTerm:6, debtPct:.50, interestRate:.07, amortYears:25,
   exitCapRate:.08, saleCosts:.02, carry:.20, prefReturn:.07,
   gpPct:0, amFee:0, pmFee:0, benefitsRate:.22, salaryGrowth:.03,
   partners:3, compoundPref:false, catchUp:false,
@@ -94,7 +95,7 @@ function irr(cfs,g=.1){
 
 // ── MODEL ─────────────────────────────────────────────────────────────────────
 function run(a){
-  const {assets,hires,overhead,fundTerm,debtPct,interestRate,amortYears,ioPeriod=0,
+  const {assets,hires,overhead,fundTerm,debtPct,interestRate,amortYears,
     exitCapRate,saleCosts,carry,prefReturn,gpPct,amFee,pmFee,
     benefitsRate,salaryGrowth,partners,partnerSalaries,oneTime=[],
     compoundPref=false,catchUp=false}=a;
@@ -159,8 +160,8 @@ function run(a){
   }
 
   // ── Asset calcs ──
-  const ioYrs = Math.ceil((ioPeriod||0)/12); // I/O period in whole years
   const assetR=assets.map(asset=>{
+    const ioYrs = Math.ceil((asset.ioPeriod||0)/12); // per-deal I/O period in whole years
     const eq=asset.price*(1-debtPct), debt=asset.price*debtPct;
     const ioAnnDS = debt*interestRate; // interest-only annual payment
     const amAnnDS = pmt(interestRate,amortYears,debt); // fully amortizing annual payment
@@ -232,7 +233,7 @@ function run(a){
     const moic = ecf.slice(1).reduce((s,v)=>s+v,0) / totalEquityIn;
     const totBWFee = bwAnn.reduce((s,v)=>s+v,0);
 
-    return {...asset, eq, debt, annDS, noi, bwFees, bwAnn, totBWFee, totalCapex, day1Capex, capexByYear, txCosts,
+    return {...asset, eq, debt, annDS, ioAnnDS, amAnnDS, ioYrs, noi, bwFees, bwAnn, totBWFee, totalCapex, day1Capex, capexByYear, txCosts,
       buRev, grossRev, y1Opex, opexByYear, saleNet, exitVal, lb, irr:eqIRR, moic, baseNOI, totalEquityIn};
   });
 
@@ -255,9 +256,10 @@ function run(a){
       const yrCapex = ar.capexByYear?.[yr]||0;
       if(yrCapex>0) capxF+=yrCapex/12;
       invEq+=x.price*(1-debtPct);
-      // Debt service: I/O during first ioYrs, then amortizing
+      // Debt service: per-deal I/O period, then amortizing
+      const assetIoYrs = Math.ceil((x.ioPeriod||0)/12);
       const assetDebt=x.price*debtPct;
-      const moDS = yr<=ioYrs ? (assetDebt*interestRate/12) : Math.abs(pmt(interestRate,amortYears,assetDebt))/12;
+      const moDS = yr<=assetIoYrs ? (assetDebt*interestRate/12) : Math.abs(pmt(interestRate,amortYears,assetDebt))/12;
       ds+=moDS;
     });
     const ga=gaMonthly[i].total;
@@ -739,7 +741,6 @@ export default function Portal(){
           <Sli label="Interest Rate"  value={a.interestRate} min={.04}  max={.10}  step={.005} disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("interestRate",v)}/>
           <Sli label="LTV (Debt %)"   value={a.debtPct}      min={.40}  max={.75}  step={.05}  disp={v=>`${(v*100).toFixed(0)}%`} onChange={v=>set("debtPct",v)}/>
           <Sli label="Hold Period"    value={a.fundTerm}     min={5}    max={10}   step={1}    disp={v=>`${v} yrs`}               onChange={v=>set("fundTerm",v)}/>
-          <Sli label="I/O Period"     value={a.ioPeriod||0}  min={0}    max={36}   step={6}    disp={v=>`${v} mo`}                onChange={v=>set("ioPeriod",v)} sub="Interest-only before amortizing"/>
 
           <div style={{height:1,background:C.border,margin:"12px 0"}}/>
           <SHdr t="Waterfall & Carry"/>
@@ -1111,10 +1112,11 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
             {section==="overview" && (
               <Card style={{marginBottom:16}}>
                 <CT c="Acquisition Assumptions"/>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"16px 28px",marginBottom:16}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:"16px 24px",marginBottom:16}}>
                   <DealSlider label="Acquisition Price" k="price" min={2e6} max={60e6} step={5e5} disp={v=>`$${(v/1e6).toFixed(1)}M`} color={C.accent}/>
                   <DealSlider label="Going-In Cap Rate" k="cap" min={.04} max={.14} step={.005} disp={v=>`${(v*100).toFixed(1)}%`} color={C.purple}/>
-                  <DealSlider label="Close Month" k="startMonth" min={3} max={36} step={3} disp={v=>`Month ${v}`} color={C.orange}/>
+                  <DealSlider label="Close Month" k="startMonth" min={1} max={72} step={1} disp={v=>`Month ${v}`} color={C.orange}/>
+                  <DealSlider label="I/O Period" k="ioPeriod" min={0} max={36} step={3} disp={v=>`${v} mo`} color={C.cyan}/>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"16px 28px"}}>
                   <div>
