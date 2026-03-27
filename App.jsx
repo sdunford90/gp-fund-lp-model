@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   ReferenceLine, Cell, AreaChart, Area, ComposedChart } from "recharts";
 
@@ -562,52 +562,88 @@ const TT=({active,payload,label})=>{
 const TABS=["Overview","Deals","Waterfall","Fund CF","G&A Model","GP Partners","Sensitivity"];
 
 // ── APP ───────────────────────────────────────────────────────────────────────
-// ── SCENARIO HELPERS ────────────────────────────────────────────────────────
-
-// ── SCENARIO HELPERS ─────────────────────────────────────────────────────────
-const LS_KEY="gpfund_scenarios";
-function loadScenarios(){try{return JSON.parse(localStorage.getItem(LS_KEY)||"{}");}catch{return {};}}
-function saveScenarios(s){localStorage.setItem(LS_KEY,JSON.stringify(s));}
+// ── SCENARIO API HELPERS ──────────────────────────────────────────────────────
+async function apiFetchAll(){
+  try{
+    const r=await fetch("/api/scenarios");
+    if(!r.ok) return {};
+    const rows=await r.json();
+    const map={};
+    rows.forEach(row=>{ map[row.name]={...row.data,_savedAt:row.updated_at}; });
+    return map;
+  }catch{ return {}; }
+}
+async function apiSave(name,data){
+  try{
+    await fetch(`/api/scenarios/${encodeURIComponent(name)}`,{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({data})
+    });
+  }catch(e){ console.error("Save failed",e); }
+}
+async function apiDelete(name){
+  try{
+    await fetch(`/api/scenarios/${encodeURIComponent(name)}`,{method:"DELETE"});
+  }catch(e){ console.error("Delete failed",e); }
+}
 
 export default function Portal(){
   const [tab,setTab]=useState("Overview");
   const [a,setA]=useState(DEFAULT);
-  const [scenarios,setScenarios]=useState(()=>loadScenarios());
+  const [scenarios,setScenarios]=useState({});
   const [scenName,setScenName]=useState("Base Case");
   const [showScen,setShowScen]=useState(false);
   const [editingName,setEditingName]=useState(false);
+  const [scenLoading,setScenLoading]=useState(false);
 
-  const saveAll=useCallback((s)=>{setScenarios(s);saveScenarios(s);},[]);
+  // Load all scenarios from the backend on mount
+  useEffect(()=>{
+    apiFetchAll().then(s=>setScenarios(s));
+  },[]);
 
-  const saveScenario=useCallback(()=>{
-    const updated={...scenarios,[scenName]:{...a,_savedAt:new Date().toLocaleString()}};
-    saveAll(updated);
-  },[scenarios,scenName,a,saveAll]);
+  const saveScenario=useCallback(async()=>{
+    const payload={...a,_savedAt:new Date().toISOString()};
+    setScenarios(prev=>({...prev,[scenName]:payload}));
+    await apiSave(scenName,payload);
+  },[scenName,a]);
 
-  const loadScenario=useCallback((name)=>{
-    const s=scenarios[name]; if(!s) return;
-    const {_savedAt,...rest}=s;
-    setA(prev=>({...DEFAULT,...rest}));
-    setScenName(name); setShowScen(false);
+  const loadScenario=useCallback(async(name)=>{
+    setScenLoading(true);
+    // Fetch fresh from server
+    try{
+      const r=await fetch(`/api/scenarios/${encodeURIComponent(name)}`);
+      if(r.ok){
+        const row=await r.json();
+        const {_savedAt,...rest}=row.data||{};
+        setA(()=>({...DEFAULT,...rest}));
+        setScenarios(prev=>({...prev,[name]:{...row.data,_savedAt:row.updated_at}}));
+        setScenName(name); setShowScen(false);
+      }
+    }catch(e){console.error(e);}
+    setScenLoading(false);
+  },[]);
+
+  const deleteScenario=useCallback(async(name)=>{
+    setScenarios(prev=>{ const u={...prev}; delete u[name]; return u; });
+    await apiDelete(name);
+  },[]);
+
+  const duplicateScenario=useCallback(async(name)=>{
+    const newName=name+" (copy)";
+    const payload={...scenarios[name]};
+    setScenarios(prev=>({...prev,[newName]:payload}));
+    await apiSave(newName,payload);
   },[scenarios]);
 
-  const deleteScenario=useCallback((name)=>{
-    const updated={...scenarios}; delete updated[name]; saveAll(updated);
-  },[scenarios,saveAll]);
-
-  const duplicateScenario=useCallback((name)=>{
-    const newName=name+" (copy)";
-    saveAll({...scenarios,[newName]:{...scenarios[name]}});
-  },[scenarios,saveAll]);
-
-  const propagateGlobal=useCallback((type,i,k,v)=>{
+  const propagateGlobal=useCallback(async(type,i,k,v)=>{
     const updated={...scenarios};
     Object.keys(updated).forEach(nm=>{
       if(updated[nm][type])
         updated[nm]={...updated[nm],[type]:updated[nm][type].map((x,j)=>j===i?{...x,[k]:v}:x)};
     });
-    saveAll(updated);
-  },[scenarios,saveAll]);
+    setScenarios(updated);
+    await Promise.all(Object.keys(updated).map(nm=>apiSave(nm,updated[nm])));
+  },[scenarios]);
 
   const set=useCallback((k,v)=>setA(p=>({...p,[k]:v})),[]);
 
@@ -734,7 +770,7 @@ export default function Portal(){
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{fontSize:11,fontWeight:600,color:name===scenName?C.accent:C.text,
                           overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</div>
-                        <div style={{fontSize:9,color:C.textFaint}}>{s._savedAt||""}</div>
+                        <div style={{fontSize:9,color:C.textFaint}}>{s._savedAt?new Date(s._savedAt).toLocaleString():""}</div>
                       </div>
                       <button onClick={()=>loadScenario(name)}
                         style={{background:C.accentDim,color:C.accent,border:"none",
