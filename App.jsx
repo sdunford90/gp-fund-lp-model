@@ -1776,9 +1776,9 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
               <thead>
                 <tr style={{background:C.surfaceAlt}}>
-                  {["Deal","Price","Cap Rate","Close","Wet","Dry","Hotel","Fuel","BW Fees/yr","Equity","IRR","MOIC",""].map(h=>(
-                    <th key={h} style={{padding:"10px 12px",color:C.textFaint,fontSize:9,
-                      textTransform:"uppercase",letterSpacing:".08em",fontWeight:700,
+                  {["Deal","Acq Price","CapEx","Total Cost","Cap","Close","Slips","Hotel","Equity","Debt","Exit Val","IRR","MOIC",""].map(h=>(
+                    <th key={h} style={{padding:"8px 10px",color:C.textFaint,fontSize:8,
+                      textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,
                       textAlign:h==="Deal"?"left":"center",
                       borderBottom:`1px solid ${C.border}`,whiteSpace:"nowrap"}}>{h}</th>
                   ))}
@@ -1788,58 +1788,66 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                 {a.assets.map((ast,idx)=>{
                   const ar = m.assetR[idx];
                   const col = dealColors[idx%dealColors.length];
+                  const dealCost = ast.price + (ar?.totalCapex||0) + (ast.txCosts||0);
                   return(
                     <tr key={idx} onClick={()=>{setSel(idx);setView("detail");}}
                       style={{cursor:"pointer",borderBottom:`1px solid ${C.border}`,
                         background:idx%2===0?"transparent":C.surfaceAlt}}>
-                      <td style={{padding:"10px 12px"}}>
-                        <div style={{display:"flex",alignItems:"center",gap:8}}>
-                          <div style={{width:3,height:22,borderRadius:2,background:col}}/>
-                          <span style={{color:C.text,fontWeight:600}}>{ast.name}</span>
+                      <td style={{padding:"8px 10px",minWidth:120}}>
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          <div style={{width:3,height:20,borderRadius:2,background:col,flexShrink:0}}/>
+                          <input value={ast.name} onClick={e=>e.stopPropagation()}
+                            onChange={e=>setAsset(idx,"name",e.target.value)}
+                            style={{background:"transparent",border:"none",borderBottom:`1px solid transparent`,
+                              color:C.text,fontSize:11,fontWeight:600,outline:"none",width:"100%",padding:"2px 0"}}
+                            onFocus={e=>{e.target.style.borderBottom=`1px solid ${C.accent}`;}}
+                            onBlur={e=>{e.target.style.borderBottom="1px solid transparent";}}/>
                         </div>
                       </td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:C.text}}>{f.$(ast.price)}</td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:C.purple}}>{f.p(ast.cap)}</td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:C.orange}}>M{ast.startMonth}</td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:C.accent}}>{(ast.slips||[]).reduce((s,r)=>s+r.count,0)||"—"}</td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:C.purple}}>—</td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:C.orange}}>{(ast.lodging||[]).reduce((s,r)=>s+r.units,0)||"—"}</td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:C.gold}}>{ast.fuelGallons?`${(ast.fuelGallons/1000).toFixed(0)}K`:"—"}</td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:C.cyan}}>{f.$(ar?.bwAnn?.[1]||0)}</td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:C.text}}>{f.$(ar?.eq)}</td>
-                      <td style={{padding:"10px 12px",textAlign:"center"}}>
+                      <td style={{padding:"8px 10px",textAlign:"center",color:C.text,fontSize:11}}>{f.$(ast.price)}</td>
+                      <td style={{padding:"8px 10px",textAlign:"center",color:C.red,fontSize:11}}>{f.$(ar?.totalCapex)}</td>
+                      <td style={{padding:"8px 10px",textAlign:"center",color:C.text,fontWeight:700,fontSize:11}}>{f.$(dealCost)}</td>
+                      <td style={{padding:"8px 10px",textAlign:"center",color:C.purple,fontSize:11}}>{f.p(ast.cap)}</td>
+                      <td style={{padding:"8px 10px",textAlign:"center",color:C.orange,fontSize:11}}>M{ast.startMonth}</td>
+                      <td style={{padding:"8px 10px",textAlign:"center",color:C.accent,fontSize:11}}>{(ast.slips||[]).reduce((s,r)=>s+r.count,0)||"—"}</td>
+                      <td style={{padding:"8px 10px",textAlign:"center",color:C.orange,fontSize:11}}>{(ast.lodging||[]).reduce((s,r)=>s+r.units,0)||"—"}</td>
+                      <td style={{padding:"8px 10px",textAlign:"center",color:C.cyan,fontSize:11}}>{f.$(ar?.totalEquityIn)}</td>
+                      <td style={{padding:"8px 10px",textAlign:"center",color:C.textDim,fontSize:11}}>{f.$(ar?.totalDebt)}</td>
+                      <td style={{padding:"8px 10px",textAlign:"center",color:C.green,fontSize:11}}>{f.$(ar?.exitVal)}</td>
+                      <td style={{padding:"8px 10px",textAlign:"center"}}>
                         <span style={{background:ar?.irr>=a.prefReturn?C.greenL:C.redL,
                           color:ar?.irr>=a.prefReturn?C.green:C.red,
-                          padding:"3px 8px",borderRadius:20,fontSize:10,fontWeight:700}}>
+                          padding:"2px 7px",borderRadius:20,fontSize:10,fontWeight:700}}>
                           {f.p(ar?.irr)}
                         </span>
                       </td>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:C.accent,fontWeight:700}}>{f.x(ar?.moic)}</td>
-                      <td style={{padding:"10px 12px",textAlign:"center"}}>
+                      <td style={{padding:"8px 10px",textAlign:"center",color:C.accent,fontWeight:700,fontSize:11}}>{f.x(ar?.moic)}</td>
+                      <td style={{padding:"8px 10px",textAlign:"center"}}>
                         {a.assets.length>1&&(
                           <button onClick={e=>{e.stopPropagation();removeAsset(idx);if(sel>=a.assets.length-1)setSel(Math.max(0,sel-1));}}
                             style={{background:C.redL,border:"none",
-                              color:C.red,borderRadius:5,padding:"3px 8px",fontSize:9,cursor:"pointer"}}>✕</button>
+                              color:C.red,borderRadius:5,padding:"2px 6px",fontSize:9,cursor:"pointer"}}>✕</button>
                         )}
                       </td>
                     </tr>
                   );
                 })}
                 <tr style={{borderTop:`2px solid ${C.borderDark}`,background:C.surfaceAlt}}>
-                  <td style={{padding:"10px 12px",color:C.accent,fontWeight:700}}>Portfolio Total</td>
-                  <td style={{padding:"10px 12px",textAlign:"center",color:C.accent,fontWeight:700}}>{f.$(totAcqPrice)}</td>
-                  <td style={{padding:"10px 12px",textAlign:"center",color:C.purple,fontWeight:700}}>{f.p(wtdCap)}</td>
+                  <td style={{padding:"8px 10px",color:C.accent,fontWeight:700}}>Portfolio Total</td>
+                  <td style={{padding:"8px 10px",textAlign:"center",color:C.accent,fontWeight:700}}>{f.$(totAcqPrice)}</td>
+                  <td style={{padding:"8px 10px",textAlign:"center",color:C.red,fontWeight:700}}>{f.$(m.assetR.reduce((s,x)=>s+(x.totalCapex||0),0))}</td>
+                  <td style={{padding:"8px 10px",textAlign:"center",color:C.accent,fontWeight:700}}>{f.$(totCost)}</td>
+                  <td style={{padding:"8px 10px",textAlign:"center",color:C.purple,fontWeight:700}}>{f.p(wtdCap)}</td>
                   <td/>
-                  <td style={{padding:"10px 12px",textAlign:"center",color:C.accent,fontWeight:700}}>{a.assets.reduce((s,x)=>s+(x.slips||[]).reduce((t,r)=>t+r.count,0),0)}</td>
-                  <td/>
-                  <td style={{padding:"10px 12px",textAlign:"center",color:C.orange,fontWeight:700}}>{a.assets.reduce((s,x)=>s+(x.lodging||[]).reduce((t,r)=>t+r.units,0),0)||"—"}</td>
-                  <td/>
-                  <td/>
-                  <td style={{padding:"10px 12px",textAlign:"center",color:C.accent,fontWeight:700}}>{f.$(totEq)}</td>
-                  <td style={{padding:"10px 12px",textAlign:"center"}}>
-                    <span style={{background:C.greenL,color:C.green,padding:"3px 8px",borderRadius:20,fontSize:10,fontWeight:700}}>{f.p(avgIRR)}</span>
+                  <td style={{padding:"8px 10px",textAlign:"center",color:C.accent,fontWeight:700}}>{a.assets.reduce((s,x)=>s+(x.slips||[]).reduce((t,r)=>t+r.count,0),0)}</td>
+                  <td style={{padding:"8px 10px",textAlign:"center",color:C.orange,fontWeight:700}}>{a.assets.reduce((s,x)=>s+(x.lodging||[]).reduce((t,r)=>t+r.units,0),0)||"—"}</td>
+                  <td style={{padding:"8px 10px",textAlign:"center",color:C.cyan,fontWeight:700}}>{f.$(totEq)}</td>
+                  <td style={{padding:"8px 10px",textAlign:"center",color:C.textDim,fontWeight:700}}>{f.$(totDebt)}</td>
+                  <td style={{padding:"8px 10px",textAlign:"center",color:C.green,fontWeight:700}}>{f.$(totExitVal)}</td>
+                  <td style={{padding:"8px 10px",textAlign:"center"}}>
+                    <span style={{background:C.greenL,color:C.green,padding:"2px 7px",borderRadius:20,fontSize:10,fontWeight:700}}>{f.p(avgIRR)}</span>
                   </td>
-                  <td style={{padding:"10px 12px",textAlign:"center",color:C.accent,fontWeight:700}}>{f.x(avgMOIC)}</td>
+                  <td style={{padding:"8px 10px",textAlign:"center",color:C.accent,fontWeight:700}}>{f.x(avgMOIC)}</td>
                   <td/>
                 </tr>
               </tbody>
