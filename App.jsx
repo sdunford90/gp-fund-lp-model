@@ -3702,28 +3702,45 @@ function TabTargets({a,setA}){
         </div>
       </div>
       ${mapHtml}
+      ${marina.is_public?`<div style="background:rgba(220,38,38,.06);border:1px solid rgba(220,38,38,.3);border-radius:6px;padding:8px 12px;margin-bottom:14px;display:flex;align-items:center;gap:10">
+        <span style="font-size:11px;font-weight:700;color:#dc2626">⚠ Government Owned — Not Acquirable</span>
+        ${marina.operator_type?`<span style="font-size:9px;font-weight:700;background:rgba(220,38,38,.1);color:#dc2626;padding:2px 8px;border-radius:10px">${esc(marina.operator_type)}</span>`:""}
+        ${marina.operator_confidence?`<span style="font-size:9px;color:#64748b;margin-left:auto">ID confidence: ${esc(marina.operator_confidence)}</span>`:""}
+      </div>`:""}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
         <div>
           <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:#94a3b8;margin-bottom:6px">Marina Details</div>
           <table style="border-collapse:collapse;width:100%">
             ${statRow("Slips",marina.slips!=null?esc(marina.slips.toLocaleString()):null)}
-            ${statRow("Linear Ft",marina.linear_ft?esc(String(marina.linear_ft)):null)}
+            ${statRow("Linear Ft",marina.linear_ft?`${esc(marina.linear_ft.toLocaleString())} ft`:null)}
+            ${statRow("Moorings",marina.moorings!=null?esc(String(marina.moorings)):null)}
             ${statRow("Max LOA",marina.max_loa?`${esc(String(marina.max_loa))} ft`:null)}
-            ${statRow("Fuel Dock",marina.has_fuel_dock?(marina.diesel?`Yes — Diesel $${esc(marina.diesel.toFixed(2))}/gal`:"Yes"):null)}
+            ${statRow("Max Slip Length",marina.max_slip_length?`${esc(String(marina.max_slip_length))} ft`:null)}
+            ${statRow("Max Slip Width",marina.max_slip_width?`${esc(String(marina.max_slip_width))} ft`:null)}
+            ${statRow("Approach Depth",marina.approach_depth?`${esc(String(marina.approach_depth))} ft`:null)}
+            ${statRow("Dock Depth",marina.dock_depth?`${esc(String(marina.dock_depth))} ft`:null)}
+            ${statRow("Fuel Dock",marina.has_fuel_dock?(marina.diesel?`Yes — Diesel $${esc(marina.diesel.toFixed(2))}/gal`:(marina.gas?`Yes — ${esc(marina.gas_type||"Gas")} $${esc(marina.gas.toFixed(2))}/gal`:"Yes")):null)}
+            ${marina.fuel_updated?statRow("Fuel Updated",esc(marina.fuel_updated)):""}
             ${statRow("Reviews",marina.reviews?esc(marina.reviews.toLocaleString()):null)}
             ${statRow("Harbor",marina.harbor?esc(marina.harbor):null)}
+            ${statRow("VHF",marina.vhf?esc(marina.vhf):null)}
             ${statRow("Phone",marina.phone?esc(marina.phone):null)}
-            ${statRow("Source",marina.source_url?"Marinas.com":null)}
           </table>
         </div>
         ${hm?`<div>
           <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:#94a3b8;margin-bottom:6px">Hotel Market Proxy</div>
           <table style="border-collapse:collapse;width:100%">
-            ${statRow("Tier",hm.tier_label?esc(hm.tier_label):null)}
+            ${statRow("Market",hm.market_name?esc(hm.market_name):null)}
+            ${statRow("Tier",hm.tier&&hm.tier_label?`${esc(hm.tier)} — ${esc(hm.tier_label)}`:hm.tier_label?esc(hm.tier_label):null)}
             ${statRow("ADR",hm.adr?`$${esc(String(hm.adr))}`:"—")}
             ${statRow("RevPAR",hm.revpar?`$${esc(String(hm.revpar))}`:"—")}
             ${statRow("Occupancy",hm.occupancy?`${(hm.occupancy*100).toFixed(0)}%`:"—")}
-            ${statRow("Market",hm.market_name?esc(hm.market_name):null)}
+            ${statRow("Demand Score",hm.demand_score?esc(hm.demand_score.toFixed(1)):null)}
+            ${statRow("Seasonality",hm.seasonality?esc(hm.seasonality.replace(/_/g," ")):null)}
+            ${statRow("Supply",hm.supply_constrained!=null?(hm.supply_constrained?"Constrained":"Open"):null)}
+            ${statRow("Data Confidence",hm.data_confidence?esc(hm.data_confidence):null)}
+            ${statRow("Source",hm.source?esc(hm.source):null)}
+            ${statRow("Data As Of",hm.data_as_of?esc(hm.data_as_of):null)}
           </table>
         </div>`:""}
       </div>
@@ -3732,7 +3749,7 @@ function TabTargets({a,setA}){
         <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px 12px;font-size:11px;color:#1a2e44;line-height:1.6;white-space:pre-wrap">${esc(notes)}</div>
       </div>`:""}
       <div style="margin-top:24px;padding-top:10px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;font-size:9px;color:#94a3b8">
-        <span>GP Fund I — Confidential, for internal use only</span>
+        <span>GP Fund I — Confidential, for internal use only${marina.scraped_at?` · Data scraped ${esc(new Date(marina.scraped_at).toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric"}))}`:""}</span>
         <span>${esc(today)}</span>
       </div>
     `;
@@ -4145,14 +4162,32 @@ function TabTargets({a,setA}){
 
           {/* DETAILS TAB */}
           {popupTab==="details"&&(<>
-          {/* Key stats */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:6,marginBottom:14}}>
-            {[{l:"Slips",v:selected.slips!=null?selected.slips:(selected.linear_ft?`${selected.linear_ft}ft`:"—")},
-              {l:"Moorings",v:selected.moorings||"—"},
-              {l:"Max LOA",v:selected.max_loa?`${selected.max_loa}'`:"—"},
-              {l:"Approach",v:selected.approach_depth?`${selected.approach_depth}ft`:"—"},
-              {l:"Dock Depth",v:selected.dock_depth?`${selected.dock_depth}ft`:"—"},
-              {l:"Reviews",v:selected.reviews||"—"}].map(({l,v})=>(
+
+          {/* Government ownership banner */}
+          {selected.is_public&&(
+            <div style={{background:"rgba(220,38,38,.06)",border:"1px solid rgba(220,38,38,.25)",
+              borderRadius:8,padding:"9px 12px",marginBottom:12,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              <span style={{fontSize:11,fontWeight:700,color:C.red}}>⚠ Government Owned — Not Acquirable</span>
+              {selected.operator_type&&<span style={{fontSize:9,fontWeight:700,background:"rgba(220,38,38,.1)",
+                color:C.red,padding:"2px 8px",borderRadius:10}}>{selected.operator_type}</span>}
+              {selected.operator_confidence&&<span style={{fontSize:9,color:C.textDim,marginLeft:"auto"}}>
+                ID confidence: <strong>{selected.operator_confidence}</strong></span>}
+            </div>
+          )}
+
+          {/* Key stats — all physical marina fields */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:5,marginBottom:14}}>
+            {[
+              {l:"Slips",         v:selected.slips!=null?selected.slips.toLocaleString():"—"},
+              {l:"Linear Ft",     v:selected.linear_ft?`${selected.linear_ft.toLocaleString()} ft`:"—"},
+              {l:"Moorings",      v:selected.moorings!=null?selected.moorings:"—"},
+              {l:"Max LOA",       v:selected.max_loa?`${selected.max_loa} ft`:"—"},
+              {l:"Max Slip Len",  v:selected.max_slip_length?`${selected.max_slip_length} ft`:"—"},
+              {l:"Max Slip Wid",  v:selected.max_slip_width?`${selected.max_slip_width} ft`:"—"},
+              {l:"Approach",      v:selected.approach_depth?`${selected.approach_depth} ft`:"—"},
+              {l:"Dock Depth",    v:selected.dock_depth?`${selected.dock_depth} ft`:"—"},
+              {l:"Reviews",       v:selected.reviews!=null?selected.reviews.toLocaleString():"—"},
+            ].map(({l,v})=>(
               <div key={l} style={{background:C.surfaceAlt,borderRadius:8,padding:"8px 6px",textAlign:"center"}}>
                 <div style={{fontSize:8,color:C.textFaint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,marginBottom:2}}>{l}</div>
                 <div style={{fontSize:13,fontWeight:700,color:C.text}}>{v}</div>
@@ -4160,25 +4195,48 @@ function TabTargets({a,setA}){
           </div>
 
           {/* Hotel Market */}
-          {selected.hotel_market&&(<div style={{background:`linear-gradient(135deg,rgba(10,35,66,.04) 0%,rgba(10,35,66,.02) 100%)`,
-            border:`1px solid rgba(10,35,66,.1)`,borderRadius:10,padding:"12px 14px",marginBottom:12}}>
-            <div style={{fontSize:9,fontWeight:700,color:C.navy,textTransform:"uppercase",letterSpacing:".07em",marginBottom:8}}>Hotel Market Data</div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6}}>
-              {[{l:"Market",v:selected.hotel_market.market_name||selected.region},
-                {l:"Tier",v:selected.hotel_market.tier_label},
-                {l:"ADR",v:selected.hotel_market.adr?`$${selected.hotel_market.adr}`:"—"},
-                {l:"RevPAR",v:selected.hotel_market.revpar?`$${selected.hotel_market.revpar}`:"—"},
-                {l:"Occupancy",v:selected.hotel_market.occupancy?`${(selected.hotel_market.occupancy*100).toFixed(0)}%`:"—"},
-                {l:"Demand Score",v:selected.hotel_market.demand_score?selected.hotel_market.demand_score.toFixed(1):"—"},
-                {l:"Seasonality",v:selected.hotel_market.seasonality?.replace("_"," ")||"—"},
-                {l:"Supply",v:selected.hotel_market.supply_constrained?"Constrained":"Open"}
-              ].map(({l,v})=>(
-                <div key={l}>
-                  <div style={{fontSize:8,color:C.textFaint,textTransform:"uppercase",fontWeight:700,marginBottom:1}}>{l}</div>
-                  <div style={{fontSize:12,fontWeight:700,color:C.text}}>{v}</div>
-                </div>))}
+          {selected.hotel_market&&(()=>{const hm=selected.hotel_market;
+            const confColor=hm.data_confidence==="high"?C.green:hm.data_confidence==="medium"?"#b45309":C.textDim;
+            const confBg=hm.data_confidence==="high"?"rgba(5,150,105,.1)":hm.data_confidence==="medium"?"rgba(180,83,9,.1)":"rgba(148,163,184,.1)";
+            return(
+            <div style={{background:`linear-gradient(135deg,rgba(10,35,66,.04) 0%,rgba(10,35,66,.02) 100%)`,
+              border:`1px solid rgba(10,35,66,.1)`,borderRadius:10,padding:"12px 14px",marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <div style={{fontSize:9,fontWeight:700,color:C.navy,textTransform:"uppercase",letterSpacing:".07em"}}>Hotel Market Data</div>
+                {hm.data_confidence&&<span style={{fontSize:8,fontWeight:700,padding:"2px 8px",borderRadius:10,background:confBg,color:confColor}}>
+                  {hm.data_confidence.toUpperCase()} CONFIDENCE
+                </span>}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginBottom:8}}>
+                {[
+                  {l:"Market",       v:hm.market_name||selected.region},
+                  {l:"Tier",         v:hm.tier?`${hm.tier} — ${hm.tier_label||""}`:hm.tier_label},
+                  {l:"ADR",          v:hm.adr?`$${hm.adr}`:"—"},
+                  {l:"RevPAR",       v:hm.revpar?`$${hm.revpar}`:"—"},
+                  {l:"Occupancy",    v:hm.occupancy?`${(hm.occupancy*100).toFixed(0)}%`:"—"},
+                  {l:"Demand Score", v:hm.demand_score?hm.demand_score.toFixed(1):"—"},
+                  {l:"Seasonality",  v:hm.seasonality?.replace(/_/g," ")||"—"},
+                  {l:"Supply",       v:hm.supply_constrained?"Constrained":"Open"},
+                ].map(({l,v})=>(
+                  <div key={l}>
+                    <div style={{fontSize:8,color:C.textFaint,textTransform:"uppercase",fontWeight:700,marginBottom:1}}>{l}</div>
+                    <div style={{fontSize:12,fontWeight:700,color:C.text}}>{v}</div>
+                  </div>))}
+              </div>
+              {(hm.source||hm.data_as_of)&&(
+                <div style={{borderTop:`1px solid rgba(10,35,66,.08)`,paddingTop:7,display:"flex",gap:16,flexWrap:"wrap"}}>
+                  {hm.source&&<div>
+                    <div style={{fontSize:8,color:C.textFaint,textTransform:"uppercase",fontWeight:700,marginBottom:1}}>Source</div>
+                    <div style={{fontSize:10,color:C.textDim}}>{hm.source}</div>
+                  </div>}
+                  {hm.data_as_of&&<div>
+                    <div style={{fontSize:8,color:C.textFaint,textTransform:"uppercase",fontWeight:700,marginBottom:1}}>Data As Of</div>
+                    <div style={{fontSize:10,color:C.textDim}}>{hm.data_as_of}</div>
+                  </div>}
+                </div>
+              )}
             </div>
-          </div>)}
+          );})()||null}
 
           {/* Dockage Rates */}
           {selected.dockage_rates&&(<div style={{background:"rgba(0,212,255,.04)",border:"1px solid rgba(0,212,255,.15)",
@@ -4217,10 +4275,10 @@ function TabTargets({a,setA}){
             <div style={{fontSize:11,color:C.textDim,lineHeight:1.65}}>{selected.about}</div>
           </div>)}
 
-          {/* Contact */}
+          {/* Contact & Data Info */}
           <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:14,padding:"10px 14px",
             background:C.surfaceAlt,borderRadius:8}}>
-            <div style={{fontSize:9,fontWeight:700,color:C.textFaint,textTransform:"uppercase",width:"100%",marginBottom:2}}>Contact</div>
+            <div style={{fontSize:9,fontWeight:700,color:C.textFaint,textTransform:"uppercase",width:"100%",marginBottom:2}}>Contact & Source</div>
             {selected.address&&<span style={{fontSize:11,color:C.textDim}}>{selected.address}</span>}
             {selected.phone&&<span style={{fontSize:11,color:C.textDim}}>{selected.phone}</span>}
             {selected.vhf&&<span style={{fontSize:11,color:C.textDim}}>{selected.vhf}</span>}
@@ -4228,6 +4286,11 @@ function TabTargets({a,setA}){
               style={{fontSize:11,color:C.accent}}>{selected.website}</a>}
             {selected.lat&&selected.lon&&<a href={`https://maps.google.com/?q=${selected.lat},${selected.lon}`} target="_blank" rel="noopener"
               style={{fontSize:11,color:C.accent}}>📍 Google Maps</a>}
+            {selected.source_url&&<a href={selected.source_url} target="_blank" rel="noopener"
+              style={{fontSize:11,color:C.accent}}>Marinas.com profile ↗</a>}
+            {selected.scraped_at&&<span style={{fontSize:9,color:C.textFaint,width:"100%",marginTop:2}}>
+              Data scraped: {new Date(selected.scraped_at).toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric"})}
+            </span>}
           </div>
 
           {/* Notes */}
