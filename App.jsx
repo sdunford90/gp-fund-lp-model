@@ -3129,11 +3129,12 @@ function TargetsMapView({marinas,interestMap,onSelect}){
       const bounds=[];
       withCoords.forEach(m=>{
         const status=interestMap[m.id]?.status;
-        const color=status==="interested"?"#16a34a":status==="not_interested"?"#dc2626":C.navy;
+        const stg=STAGES.find(s=>s.key===status);
+        const color=stg?stg.color:"#94A3B8";
         const cm=window.L.circleMarker([m.lat,m.lon],{
-          radius:5,fillColor:color,color:"#fff",weight:1.5,fillOpacity:.85})
+          radius:status?6:4,fillColor:color,color:"#fff",weight:1.5,fillOpacity:status?.92:.7})
           .addTo(mapRef.current)
-          .bindTooltip(`<strong>${m.name}</strong><br/>${m.city}, ${m.state}${m.slips?`<br/>${m.slips} slips`:""}`,
+          .bindTooltip(`<strong>${m.name}</strong><br/>${m.city}, ${m.state}${m.slips?`<br/>${m.slips} slips`:""}${stg?`<br/><em>${stg.label}</em>`:""}`,
             {direction:"top",offset:[0,-4]});
         cm.on("click",()=>onSelect(m));
         markersRef.current.push(cm);bounds.push([m.lat,m.lon]);});
@@ -3155,8 +3156,8 @@ function TargetsMapView({marinas,interestMap,onSelect}){
       <div style={{position:"absolute",bottom:20,right:20,background:"rgba(255,255,255,.95)",
         backdropFilter:"blur(6px)",border:`1px solid ${C.border}`,borderRadius:10,
         padding:"10px 14px",fontSize:10,fontWeight:600,display:"flex",flexDirection:"column",gap:5,zIndex:999}}>
-        <div style={{color:C.textFaint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:2}}>Legend</div>
-        {[["#16a34a","Interested"],["#dc2626","Passed"],[C.navy,"Unreviewed"]].map(([col,lbl])=>(
+        <div style={{color:C.textFaint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:2}}>Pipeline Stage</div>
+        {[...STAGES.map(s=>([s.color,s.label])),["#94A3B8","Unreviewed"]].map(([col,lbl])=>(
           <div key={lbl} style={{display:"flex",alignItems:"center",gap:7}}>
             <div style={{width:10,height:10,borderRadius:"50%",background:col,border:"1.5px solid #fff",
               boxShadow:"0 1px 3px rgba(0,0,0,.25)"}}/>
@@ -3793,11 +3794,15 @@ function TabTargets({a,setA}){
             <textarea value={popupNotes} onChange={e=>setPopupNotes(e.target.value)} placeholder="Add your notes on this marina…"
               rows={3} style={{width:"100%",padding:"8px 12px",background:C.surface,border:`1px solid ${C.border}`,
                 borderRadius:8,fontSize:11,color:C.text,resize:"vertical",outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
-            <button onClick={()=>saveNote(selected,popupNotes)} disabled={savingNote}
-              style={{marginTop:5,padding:"5px 14px",borderRadius:6,fontSize:10,fontWeight:700,cursor:"pointer",
-                background:C.navy,color:"#fff",border:"none",opacity:savingNote?.6:1}}>
-              {savingNote?"Saving…":"Save Note"}
-            </button>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginTop:5}}>
+              <button onClick={()=>saveNote(selected,popupNotes)} disabled={savingNote}
+                style={{padding:"5px 14px",borderRadius:6,fontSize:10,fontWeight:700,cursor:"pointer",
+                  background:C.navy,color:"#fff",border:"none",opacity:savingNote?.6:1}}>
+                {savingNote?"Saving…":"Save Note"}
+              </button>
+              {!interestStatus&&popupNotes.trim()&&(
+                <span style={{fontSize:9,color:"#b45309",fontWeight:600}}>⚠ Will add to Watchlist</span>)}
+            </div>
           </div>
 
           {/* Footer actions */}

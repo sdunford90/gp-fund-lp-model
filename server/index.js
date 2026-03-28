@@ -188,12 +188,17 @@ app.post("/api/marinas", async (req, res) => {
 
 // ── Marina interest / pipeline stage tracking ─────────────────────────────────
 
+const STAGE_LABELS = {
+  watchlist: "Watchlist", under_review: "Under Review", loi_sent: "LOI Sent",
+  due_diligence: "Due Diligence", closed: "Closed", pass: "Passed",
+};
+
 app.get("/api/marina-interest", async (req, res) => {
   try {
     const { rows } = await pool.query(
       "SELECT marina_id, status, notes, updated_at FROM marina_interest ORDER BY updated_at DESC"
     );
-    res.json(rows);
+    res.json(rows.map(r => ({ ...r, stage_label: STAGE_LABELS[r.status] || r.status })));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
