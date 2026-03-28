@@ -3351,11 +3351,20 @@ function TabTargets({a,setA}){
   const exportPDF=useCallback((marina,notes)=>{
     const existing=document.getElementById("__gp_tearsheet");
     if(existing)existing.remove();
+    // HTML-escape helper — prevents XSS from any untrusted string field
+    const esc=(s)=>String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
     const score=scoreMarina(marina);
     const stage=STAGES.find(s=>s.key===interestMap[marina.id]?.status);
     const hm=marina.hotel_market;
     const today=new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});
-    // Build static tile URL for aerial map (ESRI World Imagery)
+    const scoreColor=score>=70?"#059669":score>=50?"#0891b2":"#64748b";
+    // Address line: use marina.address if available, else city/state
+    const addrParts=[marina.address,marina.city&&marina.state?`${marina.city}, ${marina.state}`:marina.city||marina.state].filter(Boolean);
+    const addressLine=addrParts.map(esc).join(" · ");
+    const locationLine=[marina.region,marina.harbor].filter(Boolean).map(esc).join(" · ");
+    // Stage badge (from trusted STAGES constant — colors are hex literals)
+    const stageBadge=stage?`<div style="display:inline-block;background:${stage.bg};color:${stage.color};border:1px solid ${stage.color}66;padding:4px 12px;border-radius:20px;font-size:10px;font-weight:700;margin-bottom:6px">${esc(stage.label)}</div>`:""
+    // Build static tile URL for aerial map (ESRI World Imagery) — only numbers used in URL, safe
     let mapHtml="";
     if(marina.lat&&marina.lon){
       const z=15;const n=Math.pow(2,z);
@@ -3363,29 +3372,31 @@ function TabTargets({a,setA}){
       const latRad=marina.lat*Math.PI/180;
       const tileY=Math.floor((1-Math.log(Math.tan(latRad)+1/Math.cos(latRad))/Math.PI)/2*n);
       const tileUrl=`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${tileY}/${tileX}`;
-      mapHtml=`<div style="margin-bottom:16px;border-radius:6px;overflow:hidden;border:1px solid #ccc;height:180px;background:#e8f4fd;display:flex;align-items:center;justify-content:center;">
-        <img src="${tileUrl}" alt="Aerial view" style="width:100%;height:100%;object-fit:cover;" onerror="this.parentNode.innerHTML='<span style=color:#999;font-size:11px>Aerial view not available</span>'"/>
+      mapHtml=`<div style="margin-bottom:16px;border-radius:6px;overflow:hidden;border:1px solid #ccc;height:180px;background:#e8f4fd;">
+        <img src="${tileUrl}" alt="Aerial view — ${esc(marina.name)}" style="width:100%;height:100%;object-fit:cover;display:block;"/>
       </div>`;
     }
+    // Safe statRow — label is trusted literal, val is pre-escaped by caller
     const statRow=(label,val)=>val?`<tr><td style="padding:4px 8px 4px 0;color:#64748b;font-size:11px;white-space:nowrap">${label}</td><td style="padding:4px 0;font-size:11px;font-weight:600;color:#1a2e44">${val}</td></tr>`:"";
     const div=document.createElement("div");div.id="__gp_tearsheet";
     div.style.cssText="display:none;font-family:'DM Sans',sans-serif;";
     div.innerHTML=`
-      <style id="__gp_tearsheet_style">
+      <style>
         @media print{
           body>*:not(#__gp_tearsheet){display:none!important;}
           #__gp_tearsheet{display:block!important;padding:32px;max-width:720px;margin:0 auto;}
         }
       </style>
-      <div class="ts-header" style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid #0a2342">
-        <div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid #0a2342">
+        <div style="flex:1;min-width:0">
           <div style="font-size:10px;font-weight:700;letter-spacing:.1em;color:#0a2342;text-transform:uppercase;margin-bottom:2px">GP Fund I — Deal Tearsheet</div>
-          <div style="font-size:22px;font-weight:800;color:#0a2342;line-height:1.2">${marina.name}</div>
-          <div style="font-size:12px;color:#64748b;margin-top:3px">${[marina.city,marina.state,marina.region].filter(Boolean).join(" · ")}</div>
+          <div style="font-size:22px;font-weight:800;color:#0a2342;line-height:1.2">${esc(marina.name)}</div>
+          ${addressLine?`<div style="font-size:11px;color:#1a2e44;margin-top:3px;font-weight:500">${addressLine}</div>`:""}
+          ${locationLine?`<div style="font-size:11px;color:#64748b;margin-top:2px">${locationLine}</div>`:""}
         </div>
         <div style="text-align:right;flex-shrink:0;margin-left:16px">
-          ${stage?`<div style="background:${stage.bg};color:${stage.color};border:1px solid ${stage.color}66;padding:4px 12px;border-radius:20px;font-size:10px;font-weight:700;margin-bottom:6px">${stage.label}</div>`:""}
-          <div style="font-size:28px;font-weight:800;color:${score>=70?"#059669":score>=50?"#0891b2":"#64748b"}">${score}</div>
+          ${stageBadge}
+          <div style="font-size:28px;font-weight:800;color:${scoreColor}">${score}</div>
           <div style="font-size:9px;font-weight:700;color:#94a3b8;text-transform:uppercase">Acquisition Score</div>
         </div>
       </div>
@@ -3394,33 +3405,34 @@ function TabTargets({a,setA}){
         <div>
           <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:#94a3b8;margin-bottom:6px">Marina Details</div>
           <table style="border-collapse:collapse;width:100%">
-            ${statRow("Slips",marina.slips?.toLocaleString())}
-            ${statRow("Linear Ft",marina.linear_ft)}
-            ${statRow("Max LOA",marina.max_loa?`${marina.max_loa} ft`:null)}
-            ${statRow("Fuel Dock",marina.has_fuel_dock?(marina.diesel?`Yes — Diesel $${marina.diesel.toFixed(2)}/gal`:"Yes"):null)}
-            ${statRow("Reviews",marina.reviews?.toLocaleString())}
-            ${statRow("Harbor",marina.harbor)}
+            ${statRow("Slips",marina.slips!=null?esc(marina.slips.toLocaleString()):null)}
+            ${statRow("Linear Ft",marina.linear_ft?esc(String(marina.linear_ft)):null)}
+            ${statRow("Max LOA",marina.max_loa?`${esc(String(marina.max_loa))} ft`:null)}
+            ${statRow("Fuel Dock",marina.has_fuel_dock?(marina.diesel?`Yes — Diesel $${esc(marina.diesel.toFixed(2))}/gal`:"Yes"):null)}
+            ${statRow("Reviews",marina.reviews?esc(marina.reviews.toLocaleString()):null)}
+            ${statRow("Harbor",marina.harbor?esc(marina.harbor):null)}
+            ${statRow("Phone",marina.phone?esc(marina.phone):null)}
             ${statRow("Source",marina.source_url?"Marinas.com":null)}
           </table>
         </div>
         ${hm?`<div>
           <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:#94a3b8;margin-bottom:6px">Hotel Market Proxy</div>
           <table style="border-collapse:collapse;width:100%">
-            ${statRow("Tier",hm.tier_label)}
-            ${statRow("ADR",hm.adr?`$${hm.adr}`:"—")}
-            ${statRow("RevPAR",hm.revpar?`$${hm.revpar}`:"—")}
+            ${statRow("Tier",hm.tier_label?esc(hm.tier_label):null)}
+            ${statRow("ADR",hm.adr?`$${esc(String(hm.adr))}`:"—")}
+            ${statRow("RevPAR",hm.revpar?`$${esc(String(hm.revpar))}`:"—")}
             ${statRow("Occupancy",hm.occupancy?`${(hm.occupancy*100).toFixed(0)}%`:"—")}
-            ${statRow("Market",hm.market_name)}
+            ${statRow("Market",hm.market_name?esc(hm.market_name):null)}
           </table>
         </div>`:""}
       </div>
       ${notes?`<div style="margin-bottom:16px">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:#94a3b8;margin-bottom:6px">GP Notes</div>
-        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px 12px;font-size:11px;color:#1a2e44;line-height:1.6;white-space:pre-wrap">${notes}</div>
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px 12px;font-size:11px;color:#1a2e44;line-height:1.6;white-space:pre-wrap">${esc(notes)}</div>
       </div>`:""}
       <div style="margin-top:24px;padding-top:10px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;font-size:9px;color:#94a3b8">
         <span>GP Fund I — Confidential, for internal use only</span>
-        <span>${today}</span>
+        <span>${esc(today)}</span>
       </div>
     `;
     document.body.appendChild(div);
