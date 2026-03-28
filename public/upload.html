@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Upload JSON — GP Fund I</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', -apple-system, sans-serif; background: #F8F9FC; min-height: 100vh;
+      display: flex; align-items: center; justify-content: center; }
+    .card { background: #FFF; border-radius: 16px; box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      padding: 48px; max-width: 520px; width: 100%; }
+    h1 { font-size: 22px; font-weight: 700; color: #1E293B; margin-bottom: 6px; }
+    p { font-size: 13px; color: #64748B; margin-bottom: 24px; line-height: 1.5; }
+    .drop-zone { border: 2px dashed #CBD5E1; border-radius: 12px; padding: 40px 24px;
+      text-align: center; cursor: pointer; transition: all 0.2s; background: #F8FAFC; }
+    .drop-zone:hover, .drop-zone.drag-over { border-color: #2563EB; background: #EFF6FF; }
+    .drop-zone input { display: none; }
+    .drop-zone .icon { font-size: 36px; margin-bottom: 12px; }
+    .drop-zone .label { font-size: 14px; color: #475569; font-weight: 600; }
+    .drop-zone .hint { font-size: 11px; color: #94A3B8; margin-top: 6px; }
+    .status { margin-top: 20px; padding: 14px 16px; border-radius: 10px; font-size: 13px;
+      font-weight: 600; display: none; }
+    .status.uploading { display: block; background: #DBEAFE; color: #1D4ED8; }
+    .status.success { display: block; background: #D1FAE5; color: #065F46; }
+    .status.error { display: block; background: #FEE2E2; color: #991B1B; }
+    .file-info { margin-top: 16px; font-size: 12px; color: #64748B; }
+    .file-info strong { color: #1E293B; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Upload JSON Dataset</h1>
+    <p>Drop your <strong>Main.json</strong> file here to upload it to the server. It will be saved to <code>public/data/Main.json</code> and available for the Targets module parser.</p>
+
+    <div class="drop-zone" id="dropZone">
+      <div class="icon">📁</div>
+      <div class="label">Drop JSON file here or click to browse</div>
+      <div class="hint">Supports .json files up to 50MB</div>
+      <input type="file" id="fileInput" accept=".json">
+    </div>
+
+    <div class="status" id="status"></div>
+    <div class="file-info" id="fileInfo"></div>
+  </div>
+
+  <script>
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const status = document.getElementById('status');
+    const fileInfo = document.getElementById('fileInfo');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
+
+    async function handleFile(file) {
+      if (!file.name.endsWith('.json')) {
+        showStatus('error', 'Please upload a .json file');
+        return;
+      }
+
+      const sizeMB = (file.size / 1e6).toFixed(1);
+      fileInfo.innerHTML = `<strong>${file.name}</strong> — ${sizeMB}MB`;
+
+      showStatus('uploading', `Uploading ${file.name} (${sizeMB}MB)...`);
+
+      try {
+        const text = await file.text();
+        const json = JSON.parse(text);
+
+        // Show record count if it's a Browse.ai export
+        const records = json.data ? json.data.length : (Array.isArray(json) ? json.length : '?');
+        fileInfo.innerHTML += ` — ${records} records detected`;
+
+        const resp = await fetch(`/api/upload/${encodeURIComponent(file.name)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: text,
+        });
+
+        if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+        const result = await resp.json();
+        showStatus('success', `Uploaded successfully! Saved to public/data/${file.name} (${result.sizeMB}MB)`);
+      } catch (e) {
+        showStatus('error', `Upload failed: ${e.message}`);
+      }
+    }
+
+    function showStatus(type, msg) {
+      status.className = `status ${type}`;
+      status.textContent = msg;
+    }
+  </script>
+</body>
+</html>

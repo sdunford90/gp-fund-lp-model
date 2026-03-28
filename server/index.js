@@ -16,7 +16,25 @@ const pool = new Pool({
 });
 
 app.use(cors());
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "50mb" }));
+
+// ── File upload endpoint (for large JSON datasets) ──────────────────────────
+import { writeFile, mkdir } from "fs/promises";
+
+app.post("/api/upload/:filename", async (req, res) => {
+  try {
+    const dir = join(__dirname, "..", "public", "data");
+    await mkdir(dir, { recursive: true });
+    const filePath = join(dir, req.params.filename);
+    await writeFile(filePath, JSON.stringify(req.body, null, 0));
+    const sizeMB = (Buffer.byteLength(JSON.stringify(req.body)) / 1e6).toFixed(1);
+    console.log(`Uploaded ${req.params.filename} (${sizeMB}MB)`);
+    res.json({ ok: true, file: req.params.filename, sizeMB });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 async function initDb() {
   await pool.query(`
@@ -92,6 +110,11 @@ app.delete("/api/scenarios/:name", async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// ── Serve upload page and public/data in all modes ──────────────────────────
+const publicPath = join(__dirname, "..", "public");
+app.use("/upload.html", express.static(join(publicPath, "upload.html")));
+app.use("/data", express.static(join(publicPath, "data")));
 
 // ── Static file serving in production ────────────────────────────────────────
 if (isProd) {
