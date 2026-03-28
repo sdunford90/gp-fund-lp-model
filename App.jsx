@@ -3076,24 +3076,41 @@ function parseMarinasJSON(raw){
 }
 
 function TabTargets({a,setA}){
-  const [marinas,setMarinas]=useState(()=>{try{const d=localStorage.getItem("gpfund_marinas");return d?JSON.parse(d):[];}catch{return[];}});
+  const [marinas,setMarinas]=useState([]);
+  const [loading,setLoading]=useState(true);
   const [search,setSearch]=useState("");const [stateFilter,setStateFilter]=useState("");
+  const [regionFilter,setRegionFilter]=useState("");
   const [fuelOnly,setFuelOnly]=useState(false);const [slipsOnly,setSlipsOnly]=useState(false);
   const [sortBy,setSortBy]=useState("name");const [page,setPage]=useState(0);
   const [selected,setSelected]=useState(null);const [uploading,setUploading]=useState(false);
-  const [uploadMsg,setUploadMsg]=useState("");const PG=50;
+  const [uploadMsg,setUploadMsg]=useState("");const [showUpload,setShowUpload]=useState(false);
+  const PG=50;
 
-  useEffect(()=>{if(marinas.length>0)return;
-    fetch("/data/Main.json").then(r=>r.ok?r.json():null).then(raw=>{
-      if(raw){const p=parseMarinasJSON(raw);if(p.length>0){setMarinas(p);
-        try{localStorage.setItem("gpfund_marinas",JSON.stringify(p));}catch{}}}}).catch(()=>{});},[]);
+  useEffect(()=>{
+    setLoading(true);
+    fetch("/api/marinas")
+      .then(r=>r.ok?r.json():null)
+      .then(raw=>{
+        if(raw){const p=parseMarinasJSON(raw);setMarinas(p);}
+        setLoading(false);
+      })
+      .catch(()=>setLoading(false));
+  },[]);
 
   const handleUpload=useCallback(async(file)=>{if(!file)return;setUploading(true);setUploadMsg("Parsing...");
-    try{const text=await file.text();const raw=JSON.parse(text);const p=parseMarinasJSON(raw);
-      setMarinas(p);try{localStorage.setItem("gpfund_marinas",JSON.stringify(p));}catch{}
-      try{await fetch(`/api/upload/${encodeURIComponent(file.name)}`,{method:"POST",headers:{"Content-Type":"application/json"},body:text});}catch{}
-      setUploadMsg(`Loaded ${p.length.toLocaleString()} marinas`);setPage(0);
-    }catch(e){setUploadMsg(`Error: ${e.message}`);}setUploading(false);},[]);
+    try{
+      const text=await file.text();
+      const raw=JSON.parse(text);
+      const p=parseMarinasJSON(raw);
+      if(p.length===0)throw new Error("No valid marina records found in file");
+      setUploadMsg(`Saving ${p.length.toLocaleString()} marinas to server...`);
+      const res=await fetch("/api/marinas",{method:"POST",headers:{"Content-Type":"application/json"},body:text});
+      if(!res.ok)throw new Error("Server save failed");
+      setMarinas(p);setPage(0);setShowUpload(false);
+      setUploadMsg(`Loaded ${p.length.toLocaleString()} marinas`);
+    }catch(e){setUploadMsg(`Error: ${e.message}`);}
+    setUploading(false);
+  },[]);
 
   const filtered=useMemo(()=>{let list=marinas;
     if(search){const s=search.toLowerCase();list=list.filter(m=>(m.name+m.city+m.state+m.address+m.harbor).toLowerCase().includes(s));}
@@ -3121,32 +3138,56 @@ function TabTargets({a,setA}){
     setA(p=>({...p,assets:[...p.assets,deal]}));setSelected(null);},[a,setA]);
   const isInDeals=useCallback((m)=>(a.assets||[]).some(d=>d.targetSource?.id===m.id),[a]);
 
-  if(marinas.length===0)return(
-    <div><PHdr title="Acquisition Targets" sub="Upload your marina database to browse and filter targets"/>
-      <Card style={{padding:"48px 32px",textAlign:"center",maxWidth:560,margin:"40px auto"}}>
-        <div style={{fontSize:40,marginBottom:16}}>🎯</div>
-        <div style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:8}}>Upload Marina Database</div>
-        <div style={{fontSize:12,color:C.textDim,marginBottom:24,lineHeight:1.6}}>
-          Drop your <strong>Main.json</strong> Browse.ai export here to load 5,500+ marinas across 14 East Coast states.</div>
-        <label style={{display:"inline-block",padding:"12px 32px",background:C.accent,color:"#FFF",
-          borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer"}}>
-          Choose File<input type="file" accept=".json" style={{display:"none"}}
-            onChange={e=>{if(e.target.files[0])handleUpload(e.target.files[0]);}}/>
-        </label>
-        {uploadMsg&&<div style={{marginTop:12,fontSize:12,color:uploading?C.accent:uploadMsg.startsWith("Error")?C.red:C.green,fontWeight:600}}>{uploadMsg}</div>}
-      </Card>
+  if(loading)return(
+    <div><PHdr title="Acquisition Targets" sub="Loading marina database..."/>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:300,gap:12,color:C.textDim,fontSize:13}}>
+        <div style={{width:20,height:20,border:`2px solid ${C.border}`,borderTopColor:C.accent,borderRadius:"50%",
+          animation:"spin 0.8s linear infinite"}}/>
+        Loading 5,500+ marinas…
+      </div>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>);
 
   return(<div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
+    {/* HEADER */}
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,gap:12}}>
       <PHdr title="Acquisition Targets"
-        sub={`${marinas.length.toLocaleString()} marinas · ${stateCounts.length} states · ${marinas.filter(m=>m.has_fuel_dock).length.toLocaleString()} fuel docks · ${marinas.filter(m=>m.slips).length.toLocaleString()} with slip data`}/>
-      <label style={{padding:"6px 14px",background:C.surfaceAlt,border:`1px solid ${C.border}`,
-        borderRadius:6,fontSize:10,fontWeight:600,color:C.textDim,cursor:"pointer",flexShrink:0}}>
-        Re-upload<input type="file" accept=".json" style={{display:"none"}}
-          onChange={e=>{if(e.target.files[0])handleUpload(e.target.files[0]);}}/>
-      </label>
+        sub={marinas.length===0?"No data loaded — upload a marina database below"
+          :`${marinas.length.toLocaleString()} marinas · ${stateCounts.length} states · ${marinas.filter(m=>m.has_fuel_dock).length.toLocaleString()} fuel docks · ${marinas.filter(m=>m.slips).length.toLocaleString()} with slip data`}/>
+      <button onClick={()=>{setShowUpload(v=>!v);setUploadMsg("");}}
+        style={{padding:"7px 16px",background:showUpload?C.navy:"transparent",color:showUpload?"#fff":C.textDim,
+          border:`1px solid ${showUpload?C.navy:C.border}`,borderRadius:7,fontSize:10,fontWeight:700,
+          cursor:"pointer",flexShrink:0,letterSpacing:".04em",textTransform:"uppercase"}}>
+        {showUpload?"✕ Cancel":"↑ Upload Database"}
+      </button>
     </div>
+
+    {/* UPLOAD PANEL */}
+    {showUpload&&(
+      <Card style={{padding:"24px 28px",marginBottom:20,border:`1px solid ${C.border}`}}>
+        <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:4}}>Upload New Marina Database</div>
+        <div style={{fontSize:11,color:C.textDim,marginBottom:16,lineHeight:1.6}}>
+          Upload a JSON file exported from marinas.com (Browse.ai v2 format). This will replace the current database on the server — all users will see the new data immediately.</div>
+        <label style={{display:"inline-flex",alignItems:"center",gap:8,padding:"10px 24px",
+          background:C.navy,color:"#fff",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer"}}>
+          {uploading?"Uploading…":"Choose File (.json)"}
+          <input type="file" accept=".json" disabled={uploading} style={{display:"none"}}
+            onChange={e=>{if(e.target.files[0])handleUpload(e.target.files[0]);}}/>
+        </label>
+        {uploadMsg&&<div style={{marginTop:12,fontSize:12,fontWeight:600,
+          color:uploading?C.accent:uploadMsg.startsWith("Error")?C.red:C.green}}>{uploadMsg}</div>}
+      </Card>
+    )}
+
+    {/* NO DATA STATE */}
+    {marinas.length===0&&!showUpload&&(
+      <Card style={{padding:"48px 32px",textAlign:"center",maxWidth:560,margin:"0 auto 24px"}}>
+        <div style={{fontSize:36,marginBottom:12}}>🎯</div>
+        <div style={{fontSize:16,fontWeight:700,color:C.text,marginBottom:8}}>No Marina Data Loaded</div>
+        <div style={{fontSize:12,color:C.textDim,marginBottom:20,lineHeight:1.6}}>
+          Click <strong>↑ Upload Database</strong> above to load your marina JSON file.</div>
+      </Card>
+    )}
     <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center",flexWrap:"wrap"}}>
       <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="Search name, city, address..."
         style={{flex:1,minWidth:200,padding:"8px 14px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,fontSize:12,color:C.text,outline:"none"}}/>

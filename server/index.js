@@ -4,6 +4,7 @@ import cors from "cors";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { existsSync } from "fs";
+import { writeFile, mkdir, readFile } from "fs/promises";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -19,7 +20,6 @@ app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
 // ── File upload endpoint (for large JSON datasets) ──────────────────────────
-import { writeFile, mkdir } from "fs/promises";
 
 app.post("/api/upload/:filename", async (req, res) => {
   try {
@@ -45,9 +45,15 @@ async function initDb() {
       updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
-  // Add columns if the table existed before these were introduced
   await pool.query(`ALTER TABLE scenarios ADD COLUMN IF NOT EXISTS saved_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`);
   await pool.query(`ALTER TABLE scenarios ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS marina_database (
+      key        TEXT PRIMARY KEY,
+      raw        JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
   console.log("DB ready");
 }
 
@@ -105,6 +111,46 @@ app.delete("/api/scenarios/:name", async (req, res) => {
   try {
     await pool.query("DELETE FROM scenarios WHERE name = $1", [req.params.name]);
     res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Marina database API ───────────────────────────────────────────────────────
+
+// GET /api/marinas — return stored JSON (DB first, then static file fallback)
+app.get("/api/marinas", async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT raw FROM marina_database WHERE key='main'");
+    if (rows.length) return res.json(rows[0].raw);
+    // Fallback: read the seeded static file
+    const filePath = join(__dirname, "..", isProd ? "dist" : "public", "data", "Main.json");
+    if (existsSync(filePath)) {
+      const raw = JSON.parse(await readFile(filePath, "utf8"));
+      return res.json(raw);
+    }
+    res.json(null);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/marinas — save uploaded marina JSON to DB
+app.post("/api/marinas", async (req, res) => {
+  try {
+    const body = req.body;
+    await pool.query(
+      `INSERT INTO marina_database (key, raw, updated_at)
+       VALUES ('main', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET raw = EXCLUDED.raw, updated_at = NOW()`,
+      [JSON.stringify(body)]
+    );
+    const total = Array.isArray(body.marinas) ? body.marinas.length
+      : Array.isArray(body.data) ? body.data.length : "?";
+    console.log(`Marina database updated — ${total} records`);
+    res.json({ ok: true, total });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
