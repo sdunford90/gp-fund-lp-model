@@ -559,7 +559,7 @@ const TT=({active,payload,label})=>{
 };
 
 // ── TABS ──────────────────────────────────────────────────────────────────────
-const TABS=["Overview","Deals","Waterfall","Fund CF","G&A Model","GP Partners","Sensitivity","Targets"];
+const TABS=["Overview","Deals","Waterfall","Fund CF","G&A Model","GP Partners","Sensitivity","Targets","Pipeline"];
 
 // ── APP ───────────────────────────────────────────────────────────────────────
 // ── SCENARIO API HELPERS ──────────────────────────────────────────────────────
@@ -893,7 +893,8 @@ export default function Portal(){
           {m&&tab==="G&A Model"   && <TabGA          m={m} a={a} setHire={setHire} addHire={addHire} removeHire={removeHire} setOhead={setOhead} addOhead={addOhead} removeOhead={removeOhead} setPartnerSal={setPartnerSal} setOneTime={setOneTime} addOneTime={addOneTime} removeOneTime={removeOneTime}/>}
           {m&&tab==="GP Partners" && <TabGPPartners  m={m} a={a}/>}
           {m&&tab==="Sensitivity" && <TabSensitivity m={m} a={a}/>}
-          {tab==="Targets" && <TabTargets a={a} setA={setA}/>}
+          {tab==="Targets"  && <TabTargets a={a} setA={setA}/>}
+          {tab==="Pipeline" && <TabPipeline/>}
         </div>
       </div>
     </div>
@@ -3102,6 +3103,265 @@ function scoreMarina(m){
   // Fuel dock: 0-5
   if(m.has_fuel_dock)s+=5;
   return Math.round(s);
+}
+
+/* ── Pipeline Tracker (Kanban by stage) ─────────────────────────────────────── */
+function TabPipeline(){
+  const [data,setData]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [selected,setSelected]=useState(null);
+  const [moving,setMoving]=useState(null);
+
+  const relTime=(ts)=>{
+    if(!ts)return"—";
+    const d=new Date(ts),now=new Date(),diff=Math.round((now-d)/60000);
+    if(diff<1)return"just now";if(diff<60)return`${diff}m ago`;
+    const h=Math.round(diff/60);if(h<24)return`${h}h ago`;
+    const days=Math.round(h/24);if(days<7)return`${days}d ago`;
+    return d.toLocaleDateString("en-US",{month:"short",day:"numeric"});
+  };
+  const fmtActivity=(a)=>{
+    if(!a)return null;
+    const types={stage_change:"Stage changed",note_saved:"Note saved",outreach_logged:"Outreach logged"};
+    return`${types[a.event_type]||a.event_type} · ${relTime(a.created_at)}`;
+  };
+
+  const load=useCallback(async()=>{
+    setLoading(true);
+    try{const r=await fetch("/api/pipeline");if(r.ok)setData(await r.json());}
+    catch(e){}
+    setLoading(false);
+  },[]);
+
+  useEffect(()=>{load();},[load]);
+
+  const changeStage=useCallback(async(marinaId,newStage)=>{
+    setMoving(marinaId);
+    try{
+      await fetch(`/api/marina-interest/${marinaId}`,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({status:newStage})
+      });
+      const lbl=STAGES.find(s=>s.key===newStage)?.label||newStage;
+      setData(prev=>prev.map(m=>m.marina_id===marinaId?{...m,status:newStage,stage_label:lbl}:m));
+      setSelected(s=>s?.marina_id===marinaId?{...s,status:newStage,stage_label:lbl}:s);
+    }catch(e){}
+    setMoving(null);
+  },[]);
+
+  const byStage=useMemo(()=>{
+    const map={};STAGES.forEach(s=>{map[s.key]=[];});
+    data.forEach(m=>{if(map[m.status])map[m.status].push(m);});
+    return map;
+  },[data]);
+
+  const totalActive=data.filter(m=>m.status!=="pass").length;
+  const drawerOpen=!!selected;
+
+  return(
+    <div style={{padding:"24px 32px",minHeight:"calc(100vh - 52px)",background:C.bg,
+      paddingRight:drawerOpen?360:32,transition:"padding-right .2s"}}>
+
+      {/* Header */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <div>
+          <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.text,fontFamily:"'DM Serif Display',serif"}}>Deal Pipeline</h2>
+          <div style={{fontSize:12,color:C.textDim,marginTop:3}}>
+            {loading?"Loading…":`${data.length} total · ${totalActive} active`}
+          </div>
+        </div>
+        <button onClick={load} disabled={loading}
+          style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${C.border}`,background:C.surface,
+            color:C.textDim,fontSize:11,fontWeight:600,cursor:"pointer"}}>
+          {loading?"…":"↻ Refresh"}
+        </button>
+      </div>
+
+      {/* Summary strip */}
+      {!loading&&(<div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:20}}>
+        {STAGES.map(s=>{
+          const cards=byStage[s.key]||[];
+          const slips=cards.reduce((a,m)=>a+(m.slips||0),0);
+          return(<div key={s.key} style={{background:cards.length?s.bg:C.surfaceAlt,
+            border:`1px solid ${cards.length?s.color+"44":C.border}`,
+            borderRadius:10,padding:"8px 14px",minWidth:96,textAlign:"center",flexShrink:0}}>
+            <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:2,
+              color:cards.length?s.color:C.textFaint}}>{s.label}</div>
+            <div style={{fontSize:22,fontWeight:800,color:cards.length?s.color:C.textFaint}}>{cards.length}</div>
+            {slips>0&&<div style={{fontSize:9,color:C.textDim,marginTop:1}}>{slips.toLocaleString()} slips</div>}
+          </div>);
+        })}
+      </div>)}
+
+      {/* Board */}
+      {loading?(<div style={{textAlign:"center",padding:"60px 0",color:C.textDim,fontSize:13}}>Loading pipeline…</div>):
+      data.length===0?(<div style={{textAlign:"center",padding:"60px 0"}}>
+        <div style={{fontSize:42,marginBottom:12}}>🏗</div>
+        <div style={{fontSize:16,fontWeight:700,color:C.text,marginBottom:6}}>Pipeline is empty</div>
+        <div style={{fontSize:12,color:C.textDim}}>Go to <strong>Targets</strong>, open a marina, and assign it a stage to see it here.</div>
+      </div>):(
+      <div style={{display:"flex",gap:10,overflowX:"auto",paddingBottom:16,alignItems:"flex-start"}}>
+        {STAGES.map(stage=>{
+          const cards=byStage[stage.key]||[];
+          const stageSlips=cards.reduce((a,m)=>a+(m.slips||0),0);
+          return(<div key={stage.key} style={{minWidth:230,maxWidth:250,flexShrink:0}}>
+            {/* Column header */}
+            <div style={{background:stage.bg,border:`1px solid ${stage.color}44`,
+              borderRadius:"10px 10px 0 0",padding:"9px 12px",
+              display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontSize:11,fontWeight:700,color:stage.color}}>{stage.label}</div>
+                {stageSlips>0&&<div style={{fontSize:9,color:stage.color,opacity:.65,marginTop:1}}>{stageSlips.toLocaleString()} slips</div>}
+              </div>
+              <span style={{background:stage.color,color:"#fff",borderRadius:20,padding:"2px 8px",fontSize:10,fontWeight:800}}>{cards.length}</span>
+            </div>
+            {/* Cards column */}
+            <div style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderTop:"none",
+              borderRadius:"0 0 10px 10px",minHeight:60,maxHeight:"calc(100vh - 295px)",
+              overflowY:"auto",display:"flex",flexDirection:"column",gap:6,padding:6}}>
+              {cards.length===0&&(<div style={{textAlign:"center",padding:"18px 8px",color:C.textFaint,fontSize:10}}>No deals</div>)}
+              {cards.map(m=>{
+                const score=scoreMarina(m);
+                const isSelected=selected?.marina_id===m.marina_id;
+                const isMoving=moving===m.marina_id;
+                return(<div key={m.marina_id}
+                  onClick={()=>setSelected(isSelected?null:m)}
+                  style={{background:C.surface,border:`1.5px solid ${isSelected?stage.color:C.border}`,
+                    borderRadius:8,padding:"9px 10px",cursor:"pointer",transition:"box-shadow .15s",
+                    boxShadow:isSelected?`0 0 0 2px ${stage.color}33`:"0 1px 3px rgba(0,0,0,.05)",
+                    opacity:isMoving?.45:1}}>
+                  <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:2,
+                    overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</div>
+                  <div style={{fontSize:9,color:C.textDim,marginBottom:5,
+                    overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    {[m.city,m.state].filter(Boolean).join(", ")}
+                    {m.region&&<span style={{color:C.textFaint}}> · {m.region}</span>}
+                  </div>
+                  <div style={{display:"flex",gap:3,flexWrap:"wrap",marginBottom:m.notes||m.last_activity?5:0}}>
+                    {m.slips!=null&&<span style={{background:C.accentDim,color:C.accent,padding:"1px 5px",borderRadius:7,fontSize:8,fontWeight:700}}>{m.slips.toLocaleString()} slips</span>}
+                    <span style={{background:score>=70?"rgba(22,163,74,.1)":score>=50?C.accentDim:C.surfaceAlt,
+                      color:score>=70?C.green:score>=50?C.accent:C.textDim,
+                      padding:"1px 5px",borderRadius:7,fontSize:8,fontWeight:700}}>★ {score}</span>
+                    {m.outreach_count>0&&<span style={{background:C.surfaceAlt,color:C.textFaint,padding:"1px 5px",borderRadius:7,fontSize:8,fontWeight:600}}>📞 {m.outreach_count}</span>}
+                  </div>
+                  {m.notes&&<div style={{fontSize:9,color:C.textDim,marginBottom:4,lineHeight:1.4,
+                    overflow:"hidden",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical"}}>{m.notes}</div>}
+                  {m.last_activity&&<div style={{fontSize:8,color:C.textFaint,marginBottom:5}}>{fmtActivity(m.last_activity)}</div>}
+                  {/* Move dropdown */}
+                  <select value="" onClick={e=>e.stopPropagation()}
+                    onChange={e=>{if(e.target.value)changeStage(m.marina_id,e.target.value);}}
+                    disabled={isMoving}
+                    style={{width:"100%",padding:"4px 6px",fontSize:9,border:`1px solid ${C.border}`,
+                      borderRadius:5,background:C.surfaceAlt,color:C.textDim,cursor:"pointer",outline:"none"}}>
+                    <option value="">Move to stage…</option>
+                    {STAGES.filter(s=>s.key!==m.status).map(s=>(
+                      <option key={s.key} value={s.key}>{s.label}</option>))}
+                  </select>
+                </div>);
+              })}
+            </div>
+          </div>);
+        })}
+      </div>)}
+
+      {/* Detail drawer */}
+      {selected&&(()=>{
+        const sg=STAGES.find(s=>s.key===selected.status);
+        const score=scoreMarina(selected);
+        return(
+        <div style={{position:"fixed",top:52,right:0,width:330,height:"calc(100vh - 52px)",
+          background:C.surface,borderLeft:`1px solid ${C.border}`,
+          boxShadow:"-8px 0 32px rgba(0,0,0,.10)",zIndex:900,overflowY:"auto"}}>
+          <div style={{padding:"18px 20px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+              <div style={{flex:1,minWidth:0,paddingRight:8}}>
+                <div style={{fontSize:15,fontWeight:700,color:C.text,lineHeight:1.2}}>{selected.name}</div>
+                <div style={{fontSize:11,color:C.textDim,marginTop:2}}>
+                  {[selected.city,selected.state].filter(Boolean).join(", ")}{selected.region?` · ${selected.region}`:""}
+                </div>
+                {selected.address&&<div style={{fontSize:9,color:C.textFaint,marginTop:1}}>{selected.address}</div>}
+              </div>
+              <button onClick={()=>setSelected(null)}
+                style={{border:"none",background:C.surfaceAlt,borderRadius:6,width:28,height:28,
+                  fontSize:14,cursor:"pointer",color:C.textDim,flexShrink:0,
+                  display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+            </div>
+
+            {/* Badges */}
+            <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:14}}>
+              {sg&&<span style={{background:sg.bg,color:sg.color,border:`1px solid ${sg.color}44`,
+                padding:"3px 10px",borderRadius:20,fontSize:9,fontWeight:700}}>{sg.label}</span>}
+              <span style={{background:score>=70?"rgba(22,163,74,.1)":score>=50?C.accentDim:C.surfaceAlt,
+                color:score>=70?C.green:score>=50?C.accent:C.textDim,
+                padding:"3px 10px",borderRadius:20,fontSize:9,fontWeight:700}}>Score {score}</span>
+              {selected.outreach_count>0&&<span style={{fontSize:9,color:C.textDim}}>📞 {selected.outreach_count} contacts</span>}
+            </div>
+
+            {/* Stage buttons */}
+            <div style={{marginBottom:14}}>
+              <div style={{fontSize:9,fontWeight:700,color:C.textFaint,textTransform:"uppercase",letterSpacing:".05em",marginBottom:6}}>Move to stage</div>
+              <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                {STAGES.map(s=>{const active=selected.status===s.key;return(
+                  <button key={s.key} disabled={active||!!moving}
+                    onClick={()=>changeStage(selected.marina_id,s.key)}
+                    style={{padding:"4px 10px",borderRadius:16,fontSize:9,fontWeight:700,cursor:active?"default":"pointer",
+                      background:active?s.color:s.bg,color:active?"#fff":s.color,
+                      border:`1px solid ${s.color}55`,opacity:active?1:.85}}>{s.short}</button>);})}
+              </div>
+            </div>
+
+            <div style={{height:1,background:C.border,marginBottom:14}}/>
+
+            {/* Stats grid */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+              {[["Slips",selected.slips?.toLocaleString()||"—"],
+                ["Reviews",selected.reviews?.toLocaleString()||"—"],
+                ["Fuel Dock",selected.has_fuel_dock?(selected.diesel?`$${selected.diesel.toFixed(2)}/gal`:"Yes"):"No"],
+                ["Phone",selected.phone||"—"]].map(([l,v])=>(
+                <div key={l}>
+                  <div style={{fontSize:8,fontWeight:700,color:C.textFaint,textTransform:"uppercase",marginBottom:2}}>{l}</div>
+                  <div style={{fontSize:11,fontWeight:600,color:C.text}}>{v}</div>
+                </div>))}
+            </div>
+
+            {/* Hotel market */}
+            {selected.hotel_market&&(<div style={{background:C.surfaceAlt,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+              <div style={{fontSize:9,fontWeight:700,color:C.textFaint,textTransform:"uppercase",marginBottom:8}}>Hotel Market Proxy</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                {[["Tier",selected.hotel_market.tier_label||"—"],
+                  ["ADR",selected.hotel_market.adr?`$${selected.hotel_market.adr}`:"—"],
+                  ["RevPAR",selected.hotel_market.revpar?`$${selected.hotel_market.revpar}`:"—"],
+                  ["Occ",selected.hotel_market.occupancy?`${(selected.hotel_market.occupancy*100).toFixed(0)}%`:"—"]].map(([l,v])=>(
+                  <div key={l}>
+                    <div style={{fontSize:8,color:C.textFaint}}>{l}</div>
+                    <div style={{fontSize:10,fontWeight:600,color:C.text}}>{v}</div>
+                  </div>))}
+              </div>
+            </div>)}
+
+            {/* Notes */}
+            {selected.notes&&(<div style={{marginBottom:14}}>
+              <div style={{fontSize:9,fontWeight:700,color:C.textFaint,textTransform:"uppercase",marginBottom:6}}>GP Notes</div>
+              <div style={{fontSize:11,color:C.text,lineHeight:1.6,whiteSpace:"pre-wrap",background:C.surfaceAlt,borderRadius:8,padding:"8px 10px"}}>{selected.notes}</div>
+            </div>)}
+
+            {/* Activity */}
+            {selected.last_activity&&(<div style={{marginBottom:14}}>
+              <div style={{fontSize:9,fontWeight:700,color:C.textFaint,textTransform:"uppercase",marginBottom:4}}>Last Activity</div>
+              <div style={{fontSize:10,color:C.textDim}}>{fmtActivity(selected.last_activity)}</div>
+            </div>)}
+
+            <div style={{fontSize:9,color:C.textFaint,marginBottom:14}}>Last updated {relTime(selected.updated_at)}</div>
+
+            {selected.source_url&&(<a href={selected.source_url} target="_blank" rel="noopener"
+              style={{display:"block",padding:"9px 12px",background:C.surfaceAlt,border:`1px solid ${C.border}`,
+                borderRadius:8,fontSize:10,fontWeight:600,color:C.textDim,textDecoration:"none",textAlign:"center"}}>
+              View on Marinas.com ↗
+            </a>)}
+          </div>
+        </div>);
+      })()}
+    </div>);
 }
 
 /* ── Gradient color helper ──────────────────────────────────────────────────── */

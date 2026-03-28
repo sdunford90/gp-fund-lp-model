@@ -204,6 +204,70 @@ app.get("/api/marina-interest", async (req, res) => {
   }
 });
 
+// ── Pipeline tracker — enriched joined data for all staged marinas ─────────────
+app.get("/api/pipeline", async (req, res) => {
+  try {
+    const [intRes, outRes, actRes, marinaRes] = await Promise.all([
+      pool.query("SELECT marina_id, status, notes, updated_at FROM marina_interest ORDER BY updated_at DESC"),
+      pool.query("SELECT marina_id, COUNT(*) AS outreach_count FROM marina_outreach GROUP BY marina_id"),
+      pool.query("SELECT DISTINCT ON (marina_id) marina_id, event_type, note, created_at FROM marina_activity ORDER BY marina_id, created_at DESC"),
+      pool.query("SELECT raw FROM marina_database WHERE key='main'"),
+    ]);
+    const interests = intRes.rows;
+    if (!interests.length) return res.json([]);
+
+    // Build marina lookup from DB; fallback to JSON file
+    let allMarinas = [];
+    if (marinaRes.rows.length) {
+      const raw = marinaRes.rows[0].raw;
+      allMarinas = Array.isArray(raw?.marinas) ? raw.marinas : Array.isArray(raw) ? raw : [];
+    } else {
+      const filePath = join(__dirname, "..", isProd ? "dist" : "public", "data", "Main.json");
+      if (existsSync(filePath)) {
+        const raw = JSON.parse(await readFile(filePath, "utf8"));
+        allMarinas = Array.isArray(raw?.marinas) ? raw.marinas : Array.isArray(raw) ? raw : [];
+      }
+    }
+
+    const marinaMap = Object.fromEntries(allMarinas.map(m => [m.id, m]));
+    const outreachMap = Object.fromEntries(outRes.rows.map(o => [o.marina_id, parseInt(o.outreach_count)]));
+    const activityMap = Object.fromEntries(actRes.rows.map(a => [a.marina_id, a]));
+
+    const result = interests.map(i => {
+      const m = marinaMap[i.marina_id] || {};
+      return {
+        marina_id: i.marina_id,
+        status: i.status,
+        stage_label: STAGE_LABELS[i.status] || i.status,
+        notes: i.notes,
+        updated_at: i.updated_at,
+        name: m.name || i.marina_id,
+        city: m.city || null,
+        state: m.state || null,
+        region: m.region || null,
+        address: m.address || null,
+        harbor: m.harbor || null,
+        slips: m.slips || null,
+        linear_ft: m.linear_ft || null,
+        has_fuel_dock: m.has_fuel_dock || false,
+        diesel: m.diesel || null,
+        reviews: m.reviews || null,
+        lat: m.lat || null,
+        lon: m.lon || null,
+        hotel_market: m.hotel_market || null,
+        source_url: m.source_url || null,
+        phone: m.phone || null,
+        outreach_count: outreachMap[i.marina_id] || 0,
+        last_activity: activityMap[i.marina_id] || null,
+      };
+    });
+    res.json(result);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post("/api/marina-interest/:id", async (req, res) => {
   try {
     const { status, notes = "" } = req.body;
