@@ -2043,14 +2043,27 @@ function TabFundCF({m,a}){
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
             <Card>
               <CT c="Annual Capital Calls &amp; Net Operating CF"/>
-              <ResponsiveContainer width="100%" height={200}>
+              <div style={{display:"flex",gap:12,marginBottom:6,flexWrap:"wrap"}}>
+                {[
+                  {color:C.red,     label:"Acq. Capital Calls"},
+                  {color:C.orange,  label:"CapEx Capital Calls"},
+                  {color:C.green,   label:"Net Op CF"},
+                ].map(({color,label})=>(
+                  <div key={label} style={{display:"flex",alignItems:"center",gap:4}}>
+                    <div style={{width:8,height:8,borderRadius:2,background:color}}/>
+                    <span style={{fontSize:8,color:C.whDim}}>{label}</span>
+                  </div>
+                ))}
+              </div>
+              <ResponsiveContainer width="100%" height={185}>
                 <ComposedChart data={m.fundCFAnnual}>
                   <XAxis dataKey="year" tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false}/>
                   <YAxis tickFormatter={v=>`$${(v/1e6).toFixed(0)}M`} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false} width={42}/>
                   <Tooltip content={<TT/>}/>
                   <ReferenceLine y={0} stroke="rgba(255,255,255,.2)"/>
-                  <Bar dataKey="lpCalls" name="LP Capital Calls" fill={C.red}   radius={[2,2,0,0]}/>
-                  <Bar dataKey="opCF"    name="Net Op CF"         fill={C.green} radius={[2,2,0,0]}/>
+                  <Bar dataKey="lpAcqCalls"   name="Acq. Capital Calls"   fill={C.red}    stackId="calls" radius={[0,0,0,0]}/>
+                  <Bar dataKey="lpCapexCalls" name="CapEx Capital Calls"  fill={C.orange} stackId="calls" radius={[2,2,0,0]}/>
+                  <Bar dataKey="opCF"         name="Net Op CF"             fill={C.green}  radius={[2,2,0,0]}/>
                 </ComposedChart>
               </ResponsiveContainer>
             </Card>
