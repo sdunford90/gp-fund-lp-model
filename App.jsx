@@ -3075,6 +3075,35 @@ function parseMarinasJSON(raw){
     .map(parseMarinaRecord).filter(r=>{if(!r.id||seen.has(r.id))return false;seen.add(r.id);return true;});
 }
 
+/* ── Pipeline stages definition ─────────────────────────────────────────────── */
+const STAGES=[
+  {key:"watchlist",     label:"Watchlist",     short:"Watch",  color:"#0A2342", bg:"rgba(10,35,66,0.09)"},
+  {key:"under_review",  label:"Under Review",  short:"Review", color:"#b45309", bg:"rgba(180,83,9,0.09)"},
+  {key:"loi_sent",      label:"LOI Sent",      short:"LOI",    color:"#7c3aed", bg:"rgba(124,58,237,0.09)"},
+  {key:"due_diligence", label:"Due Diligence", short:"DD",     color:"#0891b2", bg:"rgba(8,145,178,0.09)"},
+  {key:"closed",        label:"Closed",        short:"Closed", color:"#16a34a", bg:"rgba(22,163,74,0.08)"},
+  {key:"pass",          label:"Passed",        short:"Pass",   color:"#dc2626", bg:"rgba(220,38,38,0.06)"},
+];
+
+/* ── Acquisition score 0–100 (client-side) ──────────────────────────────────── */
+function scoreMarina(m){
+  let s=0;
+  // Slips: log scale, max 25 at ~500 slips
+  if(m.slips>0)s+=Math.min(25,Math.log10(Math.max(1,m.slips))/Math.log10(600)*25);
+  // Hotel tier: 0-25
+  const ts={"Ultra-Premium":25,"Premium Destination":20,"Strong Leisure":14,"Moderate":8,"Below National":3};
+  s+=ts[m.hotel_market?.tier_label]||0;
+  // ADR: 0-20, scale $108-$400
+  if(m.hotel_market?.adr)s+=Math.min(20,Math.max(0,(m.hotel_market.adr-108)/(400-108)*20));
+  // Occupancy: 0-15, scale 0-85%
+  if(m.hotel_market?.occupancy)s+=Math.min(15,m.hotel_market.occupancy/0.85*15);
+  // Reviews: log scale, 0-10
+  if(m.reviews>0)s+=Math.min(10,Math.log10(Math.max(1,m.reviews))/Math.log10(200)*10);
+  // Fuel dock: 0-5
+  if(m.has_fuel_dock)s+=5;
+  return Math.round(s);
+}
+
 /* ── Full marina overview map (OSM tiles, all filtered locations) ───────────── */
 function TargetsMapView({marinas,interestMap,onSelect}){
   const divRef=useRef(null);const mapRef=useRef(null);const markersRef=useRef([]);
@@ -3172,7 +3201,7 @@ function TabTargets({a,setA}){
   const [search,setSearch]=useState("");
   const [stateFilter,setStateFilter]=useState("");
   const [regionFilter,setRegionFilter]=useState("");
-  const [viewMode,setViewMode]=useState("all"); // all|interested|not_interested|unreviewed
+  const [viewMode,setViewMode]=useState("all"); // all|watchlist|under_review|loi_sent|due_diligence|closed|pass|unreviewed
   const [fuelOnly,setFuelOnly]=useState(false);
   const [slipsMin,setSlipsMin]=useState(0);
   const [reviewsMin,setReviewsMin]=useState(0);
@@ -3189,6 +3218,12 @@ function TabTargets({a,setA}){
   const [uploading,setUploading]=useState(false);
   const [uploadMsg,setUploadMsg]=useState("");
   const [showUpload,setShowUpload]=useState(false);
+  const [showAnalytics,setShowAnalytics]=useState(false);
+  const [popupTab,setPopupTab]=useState("details"); // details|outreach|activity
+  const [outreachLog,setOutreachLog]=useState([]);
+  const [activityLog,setActivityLog]=useState([]);
+  const [outreachForm,setOutreachForm]=useState({contact_date:new Date().toISOString().split("T")[0],method:"call",contact_name:"",response_status:"no_response",notes:""});
+  const [savingOutreach,setSavingOutreach]=useState(false);
   const PG=60;
 
   // Load marinas + interest tracking on mount
@@ -3203,33 +3238,65 @@ function TabTargets({a,setA}){
     });
   },[]);
 
-  // When popup opens, pre-fill notes
+  // When popup opens, pre-fill notes and load outreach/activity
   useEffect(()=>{
-    if(selected)setPopupNotes(interestMap[selected.id]?.notes||"");
+    if(selected){
+      setPopupNotes(interestMap[selected.id]?.notes||"");
+      setPopupTab("details");
+      setOutreachLog([]);setActivityLog([]);
+      setOutreachForm({contact_date:new Date().toISOString().split("T")[0],method:"call",contact_name:"",response_status:"no_response",notes:""});
+      fetch(`/api/marina-outreach/${selected.id}`).then(r=>r.ok?r.json():[]).then(setOutreachLog).catch(()=>{});
+      fetch(`/api/marina-activity/${selected.id}`).then(r=>r.ok?r.json():[]).then(setActivityLog).catch(()=>{});
+    }
   },[selected]);
 
-  const setInterest=useCallback(async(marina,status)=>{
+  const refreshActivity=useCallback((id)=>{
+    fetch(`/api/marina-activity/${id}`).then(r=>r.ok?r.json():[]).then(setActivityLog).catch(()=>{});
+  },[]);
+
+  const setStage=useCallback(async(marina,stage)=>{
     const cur=interestMap[marina.id];
-    if(cur?.status===status){
-      // toggle off
+    if(cur?.status===stage){
       setInterestMap(p=>{const n={...p};delete n[marina.id];return n;});
       await fetch(`/api/marina-interest/${marina.id}`,{method:"DELETE"});
     } else {
-      const notes=interestMap[marina.id]?.notes||"";
-      setInterestMap(p=>({...p,[marina.id]:{status,notes}}));
+      const notes=cur?.notes||"";
+      setInterestMap(p=>({...p,[marina.id]:{status:stage,notes}}));
       await fetch(`/api/marina-interest/${marina.id}`,{method:"POST",
-        headers:{"Content-Type":"application/json"},body:JSON.stringify({status,notes})});
+        headers:{"Content-Type":"application/json"},body:JSON.stringify({status:stage,notes})});
     }
-  },[interestMap]);
+    if(selected?.id===marina.id)refreshActivity(marina.id);
+  },[interestMap,selected,refreshActivity]);
 
   const saveNote=useCallback(async(marina,notes)=>{
     setSavingNote(true);
-    const status=interestMap[marina.id]?.status||"interested";
+    const status=interestMap[marina.id]?.status||"watchlist";
     setInterestMap(p=>({...p,[marina.id]:{status,notes}}));
     await fetch(`/api/marina-interest/${marina.id}`,{method:"POST",
       headers:{"Content-Type":"application/json"},body:JSON.stringify({status,notes})});
     setSavingNote(false);
-  },[interestMap]);
+    if(selected?.id===marina.id)refreshActivity(marina.id);
+  },[interestMap,selected,refreshActivity]);
+
+  const addOutreach=useCallback(async()=>{
+    if(!selected)return;
+    setSavingOutreach(true);
+    const res=await fetch(`/api/marina-outreach/${selected.id}`,{method:"POST",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify(outreachForm)});
+    if(res.ok){
+      const rows=await fetch(`/api/marina-outreach/${selected.id}`).then(r=>r.json()).catch(()=>[]);
+      setOutreachLog(rows);
+      refreshActivity(selected.id);
+      setOutreachForm({contact_date:new Date().toISOString().split("T")[0],method:"call",contact_name:"",response_status:"no_response",notes:""});
+    }
+    setSavingOutreach(false);
+  },[selected,outreachForm,refreshActivity]);
+
+  const deleteOutreach=useCallback(async(entryId)=>{
+    if(!selected)return;
+    await fetch(`/api/marina-outreach/${selected.id}/${entryId}`,{method:"DELETE"});
+    setOutreachLog(p=>p.filter(e=>e.id!==entryId));
+  },[selected]);
 
   const handleUpload=useCallback(async(file)=>{if(!file)return;setUploading(true);setUploadMsg("Parsing...");
     try{
@@ -3254,13 +3321,18 @@ function TabTargets({a,setA}){
   const hotelTiers=useMemo(()=>{const s=new Set();marinas.forEach(m=>{
     if(m.hotel_market?.tier_label)s.add(m.hotel_market.tier_label);});return [...s].sort();},[marinas]);
 
-  const interestedCount=useMemo(()=>Object.values(interestMap).filter(v=>v.status==="interested").length,[interestMap]);
-  const notIntCount=useMemo(()=>Object.values(interestMap).filter(v=>v.status==="not_interested").length,[interestMap]);
+  const stageCounts=useMemo(()=>{
+    const c={};STAGES.forEach(s=>{c[s.key]=0;});
+    Object.values(interestMap).forEach(v=>{if(c[v.status]!==undefined)c[v.status]++;});
+    return c;
+  },[interestMap]);
+  const pipelineCount=useMemo(()=>Object.values(stageCounts).reduce((a,b)=>a+b,0),[stageCounts]);
+  const unrevCount=useMemo(()=>marinas.length-pipelineCount,[marinas,pipelineCount]);
 
   const filtered=useMemo(()=>{
     let list=marinas;
-    if(viewMode==="interested")list=list.filter(m=>interestMap[m.id]?.status==="interested");
-    else if(viewMode==="not_interested")list=list.filter(m=>interestMap[m.id]?.status==="not_interested");
+    const stageKeys=new Set(STAGES.map(s=>s.key));
+    if(stageKeys.has(viewMode))list=list.filter(m=>interestMap[m.id]?.status===viewMode);
     else if(viewMode==="unreviewed")list=list.filter(m=>!interestMap[m.id]);
     if(search){const s=search.toLowerCase();
       list=list.filter(m=>(m.name+m.city+m.state+(m.address||"")+(m.harbor||"")+(m.region||"")).toLowerCase().includes(s));}
@@ -3277,6 +3349,7 @@ function TabTargets({a,setA}){
     else if(sortBy==="reviews")sorted.sort((a,b)=>(b.reviews||0)-(a.reviews||0));
     else if(sortBy==="region")sorted.sort((a,b)=>(a.region||"").localeCompare(b.region||"")||a.name.localeCompare(b.name));
     else if(sortBy==="adr")sorted.sort((a,b)=>(b.hotel_market?.adr||0)-(a.hotel_market?.adr||0));
+    else if(sortBy==="score")sorted.sort((a,b)=>scoreMarina(b)-scoreMarina(a));
     return sorted;
   },[marinas,search,stateFilter,regionFilter,viewMode,fuelOnly,slipsMin,reviewsMin,hotelTier,hasRates,sortBy,interestMap]);
 
@@ -3315,7 +3388,7 @@ function TabTargets({a,setA}){
     {/* HEADER */}
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,gap:12}}>
       <PHdr title="Acquisition Targets"
-        sub={`${marinas.length.toLocaleString()} marinas · ${stateCounts.length} states · ${interestedCount} interested · ${notIntCount} passed`}/>
+        sub={`${marinas.length.toLocaleString()} marinas · ${stateCounts.length} states · ${pipelineCount} in pipeline · ${unrevCount.toLocaleString()} unreviewed`}/>
       <div style={{display:"flex",gap:6,flexShrink:0}}>
         <button onClick={()=>setShowMap(false)}
           style={{padding:"7px 14px",borderRadius:"7px 0 0 7px",fontSize:10,fontWeight:700,cursor:"pointer",
@@ -3348,17 +3421,62 @@ function TabTargets({a,setA}){
     </Card>)}
 
     {/* VIEW MODE TABS */}
-    <div style={{display:"flex",gap:6,marginBottom:14,borderBottom:`1px solid ${C.border}`,paddingBottom:10}}>
-      {[{k:"all",label:`All (${marinas.length.toLocaleString()})`},
-        {k:"interested",label:`Interested (${interestedCount})`},
-        {k:"not_interested",label:`Passed (${notIntCount})`},
-        {k:"unreviewed",label:`Unreviewed (${(marinas.length-interestedCount-notIntCount).toLocaleString()})`}
-      ].map(({k,label})=>(
-        <button key={k} onClick={()=>{setViewMode(k);setPage(0);}}
-          style={{padding:"6px 14px",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",
-            background:viewMode===k?C.navy:"transparent",color:viewMode===k?"#fff":C.textDim,
-            border:`1px solid ${viewMode===k?C.navy:C.border}`}}>{label}</button>))}
+    <div style={{display:"flex",gap:4,marginBottom:14,borderBottom:`1px solid ${C.border}`,paddingBottom:10,flexWrap:"wrap"}}>
+      {[{k:"all",label:`All`,count:marinas.length,color:C.navy},
+        ...STAGES.map(s=>({k:s.key,label:s.short,count:stageCounts[s.key]||0,color:s.color,bg:s.bg})),
+        {k:"unreviewed",label:"Unreviewed",count:unrevCount,color:C.textDim}
+      ].map(({k,label,count,color,bg})=>{
+        const active=viewMode===k;
+        return(<button key={k} onClick={()=>{setViewMode(k);setPage(0);}}
+          style={{padding:"5px 11px",borderRadius:6,fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",
+            background:active?color:"transparent",color:active?"#fff":color,
+            border:`1px solid ${active?color:C.border}`}}>
+          {label} <span style={{opacity:.75,fontSize:9}}>({count.toLocaleString()})</span>
+        </button>);})}
     </div>
+
+    {/* PIPELINE FUNNEL BAR */}
+    {!showMap&&pipelineCount>0&&(<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,
+      padding:"12px 16px",marginBottom:10}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <div style={{fontSize:10,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:".06em"}}>
+          Pipeline · {pipelineCount} marinas in funnel
+        </div>
+        <button onClick={()=>setShowAnalytics(v=>!v)}
+          style={{fontSize:9,fontWeight:600,color:C.accent,background:"transparent",border:"none",cursor:"pointer",padding:"2px 6px"}}>
+          {showAnalytics?"▲ Hide":"▼ Analytics"}
+        </button>
+      </div>
+      <div style={{display:"flex",gap:6,alignItems:"stretch"}}>
+        {STAGES.map(s=>{
+          const cnt=stageCounts[s.key]||0;
+          const slipTotal=marinas.filter(m=>interestMap[m.id]?.status===s.key).reduce((a,m)=>a+(m.slips||0),0);
+          return(<div key={s.key} onClick={()=>{setViewMode(s.key);setPage(0);}} style={{flex:1,cursor:"pointer",
+            background:cnt>0?s.bg:C.surfaceAlt,borderRadius:8,padding:"8px 6px",textAlign:"center",
+            border:`1px solid ${cnt>0?s.color+"33":C.border}`,transition:"opacity .15s",opacity:cnt===0?.5:1}}>
+            <div style={{fontSize:16,fontWeight:700,color:s.color}}>{cnt}</div>
+            <div style={{fontSize:8,fontWeight:700,color:s.color,textTransform:"uppercase",letterSpacing:".05em",marginBottom:2}}>{s.label}</div>
+            {slipTotal>0&&<div style={{fontSize:7,color:C.textFaint}}>{slipTotal.toLocaleString()} slips</div>}
+          </div>);})}
+      </div>
+      {showAnalytics&&(<div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.border}`}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}}>
+          {STAGES.filter(s=>(stageCounts[s.key]||0)>0).map(s=>{
+            const mList=marinas.filter(m=>interestMap[m.id]?.status===s.key);
+            const avgADR=mList.filter(m=>m.hotel_market?.adr).reduce((a,m,_,arr)=>a+m.hotel_market.adr/arr.length,0);
+            const totalSlips=mList.reduce((a,m)=>a+(m.slips||0),0);
+            const topStates=[...mList.reduce((m2,m)=>{m2.set(m.state,(m2.get(m.state)||0)+1);return m2;},new Map())]
+              .sort((a,b)=>b[1]-a[1]).slice(0,3).map(([st,c])=>`${st}(${c})`).join(", ");
+            return(<div key={s.key} style={{background:s.bg,borderRadius:8,padding:"10px 12px",border:`1px solid ${s.color}33`}}>
+              <div style={{fontSize:9,fontWeight:700,color:s.color,textTransform:"uppercase",marginBottom:6}}>{s.label}</div>
+              <div style={{fontSize:11,color:C.text}}><strong>{stageCounts[s.key]}</strong> marinas</div>
+              {totalSlips>0&&<div style={{fontSize:10,color:C.textDim}}>{totalSlips.toLocaleString()} total slips</div>}
+              {avgADR>0&&<div style={{fontSize:10,color:C.textDim}}>Avg ADR ${avgADR.toFixed(0)}</div>}
+              {topStates&&<div style={{fontSize:9,color:C.textFaint,marginTop:3}}>{topStates}</div>}
+            </div>);})}
+        </div>
+      </div>)}
+    </div>)}
 
     {/* SEARCH + SORT BAR */}
     <div style={{display:"flex",gap:8,marginBottom:10,alignItems:"center",flexWrap:"wrap"}}>
@@ -3366,9 +3484,9 @@ function TabTargets({a,setA}){
         style={{flex:1,minWidth:200,padding:"8px 14px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,fontSize:12,color:C.text,outline:"none"}}/>
       <select value={sortBy} onChange={e=>setSortBy(e.target.value)}
         style={{padding:"8px 12px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,fontSize:11,color:C.text,cursor:"pointer",outline:"none"}}>
-        <option value="name">Sort: Name</option><option value="slips">Sort: Most Slips</option>
-        <option value="reviews">Sort: Reviews</option><option value="region">Sort: Sub-Market</option>
-        <option value="adr">Sort: Hotel ADR</option></select>
+        <option value="name">Sort: Name</option><option value="score">Sort: Score ↓</option>
+        <option value="slips">Sort: Most Slips</option><option value="reviews">Sort: Reviews</option>
+        <option value="region">Sort: Sub-Market</option><option value="adr">Sort: Hotel ADR</option></select>
       <button onClick={()=>setShowFilters(v=>!v)}
         style={{padding:"8px 14px",borderRadius:8,fontSize:11,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:5,
           background:showFilters||activeFilters.length?C.accentDim:C.surfaceAlt,
@@ -3469,16 +3587,20 @@ function TabTargets({a,setA}){
       {paged.map(m=>{
         const inD=isInDeals(m);
         const status=interestMap[m.id]?.status;
-        const bdr=status==="interested"?C.green:status==="not_interested"?"#fca5a5":inD?C.green:C.border;
+        const stageObj=STAGES.find(s=>s.key===status);
+        const score=scoreMarina(m);
+        const bdr=stageObj?stageObj.color:inD?C.green:C.border;
         const hm=m.hotel_market;
         return(
         <div key={m.id} onClick={()=>setSelected(m)}
           style={{background:C.surface,border:`1px solid ${bdr}`,borderRadius:10,padding:"13px 15px",
             cursor:"pointer",boxShadow:"0 1px 3px rgba(0,0,0,0.04)",position:"relative",
-            transition:"box-shadow .15s",opacity:status==="not_interested"?.65:1}}>
-          <div style={{position:"absolute",top:8,right:8,display:"flex",gap:4}}>
-            {status==="interested"&&<span style={{background:"#dcfce7",color:C.green,padding:"2px 7px",borderRadius:10,fontSize:8,fontWeight:700}}>✓ INTERESTED</span>}
-            {status==="not_interested"&&<span style={{background:"#fee2e2",color:"#dc2626",padding:"2px 7px",borderRadius:10,fontSize:8,fontWeight:700}}>✗ PASSED</span>}
+            transition:"box-shadow .15s",opacity:status==="pass"?.6:1}}>
+          <div style={{position:"absolute",top:8,right:8,display:"flex",gap:4,alignItems:"center"}}>
+            <span style={{background:"#f1f5f9",color:C.textDim,padding:"2px 6px",borderRadius:8,fontSize:8,fontWeight:700}}>
+              {score}
+            </span>
+            {stageObj&&<span style={{background:stageObj.bg,color:stageObj.color,padding:"2px 7px",borderRadius:10,fontSize:8,fontWeight:700,border:`1px solid ${stageObj.color}44`}}>{stageObj.label.toUpperCase()}</span>}
             {inD&&!status&&<span style={{background:C.greenL,color:C.green,padding:"2px 7px",borderRadius:10,fontSize:8,fontWeight:700}}>IN DEALS</span>}
           </div>
           <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:2,paddingRight:90,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</div>
@@ -3531,9 +3653,11 @@ function TabTargets({a,setA}){
               background:"rgba(0,0,0,0.35)",border:"none",color:"#fff",fontSize:16,cursor:"pointer",
               display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>✕</button>
 
-          {/* Name & location */}
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4,gap:12}}>
-            <div>
+          {/* Name, score & location */}
+          {(()=>{const selScore=scoreMarina(selected);const selStage=STAGES.find(s=>s.key===interestStatus);
+          return(<>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8,gap:12}}>
+            <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:20,fontWeight:700,color:C.text,lineHeight:1.2}}>{selected.name}</div>
               <div style={{fontSize:12,color:C.textDim,marginTop:3}}>
                 {selected.city}{selected.city&&selected.state?", ":""}{selected.state}
@@ -3541,27 +3665,45 @@ function TabTargets({a,setA}){
                 {selected.harbor&&<span style={{color:C.textFaint}}> · {selected.harbor}</span>}
               </div>
             </div>
-            {/* Interest buttons */}
-            <div style={{display:"flex",gap:6,flexShrink:0}}>
-              <button onClick={e=>{e.stopPropagation();setInterest(selected,"interested");}}
-                style={{padding:"7px 14px",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",
-                  background:interestStatus==="interested"?"#16a34a":"transparent",
-                  color:interestStatus==="interested"?"#fff":C.green,
-                  border:`2px solid ${interestStatus==="interested"?"#16a34a":C.green}`,transition:"all .15s"}}>
-                ✓ Interested
-              </button>
-              <button onClick={e=>{e.stopPropagation();setInterest(selected,"not_interested");}}
-                style={{padding:"7px 14px",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",
-                  background:interestStatus==="not_interested"?"#dc2626":"transparent",
-                  color:interestStatus==="not_interested"?"#fff":"#dc2626",
-                  border:`2px solid ${interestStatus==="not_interested"?"#dc2626":"#fca5a5"}`,transition:"all .15s"}}>
-                ✗ Pass
-              </button>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0}}>
+              <div style={{background:selScore>=70?"rgba(22,163,74,.1)":selScore>=50?C.accentDim:C.surfaceAlt,
+                color:selScore>=70?C.green:selScore>=50?C.accent:C.textDim,
+                borderRadius:10,padding:"6px 12px",textAlign:"center",minWidth:52}}>
+                <div style={{fontSize:18,fontWeight:800,lineHeight:1}}>{selScore}</div>
+                <div style={{fontSize:7,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginTop:1}}>Score</div>
+              </div>
+              {selStage&&<span style={{background:selStage.bg,color:selStage.color,padding:"3px 10px",borderRadius:20,
+                fontSize:9,fontWeight:700,border:`1px solid ${selStage.color}44`}}>{selStage.label}</span>}
             </div>
           </div>
 
+          {/* Stage pills */}
+          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:12}}>
+            {STAGES.map(s=>{const active=interestStatus===s.key;return(
+              <button key={s.key} onClick={e=>{e.stopPropagation();setStage(selected,s.key);}}
+                style={{padding:"5px 12px",borderRadius:20,fontSize:10,fontWeight:600,cursor:"pointer",transition:"all .15s",
+                  background:active?s.color:s.bg,color:active?"#fff":s.color,
+                  border:`1px solid ${active?s.color:s.color+"55"}`}}>
+                {s.label}
+              </button>);})}
+          </div>
+
+          {/* Popup tabs */}
+          <div style={{display:"flex",gap:0,borderBottom:`1px solid ${C.border}`,marginBottom:14}}>
+            {[{k:"details",label:"Details"},{k:"outreach",label:`Outreach${outreachLog.length>0?` (${outreachLog.length})`:""}`},{k:"activity",label:`Activity${activityLog.length>0?` (${activityLog.length})`:""}`}].map(({k,label})=>(
+              <button key={k} onClick={()=>setPopupTab(k)}
+                style={{padding:"7px 14px",fontSize:11,fontWeight:600,cursor:"pointer",background:"transparent",
+                  color:popupTab===k?C.navy:C.textDim,border:"none",
+                  borderBottom:`2px solid ${popupTab===k?C.navy:"transparent"}`}}>
+                {label}
+              </button>))}
+          </div>
+          </>);})()} 
+
+          {/* DETAILS TAB */}
+          {popupTab==="details"&&(<>
           {/* Key stats */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:6,marginTop:14,marginBottom:14}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:6,marginBottom:14}}>
             {[{l:"Slips",v:selected.slips!=null?selected.slips:(selected.linear_ft?`${selected.linear_ft}ft`:"—")},
               {l:"Moorings",v:selected.moorings||"—"},
               {l:"Max LOA",v:selected.max_loa?`${selected.max_loa}'`:"—"},
@@ -3609,7 +3751,7 @@ function TabTargets({a,setA}){
           {/* Fuel */}
           {selected.has_fuel_dock&&(<div style={{background:"rgba(8,145,178,.05)",border:"1px solid rgba(8,145,178,.12)",
             borderRadius:10,padding:"10px 14px",marginBottom:12,display:"flex",gap:16,alignItems:"center"}}>
-            <div style={{fontSize:9,fontWeight:700,color:C.cyan,textTransform:"uppercase"}}>⛽ Fuel Dock</div>
+            <div style={{fontSize:9,fontWeight:700,color:"#0891b2",textTransform:"uppercase"}}>⛽ Fuel Dock</div>
             {selected.diesel&&<span style={{fontSize:12}}>Diesel: <strong>${selected.diesel.toFixed(2)}/gal</strong></span>}
             {selected.gas&&<span style={{fontSize:12}}>{selected.gas_type||"Gas"}: <strong>${selected.gas.toFixed(2)}/gal</strong></span>}
             {!selected.diesel&&!selected.gas&&<span style={{fontSize:11,color:C.textDim}}>Price not in dataset</span>}
@@ -3668,6 +3810,113 @@ function TabTargets({a,setA}){
               style={{padding:"10px 16px",background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:8,
                 fontSize:10,fontWeight:600,color:C.textDim,textDecoration:"none",whiteSpace:"nowrap"}}>Marinas.com ↗</a>}
           </div>
+          </>)}
+
+          {/* OUTREACH TAB */}
+          {popupTab==="outreach"&&(<>
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.text,marginBottom:10}}>Log a Contact Attempt</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+              <div>
+                <div style={{fontSize:8,fontWeight:700,color:C.textFaint,textTransform:"uppercase",marginBottom:3}}>Date</div>
+                <input type="date" value={outreachForm.contact_date}
+                  onChange={e=>setOutreachForm(f=>({...f,contact_date:e.target.value}))}
+                  style={{width:"100%",padding:"7px 10px",border:`1px solid ${C.border}`,borderRadius:7,fontSize:11,color:C.text,background:C.surface,outline:"none",boxSizing:"border-box"}}/>
+              </div>
+              <div>
+                <div style={{fontSize:8,fontWeight:700,color:C.textFaint,textTransform:"uppercase",marginBottom:3}}>Method</div>
+                <select value={outreachForm.method} onChange={e=>setOutreachForm(f=>({...f,method:e.target.value}))}
+                  style={{width:"100%",padding:"7px 10px",border:`1px solid ${C.border}`,borderRadius:7,fontSize:11,color:C.text,background:C.surface,outline:"none",boxSizing:"border-box"}}>
+                  <option value="call">Phone Call</option><option value="email">Email</option>
+                  <option value="visit">Site Visit</option><option value="letter">Letter / LOI</option>
+                  <option value="meeting">Meeting</option>
+                </select>
+              </div>
+              <div>
+                <div style={{fontSize:8,fontWeight:700,color:C.textFaint,textTransform:"uppercase",marginBottom:3}}>Contact Name</div>
+                <input value={outreachForm.contact_name} onChange={e=>setOutreachForm(f=>({...f,contact_name:e.target.value}))}
+                  placeholder="Owner / manager name"
+                  style={{width:"100%",padding:"7px 10px",border:`1px solid ${C.border}`,borderRadius:7,fontSize:11,color:C.text,background:C.surface,outline:"none",boxSizing:"border-box"}}/>
+              </div>
+              <div>
+                <div style={{fontSize:8,fontWeight:700,color:C.textFaint,textTransform:"uppercase",marginBottom:3}}>Response</div>
+                <select value={outreachForm.response_status} onChange={e=>setOutreachForm(f=>({...f,response_status:e.target.value}))}
+                  style={{width:"100%",padding:"7px 10px",border:`1px solid ${C.border}`,borderRadius:7,fontSize:11,color:C.text,background:C.surface,outline:"none",boxSizing:"border-box"}}>
+                  <option value="no_response">No Response</option><option value="responded">Responded</option>
+                  <option value="meeting_set">Meeting Set</option><option value="not_interested">Not Interested</option>
+                  <option value="interested">Interested</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <div style={{fontSize:8,fontWeight:700,color:C.textFaint,textTransform:"uppercase",marginBottom:3}}>Notes</div>
+              <textarea value={outreachForm.notes} onChange={e=>setOutreachForm(f=>({...f,notes:e.target.value}))}
+                placeholder="What was discussed, next steps…" rows={2}
+                style={{width:"100%",padding:"8px 10px",border:`1px solid ${C.border}`,borderRadius:7,fontSize:11,color:C.text,
+                  background:C.surface,outline:"none",resize:"vertical",boxSizing:"border-box",fontFamily:"inherit"}}/>
+            </div>
+            <button onClick={addOutreach} disabled={savingOutreach}
+              style={{marginTop:8,padding:"8px 20px",borderRadius:7,fontSize:11,fontWeight:700,cursor:"pointer",
+                background:C.navy,color:"#fff",border:"none",opacity:savingOutreach?.6:1}}>
+              {savingOutreach?"Saving…":"Log Contact"}
+            </button>
+          </div>
+          {outreachLog.length>0&&(<>
+            <div style={{fontSize:9,fontWeight:700,color:C.textFaint,textTransform:"uppercase",marginBottom:8}}>History ({outreachLog.length})</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {outreachLog.map(e=>{
+                const rColors={no_response:C.textFaint,responded:"#b45309",meeting_set:C.green,not_interested:"#dc2626",interested:C.green};
+                const mLabels={call:"📞 Call",email:"✉ Email",visit:"🚤 Visit",letter:"📄 Letter",meeting:"🤝 Meeting"};
+                return(<div key={e.id} style={{background:C.surfaceAlt,borderRadius:8,padding:"10px 12px",position:"relative"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      <span style={{fontSize:11,fontWeight:600,color:C.text}}>{mLabels[e.method]||e.method}</span>
+                      {e.contact_name&&<span style={{fontSize:10,color:C.textDim}}>· {e.contact_name}</span>}
+                    </div>
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      <span style={{fontSize:9,fontWeight:600,color:rColors[e.response_status]||C.textDim}}>
+                        {e.response_status?.replace(/_/g," ")}
+                      </span>
+                      <span style={{fontSize:9,color:C.textFaint}}>{new Date(e.contact_date).toLocaleDateString()}</span>
+                      <button onClick={()=>deleteOutreach(e.id)}
+                        style={{fontSize:10,color:"#fca5a5",background:"transparent",border:"none",cursor:"pointer",padding:"0 2px",lineHeight:1}}>✕</button>
+                    </div>
+                  </div>
+                  {e.notes&&<div style={{fontSize:10,color:C.textDim,marginTop:4,lineHeight:1.5}}>{e.notes}</div>}
+                </div>);})}
+            </div>
+          </>)}
+          {outreachLog.length===0&&(<div style={{textAlign:"center",padding:"24px",color:C.textFaint,fontSize:12}}>No contact attempts logged yet.</div>)}
+          </>)}
+
+          {/* ACTIVITY TAB */}
+          {popupTab==="activity"&&(<>
+          {activityLog.length===0&&(<div style={{textAlign:"center",padding:"24px",color:C.textFaint,fontSize:12}}>No activity recorded yet. Activity is auto-logged when you change stage, save notes, or log outreach.</div>)}
+          <div style={{display:"flex",flexDirection:"column",gap:0}}>
+            {activityLog.map((ev,i)=>{
+              const now=Date.now();const then=new Date(ev.created_at).getTime();
+              const diff=now-then;
+              const rel=diff<60000?"just now":diff<3600000?`${Math.floor(diff/60000)}m ago`:
+                diff<86400000?`${Math.floor(diff/3600000)}h ago`:diff<604800000?`${Math.floor(diff/86400000)}d ago`:
+                new Date(ev.created_at).toLocaleDateString();
+              const icons={stage_change:"⇒",note_saved:"📝",outreach:"📞"};
+              const stgLabel=(k)=>STAGES.find(s=>s.key===k)?.label||k||"Unreviewed";
+              let desc="";
+              if(ev.event_type==="stage_change")desc=`Stage: ${stgLabel(ev.old_value)} → ${stgLabel(ev.new_value)}`;
+              else if(ev.event_type==="note_saved")desc=`Note saved: "${ev.note?.substring(0,60)}${ev.note?.length>60?"…":""}"`;
+              else if(ev.event_type==="outreach")desc=`Outreach logged (${ev.new_value||"call"})${ev.note?": "+ev.note.substring(0,50):""}`;
+              else desc=`${ev.event_type}: ${ev.new_value||""}`;
+              return(<div key={ev.id} style={{display:"flex",gap:12,alignItems:"flex-start",
+                paddingBottom:12,borderBottom:i<activityLog.length-1?`1px solid ${C.border}`:"none",paddingTop:i===0?0:12}}>
+                <div style={{width:28,height:28,borderRadius:"50%",background:C.surfaceAlt,display:"flex",
+                  alignItems:"center",justifyContent:"center",fontSize:12,flexShrink:0}}>{icons[ev.event_type]||"·"}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:11,color:C.text,lineHeight:1.4}}>{desc}</div>
+                  <div style={{fontSize:9,color:C.textFaint,marginTop:2}}>{rel}</div>
+                </div>
+              </div>);})}
+          </div>
+          </>)}
         </div>
       </div>
     </>)}
