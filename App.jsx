@@ -3064,9 +3064,16 @@ function parseMarinaRecord(rec){
   r.amenity_count=r.amenities.length;
   if(!r.id)r.id=`m_${Math.random().toString(36).slice(2,10)}`;return r;
 }
-function parseMarinasJSON(raw){const data=raw.data||raw;if(!Array.isArray(data))return[];
+function parseMarinasJSON(raw){
+  // v2 format: { meta:{...}, marinas:[{id,name,city,...}] } — records already clean
+  if(raw.marinas&&Array.isArray(raw.marinas)){
+    return raw.marinas.filter(r=>r.id);
+  }
+  // Legacy Browse.ai format: { data:[...] } or raw array
+  const data=raw.data||raw;if(!Array.isArray(data))return[];
   const seen=new Set();return data.filter(r=>(r["Status"]||"Successful")==="Successful")
-    .map(parseMarinaRecord).filter(r=>{if(!r.id||seen.has(r.id))return false;seen.add(r.id);return true;});}
+    .map(parseMarinaRecord).filter(r=>{if(!r.id||seen.has(r.id))return false;seen.add(r.id);return true;});
+}
 
 function TabTargets({a,setA}){
   const [marinas,setMarinas]=useState(()=>{try{const d=localStorage.getItem("gpfund_marinas");return d?JSON.parse(d):[];}catch{return[];}});
