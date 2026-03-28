@@ -10,6 +10,7 @@ const C = {
   accent:"#00D4FF",       accentDim:"rgba(0,212,255,0.12)", accentLight:"rgba(0,212,255,0.08)",
   green:"#059669",        greenL:"rgba(5,150,105,0.08)",
   red:"#DC2626",          redL:"rgba(220,38,38,0.08)",
+  orange:"#EA580C",       orangeL:"rgba(234,88,12,0.08)",
   blue:"#2563EB",         blueL:"rgba(37,99,235,0.08)",
   gold:"#D4AF37",         goldDim:"rgba(212,175,55,0.5)", goldFaint:"rgba(212,175,55,0.06)",
   border:"#E2E8F0",       borderDark:"#CBD5E1",
@@ -299,7 +300,7 @@ function run(a){
       noi+=moNOI;
       const bwYear = yr<=fundTerm ? ar.bwAnn[yr] : ar.bwAnn[fundTerm];
       bwF+=bwYear/12;
-      // Capex equity portion spread across the year's months
+      // CapEx equity — tracked as a separate capital call, NOT deducted from operating CF
       const yrCapexEq = ar.capexEqByYear?.[yr]||0;
       if(yrCapexEq>0) capxF+=yrCapexEq/12;
       invEq+=x.price*(1-debtPct);
@@ -308,10 +309,15 @@ function run(a){
       ds+=yrDS/12;
     });
     const ga=gaMonthly[i].total;
-    const netOpCF=noi-ds-bwF-capxF-ga;
-    const lpCall=assets.reduce((s,x)=>x.startMonth===mo?s+x.price*(1-debtPct)*(1-gpPct):s,0);
-    const gpCall=assets.reduce((s,x)=>x.startMonth===mo?s+x.price*(1-debtPct)*gpPct:s,0);
-    return{mo,noi,invEq,ds,bwF,netOpCF,lpCall,gpCall,ga};
+    // Operating CF: NOI minus debt service, mgmt fees, and G&A — capex is a separate call
+    const netOpCF=noi-ds-bwF-ga;
+    // CapEx capital calls split by ownership share
+    const capxLP=capxF*(1-gpPct);
+    const capxGP=capxF*gpPct;
+    // Acquisition capital calls (at startMonth) + ongoing CapEx capital calls
+    const lpCall=assets.reduce((s,x)=>x.startMonth===mo?s+x.price*(1-debtPct)*(1-gpPct):s,0)+capxLP;
+    const gpCall=assets.reduce((s,x)=>x.startMonth===mo?s+x.price*(1-debtPct)*gpPct:s,0)+capxGP;
+    return{mo,noi,invEq,ds,bwF,netOpCF,capxLP,capxGP,lpCall,gpCall,ga};
   });
 
   // Totals
@@ -367,10 +373,16 @@ function run(a){
 
   // LP IRR — annual approximation
   const lpCF=Array(fundTerm+1).fill(0);
-  lpCF[0]=-lpActualCapital;  // LP total capital at risk incl. funded shortfall
-  const annualInterimLP=(totOpCF*(1-gpPct))/(fundTerm);
-  for(let y=1;y<fundTerm;y++)lpCF[y]=annualInterimLP;
-  lpCF[fundTerm]=lpTotal-annualInterimLP*(fundTerm-1);
+  lpCF[0]=-lpActualCapital;
+  // Use actual year-by-year LP operating CF for accurate IRR timing (not flat average)
+  let interimLPSum=0;
+  for(let y=0;y<fundTerm-1;y++){
+    const annLP=monthly.slice(y*12,(y+1)*12).reduce((t,x)=>t+x.netOpCF,0)*(1-gpPct);
+    lpCF[y+1]=annLP;
+    interimLPSum+=annLP;
+  }
+  // Final year: remaining LP total = exit waterfall + last year operating CF
+  lpCF[fundTerm]=lpTotal-interimLPSum;
   const lpIRR=irr(lpCF);
 
   // ── GP ENTITY cash flow (month by month)
@@ -395,23 +407,26 @@ function run(a){
   const gpNetTotal=gpCumData[MO-1].cum;
   const gpBreakeven=gpCumData.find(x=>x.cum>=0)?.mo??null;
 
-  // Per-partner — capital at risk includes equity co-invest + funded G&A shortfall
+  // Per-partner — capital at risk is GP co-invest (acq + capex)
   const promPP=gpPromote/partners;
-  const opDrawsTotal=gpEntity.reduce((s,x)=>s+Math.max(0,x.net-(x.promote||0)-(x.shortfallROC||0)),0);
+  // drawsPP: sum actual positive operating distributions, separate from capital calls
+  const opDrawsTotal=gpEntity.reduce((s,x)=>s+Math.max(0,x.opDist),0);
   const drawsPP=opDrawsTotal/partners;
-  const rocPP=gpROC/partners;                        // includes shortfall recovery
-  const coInvPP=totGPCalled/partners;                 // GP equity co-invest only
+  const rocPP=gpROC/partners;
+  const coInvPP=totGPCalled/partners;
   const totalPP=promPP+drawsPP+rocPP;
-  const netPP=totalPP-coInvPP;                        // net after all capital deployed
+  const netPP=totalPP-coInvPP;
 
-  // Monthly partner draw data
+  // Monthly partner data — track capital calls separately for true net position
   const partnerMonthly=gpEntity.map(x=>({
     mo:x.mo,
-    draw:Math.max(0,x.net-(x.promote||0))/partners,
+    draw:Math.max(0,x.opDist)/partners,    // positive operating distributions only
+    coInvest:x.coInvest/partners,           // capital calls (negative) per partner
     promote:(x.promote||0)/partners,
   }));
   let pCum=0;
-  const partnerCum=partnerMonthly.map(x=>{pCum+=x.draw+x.promote;return{mo:x.mo,cum:pCum};});
+  // Cumulative includes capital calls so chart correctly goes negative early then recovers
+  const partnerCum=partnerMonthly.map(x=>{pCum+=x.draw+x.coInvest+x.promote;return{mo:x.mo,cum:pCum};});
 
   // Portfolio NOI chart
   const noiChart=Array.from({length:fundTerm},(_,y)=>({
@@ -419,13 +434,15 @@ function run(a){
     noi:assetR.reduce((s,ar)=>s+(ar.noi[y+1]||0),0),
   }));
 
-  // Fund CF by year
+  // Fund CF by year — lpCalls includes acq + capex; capexCalls shown separately for charting
   const fundCFAnnual=Array.from({length:fundTerm},(_,y)=>{
     const s=y*12,e=(y+1)*12;
     const slice=monthly.slice(s,e);
     return{
       year:`Yr ${y+1}`,
       lpCalls:-slice.reduce((t,x)=>t+x.lpCall,0),
+      lpAcqCalls:-slice.reduce((t,x)=>t+(x.lpCall-x.capxLP),0),
+      lpCapexCalls:-slice.reduce((t,x)=>t+x.capxLP,0),
       opCF:slice.reduce((t,x)=>t+x.netOpCF,0),
       noi:slice.reduce((t,x)=>t+x.noi,0),
     };
@@ -1981,20 +1998,23 @@ function TabWaterfall({m,a}){
 function TabFundCF({m,a}){
   const [view, setView] = useState("charts");
 
-  // Monthly fund CF — built from model monthly data (G&A already deducted from netOpCF)
+  // Monthly fund CF — netOpCF is clean operating CF (no capex deduction)
   const moDetail = (m.monthly||[]).map((x,i)=>{
-    const portOpCF = x.netOpCF;  // net of DS + G&A
+    const portOpCF = x.netOpCF;
     return {
       mo: x.mo,
       portOpCF: Math.round(portOpCF),
       ga: Math.round(x.ga),
       lpShare:  Math.round(portOpCF*(1-a.gpPct)),
       gpShare:  Math.round(portOpCF*a.gpPct),
+      lpCall:   Math.round(x.lpCall||0),      // total LP capital call this month (acq + capex)
+      capxLP:   Math.round(x.capxLP||0),      // capex-only portion of LP call
       cumLP:    0,
     };
   });
   let cumLP=0;
-  moDetail.forEach(r=>{cumLP+=r.lpShare;r.cumLP=Math.round(cumLP);});
+  // Cumulative LP Called = actual capital drawn, not LP distributions
+  moDetail.forEach(r=>{cumLP+=r.lpCall;r.cumLP=Math.round(cumLP);});
 
   return(
     <div>
@@ -2075,12 +2095,13 @@ function TabFundCF({m,a}){
           </div>
 
           {/* Column legend */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginBottom:14}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6,marginBottom:14}}>
             {[
-              {col:"Portfolio CF",    color:C.green,   desc:"Fund cash flow net of DS + G&A overhead"},
-              {col:"LP Distribution", color:"#5DADE2", desc:`LP ${f.p(1-a.gpPct)} share of portfolio cash flow`},
-              {col:"GP Distribution", color:C.gold,    desc:`GP ${f.p(a.gpPct)} co-invest share`},
-              {col:"LP Called (cumul)", color:C.whDim,  desc:"Cumulative LP capital drawn through end of quarter"},
+              {col:"Portfolio CF",     color:C.green,   desc:"NOI minus debt service and G&A. Clean operating cash flow."},
+              {col:"LP Distribution",  color:"#5DADE2", desc:`LP's ${f.p(1-a.gpPct)} pro-rata share of operating CF`},
+              {col:"GP Distribution",  color:C.gold,    desc:`GP's ${f.p(a.gpPct)} co-invest share of operating CF`},
+              {col:"CapEx Cap. Calls", color:C.orange,  desc:"Separate LP capital calls for property improvements (not in op CF)"},
+              {col:"LP Called (cumul)",color:C.whDim,   desc:"Cumulative LP capital drawn: acq + capex calls through quarter end"},
             ].map(({col,color,desc})=>(
               <div key={col} style={{background:"rgba(255,255,255,.04)",borderRadius:4,
                 padding:"7px 9px",borderTop:`2px solid ${color}`}}>
@@ -2096,10 +2117,11 @@ function TabFundCF({m,a}){
               <thead style={{position:"sticky",top:0,zIndex:10}}>
                 <tr style={{background:C.navy,borderBottom:`1px solid ${C.border}`}}>
                   {[
-                    {h:"Quarter",align:"left"},
+                    {h:"Quarter",           align:"left"},
                     {h:"Portfolio CF",      align:"right",color:C.green},
                     {h:"LP Distribution",  align:"right",color:"#5DADE2"},
                     {h:"GP Distribution",  align:"right",color:C.gold},
+                    {h:"CapEx Cap. Calls", align:"right",color:C.orange},
                     {h:"LP Called (cumul)",align:"right",color:C.whDim},
                   ].map(({h,align,color})=>(
                     <th key={h} style={{padding:"6px 10px",color:color||C.goldDim,fontSize:9,
@@ -2117,10 +2139,12 @@ function TabFundCF({m,a}){
                     const portCF=mos.reduce((s,r)=>s+r.portOpCF,0);
                     const lp=mos.reduce((s,r)=>s+r.lpShare,0);
                     const gp=mos.reduce((s,r)=>s+r.gpShare,0);
-                    cumLP2+=lp;
+                    const capexCall=mos.reduce((s,r)=>s+r.capxLP,0);
+                    // Cumulate actual LP capital calls (acq + capex), not distributions
+                    cumLP2+=mos.reduce((s,r)=>s+r.lpCall,0);
                     const yr=Math.floor(q/4)+1;
                     const qn=(q%4)+1;
-                    qtrs.push({label:`Y${yr} Q${qn}`,portCF,lp,gp,cumLP:Math.round(cumLP2)});
+                    qtrs.push({label:`Y${yr} Q${qn}`,portCF,lp,gp,capexCall,cumLP:Math.round(cumLP2)});
                   }
                   return qtrs.map((row,i)=>{
                     const isYrEnd=(i+1)%4===0;
@@ -2134,6 +2158,8 @@ function TabFundCF({m,a}){
                           color:row.portCF>=0?C.green:C.red}}>{f.$(row.portCF)}</td>
                         <td style={{padding:"5px 10px",textAlign:"right",color:"#5DADE2"}}>{f.$(row.lp)}</td>
                         <td style={{padding:"5px 10px",textAlign:"right",color:C.gold}}>{f.$(row.gp)}</td>
+                        <td style={{padding:"5px 10px",textAlign:"right",
+                          color:row.capexCall>0?C.orange:C.whDim}}>{row.capexCall>0?`(${f.$(row.capexCall)})`:"—"}</td>
                         <td style={{padding:"5px 10px",textAlign:"right",color:C.whDim}}>{f.$(row.cumLP)}</td>
                       </tr>
                     );
@@ -2144,6 +2170,7 @@ function TabFundCF({m,a}){
                   <td style={{padding:"7px 10px",textAlign:"right",color:C.green,fontWeight:700}}>{f.$(m.totOpCF)}</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:"#5DADE2",fontWeight:700}}>{f.$(m.totOpCF*(1-a.gpPct))}</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:C.gold,fontWeight:700}}>{f.$(m.totOpCF*a.gpPct)}</td>
+                  <td style={{padding:"7px 10px",textAlign:"right",color:C.orange,fontWeight:700}}>({f.$(moDetail.reduce((s,r)=>s+r.capxLP,0))})</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:C.whDim,fontWeight:700}}>{f.$(m.lpActualCapital)}</td>
                 </tr>
               </tbody>
@@ -2884,16 +2911,17 @@ function TabGPPartners({m,a}){
 
       {/* Monthly draw */}
       <Card>
-        <CT c="Monthly Draw Available Per Partner (excl. promote at exit)"/>
+        <CT c="Monthly Operating Draw Per Partner (positive CF months only)"/>
+        <div style={{fontSize:9,color:C.textDim,marginBottom:8}}>
+          Distribution from operating CF, separate from capital calls. Positive months only — capital calls appear as negative flows in the cumulative chart above.
+        </div>
         <ResponsiveContainer width="100%" height={140}>
           <BarChart data={m.partnerMonthly}>
             <XAxis dataKey="mo" tickFormatter={v=>v%12===0?`M${v}`:""} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false}/>
             <YAxis tickFormatter={v=>`$${(v/1000).toFixed(0)}K`} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false} width={38}/>
             <Tooltip content={<TT/>}/>
             <ReferenceLine y={0} stroke="rgba(255,255,255,.2)"/>
-            <Bar dataKey="draw" name="Draw/Partner" radius={[1,1,0,0]}>
-              {m.partnerMonthly.map((e,i)=><Cell key={i} fill={e.draw>0?C.blue:C.red}/>)}
-            </Bar>
+            <Bar dataKey="draw" name="Draw/Partner" fill={C.blue} radius={[1,1,0,0]}/>
           </BarChart>
         </ResponsiveContainer>
       </Card>
