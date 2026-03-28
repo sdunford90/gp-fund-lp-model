@@ -371,18 +371,24 @@ function run(a){
   const gpFundTotal=gpROC+gpPromote;
   const lpMOIC=lpTotal/Math.max(1,lpActualCapital);  // MOIC on actual LP capital deployed
 
-  // LP IRR — annual approximation
+  // LP IRR — proper year-by-year timing of capital calls AND distributions
+  // Capital calls are negative in the year they occur (NOT all dumped into year 0)
+  // This fixes the post-CapEx distortion where CapEx equity (called in yrs 1-2) was
+  // incorrectly shown as a year-0 outflow, artificially suppressing IRR.
   const lpCF=Array(fundTerm+1).fill(0);
-  lpCF[0]=-lpActualCapital;
-  // Use actual year-by-year LP operating CF for accurate IRR timing (not flat average)
   let interimLPSum=0;
-  for(let y=0;y<fundTerm-1;y++){
-    const annLP=monthly.slice(y*12,(y+1)*12).reduce((t,x)=>t+x.netOpCF,0)*(1-gpPct);
-    lpCF[y+1]=annLP;
-    interimLPSum+=annLP;
+  for(let y=0;y<fundTerm;y++){
+    const slice=monthly.slice(y*12,(y+1)*12);
+    const annOpLP=slice.reduce((t,x)=>t+x.netOpCF*(1-gpPct),0);
+    const annLPCalls=slice.reduce((t,x)=>t+x.lpCall,0);
+    lpCF[y]-=annLPCalls;       // capital outflows in the year they are called
+    if(y<fundTerm-1){
+      lpCF[y+1]+=annOpLP;      // operating distributions received end of year
+      interimLPSum+=annOpLP;
+    }
   }
-  // Final year: remaining LP total = exit waterfall + last year operating CF
-  lpCF[fundTerm]=lpTotal-interimLPSum;
+  // Final year gets remaining waterfall payout (exit + last year op CF)
+  lpCF[fundTerm]+=lpTotal-interimLPSum;
   const lpIRR=irr(lpCF);
 
   // ── GP ENTITY cash flow (month by month)
@@ -3652,110 +3658,232 @@ function TabTargets({a,setA}){
   const exportPDF=useCallback((marina,notes)=>{
     const existing=document.getElementById("__gp_tearsheet");
     if(existing)existing.remove();
-    // HTML-escape helper — prevents XSS from any untrusted string field
     const esc=(s)=>String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
     const score=scoreMarina(marina);
     const stage=STAGES.find(s=>s.key===interestMap[marina.id]?.status);
     const hm=marina.hotel_market;
     const today=new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});
-    const scoreColor=score>=70?"#059669":score>=50?"#0891b2":"#64748b";
-    // Address line: use marina.address if available, else city/state
+    const scoreColor=score>=70?"#059669":score>=50?"#0891b2":"#94a3b8";
+    const scoreBg=score>=70?"rgba(5,150,105,.1)":score>=50?"rgba(8,145,178,.1)":"rgba(148,163,184,.1)";
     const addrParts=[marina.address,marina.city&&marina.state?`${marina.city}, ${marina.state}`:marina.city||marina.state].filter(Boolean);
-    const addressLine=addrParts.map(esc).join(" · ");
-    const locationLine=[marina.region,marina.harbor].filter(Boolean).map(esc).join(" · ");
-    // Stage badge (from trusted STAGES constant — colors are hex literals)
-    const stageBadge=stage?`<div style="display:inline-block;background:${stage.bg};color:${stage.color};border:1px solid ${stage.color}66;padding:4px 12px;border-radius:20px;font-size:10px;font-weight:700;margin-bottom:6px">${esc(stage.label)}</div>`:""
-    // Build static tile URL for aerial map (ESRI World Imagery) — only numbers used in URL, safe
-    let mapHtml="";
+    const addressLine=addrParts.map(esc).join("  ·  ");
+    const locationLine=[marina.region,marina.harbor].filter(Boolean).map(esc).join("  ·  ");
+    const stageBadge=stage?`<span style="display:inline-block;background:${stage.bg};color:${stage.color};border:1px solid ${stage.color}55;padding:3px 10px;border-radius:20px;font-size:9px;font-weight:700;letter-spacing:.04em">${esc(stage.label)}</span>`:"";
+    // Score arc SVG
+    const arcR=28,arcC=36,arcStroke=6;
+    const arcCirc=2*Math.PI*arcR;
+    const arcDash=arcCirc*(score/100);
+    const scoreSVG=`<svg width="72" height="72" viewBox="0 0 72 72" style="transform:rotate(-90deg)">
+      <circle cx="${arcC}" cy="${arcC}" r="${arcR}" fill="none" stroke="#e2e8f0" stroke-width="${arcStroke}"/>
+      <circle cx="${arcC}" cy="${arcC}" r="${arcR}" fill="none" stroke="${scoreColor}" stroke-width="${arcStroke}"
+        stroke-dasharray="${arcDash} ${arcCirc}" stroke-linecap="round"/>
+    </svg>`;
+    // Stat box helper
+    const statBox=(l,v)=>v&&v!=="—"?`<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px;min-width:0">
+      <div style="font-size:8px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">${l}</div>
+      <div style="font-size:13px;font-weight:700;color:#1a2e44;line-height:1">${v}</div>
+    </div>`:"";
+    // Section header helper
+    const secHdr=(t,accent)=>`<div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:${accent||"#94a3b8"};margin-bottom:8px;padding-bottom:5px;border-bottom:1px solid ${accent?accent+"22":"#e2e8f0"}">${t}</div>`;
+    // Row item for detail tables
+    const dRow=(l,v)=>v?`<div style="display:flex;justify-content:space-between;align-items:baseline;padding:4px 0;border-bottom:1px solid #f1f5f9">
+      <span style="font-size:10px;color:#64748b">${l}</span>
+      <span style="font-size:10px;font-weight:600;color:#1a2e44">${v}</span>
+    </div>`:"";
+
+    // Build tile map URL — only numeric coords used
+    let tileUrl="";
     if(marina.lat&&marina.lon){
-      const z=15;const n=Math.pow(2,z);
-      const tileX=Math.floor((marina.lon+180)/360*n);
-      const latRad=marina.lat*Math.PI/180;
-      const tileY=Math.floor((1-Math.log(Math.tan(latRad)+1/Math.cos(latRad))/Math.PI)/2*n);
-      const tileUrl=`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${tileY}/${tileX}`;
-      mapHtml=`<div style="margin-bottom:16px;border-radius:6px;overflow:hidden;border:1px solid #ccc;height:180px;background:#e8f4fd;">
-        <img src="${tileUrl}" alt="Aerial view — ${esc(marina.name)}" style="width:100%;height:100%;object-fit:cover;display:block;"/>
-      </div>`;
+      const z=15,n=Math.pow(2,z);
+      const tx=Math.floor((marina.lon+180)/360*n);
+      const latR=marina.lat*Math.PI/180;
+      const ty=Math.floor((1-Math.log(Math.tan(latR)+1/Math.cos(latR))/Math.PI)/2*n);
+      tileUrl=`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${ty}/${tx}`;
     }
-    // Safe statRow — label is trusted literal, val is pre-escaped by caller
-    const statRow=(label,val)=>val?`<tr><td style="padding:4px 8px 4px 0;color:#64748b;font-size:11px;white-space:nowrap">${label}</td><td style="padding:4px 0;font-size:11px;font-weight:600;color:#1a2e44">${val}</td></tr>`:"";
-    const div=document.createElement("div");div.id="__gp_tearsheet";
-    div.style.cssText="display:none;font-family:'DM Sans',sans-serif;";
-    div.innerHTML=`
-      <style>
-        @media print{
-          body>*:not(#__gp_tearsheet){display:none!important;}
-          #__gp_tearsheet{display:block!important;padding:32px;max-width:720px;margin:0 auto;}
-        }
-      </style>
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid #0a2342">
-        <div style="flex:1;min-width:0">
-          <div style="font-size:10px;font-weight:700;letter-spacing:.1em;color:#0a2342;text-transform:uppercase;margin-bottom:2px">GP Fund I — Deal Tearsheet</div>
-          <div style="font-size:22px;font-weight:800;color:#0a2342;line-height:1.2">${esc(marina.name)}</div>
-          ${addressLine?`<div style="font-size:11px;color:#1a2e44;margin-top:3px;font-weight:500">${addressLine}</div>`:""}
-          ${locationLine?`<div style="font-size:11px;color:#64748b;margin-top:2px">${locationLine}</div>`:""}
-        </div>
-        <div style="text-align:right;flex-shrink:0;margin-left:16px">
-          ${stageBadge}
-          <div style="font-size:28px;font-weight:800;color:${scoreColor}">${score}</div>
-          <div style="font-size:9px;font-weight:700;color:#94a3b8;text-transform:uppercase">Acquisition Score</div>
-        </div>
-      </div>
-      ${mapHtml}
-      ${marina.is_public?`<div style="background:rgba(220,38,38,.06);border:1px solid rgba(220,38,38,.3);border-radius:6px;padding:8px 12px;margin-bottom:14px;display:flex;align-items:center;gap:10">
-        <span style="font-size:11px;font-weight:700;color:#dc2626">⚠ Government Owned — Not Acquirable</span>
-        ${marina.operator_type?`<span style="font-size:9px;font-weight:700;background:rgba(220,38,38,.1);color:#dc2626;padding:2px 8px;border-radius:10px">${esc(marina.operator_type)}</span>`:""}
-        ${marina.operator_confidence?`<span style="font-size:9px;color:#64748b;margin-left:auto">ID confidence: ${esc(marina.operator_confidence)}</span>`:""}
-      </div>`:""}
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
-        <div>
-          <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:#94a3b8;margin-bottom:6px">Marina Details</div>
-          <table style="border-collapse:collapse;width:100%">
-            ${statRow("Slips",marina.slips!=null?esc(marina.slips.toLocaleString()):null)}
-            ${statRow("Linear Ft",marina.linear_ft?`${esc(marina.linear_ft.toLocaleString())} ft`:null)}
-            ${statRow("Moorings",marina.moorings!=null?esc(String(marina.moorings)):null)}
-            ${statRow("Max LOA",marina.max_loa?`${esc(String(marina.max_loa))} ft`:null)}
-            ${statRow("Max Slip Length",marina.max_slip_length?`${esc(String(marina.max_slip_length))} ft`:null)}
-            ${statRow("Max Slip Width",marina.max_slip_width?`${esc(String(marina.max_slip_width))} ft`:null)}
-            ${statRow("Approach Depth",marina.approach_depth?`${esc(String(marina.approach_depth))} ft`:null)}
-            ${statRow("Dock Depth",marina.dock_depth?`${esc(String(marina.dock_depth))} ft`:null)}
-            ${statRow("Fuel Dock",marina.has_fuel_dock?(marina.diesel?`Yes — Diesel $${esc(marina.diesel.toFixed(2))}/gal`:(marina.gas?`Yes — ${esc(marina.gas_type||"Gas")} $${esc(marina.gas.toFixed(2))}/gal`:"Yes")):null)}
-            ${marina.fuel_updated?statRow("Fuel Updated",esc(marina.fuel_updated)):""}
-            ${statRow("Reviews",marina.reviews?esc(marina.reviews.toLocaleString()):null)}
-            ${statRow("Harbor",marina.harbor?esc(marina.harbor):null)}
-            ${statRow("VHF",marina.vhf?esc(marina.vhf):null)}
-            ${statRow("Phone",marina.phone?esc(marina.phone):null)}
-          </table>
-        </div>
-        ${hm?`<div>
-          <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:#94a3b8;margin-bottom:6px">Hotel Market Proxy</div>
-          <table style="border-collapse:collapse;width:100%">
-            ${statRow("Market",hm.market_name?esc(hm.market_name):null)}
-            ${statRow("Tier",hm.tier&&hm.tier_label?`${esc(hm.tier)} — ${esc(hm.tier_label)}`:hm.tier_label?esc(hm.tier_label):null)}
-            ${statRow("ADR",hm.adr?`$${esc(String(hm.adr))}`:"—")}
-            ${statRow("RevPAR",hm.revpar?`$${esc(String(hm.revpar))}`:"—")}
-            ${statRow("Occupancy",hm.occupancy?`${(hm.occupancy*100).toFixed(0)}%`:"—")}
-            ${statRow("Demand Score",hm.demand_score?esc(hm.demand_score.toFixed(1)):null)}
-            ${statRow("Seasonality",hm.seasonality?esc(hm.seasonality.replace(/_/g," ")):null)}
-            ${statRow("Supply",hm.supply_constrained!=null?(hm.supply_constrained?"Constrained":"Open"):null)}
-            ${statRow("Data Confidence",hm.data_confidence?esc(hm.data_confidence):null)}
-            ${statRow("Source",hm.source?esc(hm.source):null)}
-            ${statRow("Data As Of",hm.data_as_of?esc(hm.data_as_of):null)}
-          </table>
-        </div>`:""}
-      </div>
-      ${notes?`<div style="margin-bottom:16px">
-        <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:#94a3b8;margin-bottom:6px">GP Notes</div>
-        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px 12px;font-size:11px;color:#1a2e44;line-height:1.6;white-space:pre-wrap">${esc(notes)}</div>
-      </div>`:""}
-      <div style="margin-top:24px;padding-top:10px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;font-size:9px;color:#94a3b8">
-        <span>GP Fund I — Confidential, for internal use only${marina.scraped_at?` · Data scraped ${esc(new Date(marina.scraped_at).toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric"}))}`:""}</span>
-        <span>${esc(today)}</span>
-      </div>
-    `;
-    document.body.appendChild(div);
-    window.addEventListener("afterprint",()=>{const el=document.getElementById("__gp_tearsheet");if(el)el.remove();},{once:true});
-    window.print();
+
+    const buildAndPrint=(mapDataUrl)=>{
+      const mapBlock=mapDataUrl
+        ?`<div style="margin-bottom:18px;border-radius:8px;overflow:hidden;border:1px solid #cbd5e1;height:160px;background:#dbeafe;position:relative">
+            <img src="${mapDataUrl}" style="width:100%;height:100%;object-fit:cover;display:block"/>
+            ${marina.lat&&marina.lon?`<div style="position:absolute;bottom:6px;right:8px;background:rgba(10,35,66,.75);color:#fff;font-size:8px;padding:2px 6px;border-radius:4px">${marina.lat.toFixed(5)}, ${marina.lon.toFixed(5)}</div>`:""}
+          </div>`
+        :"";
+
+      const tierbadge=hm?.tier?`<span style="display:inline-block;background:#0a234222;color:#0a2342;border:1px solid #0a234244;padding:2px 8px;border-radius:4px;font-size:9px;font-weight:700;margin-left:6px">${esc(hm.tier)}</span>`:"";
+      const confColor=hm?.data_confidence==="high"?"#059669":hm?.data_confidence==="medium"?"#b45309":"#94a3b8";
+
+      const amenityChips=(marina.amenities||[]).map(a=>`<span style="display:inline-block;background:#f1f5f9;border:1px solid #e2e8f0;color:#475569;font-size:8px;font-weight:600;padding:2px 7px;border-radius:10px;margin:1px">${esc(a)}</span>`).join("");
+      const ratesHtml=marina.dockage_rates?Object.entries(marina.dockage_rates).map(([k,v])=>
+        `<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:5px;padding:5px 8px;display:inline-block;margin:2px">
+          <div style="font-size:8px;color:#0284c7;text-transform:uppercase;font-weight:700">${esc(k.replace(/_/g," "))}</div>
+          <div style="font-size:11px;font-weight:700;color:#1a2e44">${typeof v==="number"?`$${esc(String(v))}`:esc(String(v))}</div>
+        </div>`).join(""):"";
+
+      const div=document.createElement("div");div.id="__gp_tearsheet";
+      div.style.cssText="display:none;font-family:'DM Sans',sans-serif;";
+      div.innerHTML=`
+        <style>
+          @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=DM+Serif+Display&display=swap');
+          @media print{
+            body>*:not(#__gp_tearsheet){display:none!important;}
+            #__gp_tearsheet{display:block!important;}
+            *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}
+          }
+        </style>
+        <div style="max-width:720px;margin:0 auto;padding:0;font-family:'DM Sans',sans-serif;color:#1a2e44">
+
+          <!-- HEADER BAR -->
+          <div style="background:#0a2342;color:#fff;padding:14px 24px;display:flex;justify-content:space-between;align-items:center;border-radius:10px 10px 0 0">
+            <div>
+              <div style="font-size:8px;font-weight:700;letter-spacing:.14em;color:#d4af37;text-transform:uppercase;margin-bottom:2px">GP Fund I · Marina Acquisition</div>
+              <div style="font-size:10px;font-weight:600;color:rgba(255,255,255,.6);letter-spacing:.04em">DEAL TEARSHEET — CONFIDENTIAL</div>
+            </div>
+            <div style="font-size:9px;color:rgba(255,255,255,.5)">${esc(today)}</div>
+          </div>
+
+          <!-- PROPERTY HERO -->
+          <div style="background:linear-gradient(135deg,#f8fafc 0%,#f1f5f9 100%);border:1px solid #e2e8f0;border-top:none;padding:20px 24px;display:flex;gap:20px;align-items:flex-start">
+            <div style="flex:1;min-width:0">
+              ${stageBadge?stageBadge+"<br style='margin-bottom:4px'/>":""}
+              <div style="font-size:24px;font-weight:800;color:#0a2342;line-height:1.1;margin-top:${stage?6:0}px">${esc(marina.name)}</div>
+              ${addressLine?`<div style="font-size:11px;color:#475569;margin-top:5px;font-weight:500">${addressLine}</div>`:""}
+              ${locationLine?`<div style="font-size:10px;color:#94a3b8;margin-top:2px">${locationLine}</div>`:""}
+              ${marina.phone||marina.vhf||marina.website?`<div style="margin-top:8px;font-size:10px;color:#64748b;display:flex;gap:14px;flex-wrap:wrap">
+                ${marina.phone?`<span>📞 ${esc(marina.phone)}</span>`:""}
+                ${marina.vhf?`<span>📻 ${esc(marina.vhf)}</span>`:""}
+                ${marina.website?`<span>🌐 ${esc(marina.website)}</span>`:""}
+              </div>`:""}
+            </div>
+            <div style="text-align:center;flex-shrink:0;position:relative;width:72px">
+              ${scoreSVG}
+              <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center">
+                <div style="font-size:17px;font-weight:800;color:${scoreColor};line-height:1">${score}</div>
+                <div style="font-size:6px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em">score</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- MAP -->
+          ${mapBlock}
+
+          <!-- GOV BANNER -->
+          ${marina.is_public?`<div style="background:rgba(220,38,38,.06);border:1px solid rgba(220,38,38,.25);border-radius:7px;padding:9px 14px;margin-bottom:16px;display:flex;align-items:center;gap:10">
+            <span style="font-size:11px;font-weight:700;color:#dc2626">⚠ Government Owned — Not Acquirable</span>
+            ${marina.operator_type?`<span style="font-size:9px;font-weight:700;background:rgba(220,38,38,.1);color:#dc2626;padding:2px 8px;border-radius:10px">${esc(marina.operator_type)}</span>`:""}
+            ${marina.operator_confidence?`<span style="font-size:9px;color:#64748b;margin-left:auto">Confidence: ${esc(marina.operator_confidence)}</span>`:""}
+          </div>`:""}
+
+          <!-- KEY STATS BAR -->
+          <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:18px;padding:0 0">
+            ${statBox("Slips",marina.slips!=null?marina.slips.toLocaleString():null)}
+            ${statBox("Max LOA",marina.max_loa?`${marina.max_loa} ft`:null)}
+            ${statBox("Approach",marina.approach_depth?`${marina.approach_depth} ft`:null)}
+            ${statBox("Reviews",marina.reviews!=null?marina.reviews.toLocaleString():null)}
+            ${statBox("Fuel",marina.has_fuel_dock?(marina.diesel?`$${marina.diesel.toFixed(2)}/gal`:"Yes"):"No")}
+          </div>
+
+          <!-- TWO-COLUMN BODY -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px">
+
+            <!-- Marina Details -->
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px">
+              ${secHdr("Marina Details","#0a2342")}
+              ${dRow("Slips",marina.slips!=null?marina.slips.toLocaleString():null)}
+              ${dRow("Linear Ft",marina.linear_ft?`${marina.linear_ft.toLocaleString()} ft`:null)}
+              ${dRow("Moorings",marina.moorings!=null?String(marina.moorings):null)}
+              ${dRow("Max LOA",marina.max_loa?`${marina.max_loa} ft`:null)}
+              ${dRow("Max Slip Length",marina.max_slip_length?`${marina.max_slip_length} ft`:null)}
+              ${dRow("Max Slip Width",marina.max_slip_width?`${marina.max_slip_width} ft`:null)}
+              ${dRow("Approach Depth",marina.approach_depth?`${marina.approach_depth} ft`:null)}
+              ${dRow("Dock Depth",marina.dock_depth?`${marina.dock_depth} ft`:null)}
+              ${dRow("Harbor",marina.harbor?esc(marina.harbor):null)}
+              ${dRow("VHF",marina.vhf?esc(marina.vhf):null)}
+              ${dRow("Fuel",marina.has_fuel_dock?(marina.diesel?`Diesel $${marina.diesel.toFixed(2)}/gal`:(marina.gas?`${esc(marina.gas_type||"Gas")} $${marina.gas.toFixed(2)}/gal`:"Yes")):"No")}
+              ${marina.fuel_updated?dRow("Fuel Updated",esc(marina.fuel_updated)):""}
+              ${dRow("Reviews",marina.reviews!=null?marina.reviews.toLocaleString():null)}
+            </div>
+
+            <!-- Hotel Market -->
+            ${hm?`<div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:5px;border-bottom:1px solid #e2e8f0">
+                <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#0a2342">Hotel Market Proxy</div>
+                <span style="font-size:8px;font-weight:700;padding:2px 7px;border-radius:8px;
+                  background:${hm.data_confidence==="high"?"rgba(5,150,105,.1)":hm.data_confidence==="medium"?"rgba(180,83,9,.1)":"rgba(148,163,184,.1)"};
+                  color:${confColor}">${esc((hm.data_confidence||"").toUpperCase())} CONF</span>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+                ${statBox("ADR",hm.adr?`$${hm.adr}`:null)}
+                ${statBox("RevPAR",hm.revpar?`$${hm.revpar}`:null)}
+                ${statBox("Occupancy",hm.occupancy?`${(hm.occupancy*100).toFixed(0)}%`:null)}
+                ${statBox("Demand Score",hm.demand_score?hm.demand_score.toFixed(1):null)}
+              </div>
+              ${dRow("Market",hm.market_name?esc(hm.market_name)+(tierbadge||""):null)}
+              ${dRow("Tier",hm.tier_label?esc(hm.tier_label):null)}
+              ${dRow("Seasonality",hm.seasonality?esc(hm.seasonality.replace(/_/g," ")):null)}
+              ${dRow("Supply",hm.supply_constrained!=null?(hm.supply_constrained?"Constrained":"Open"):null)}
+              ${hm.source?`<div style="margin-top:8px;padding-top:6px;border-top:1px solid #f1f5f9">
+                <div style="font-size:8px;color:#94a3b8;text-transform:uppercase;font-weight:700;margin-bottom:2px">Source</div>
+                <div style="font-size:9px;color:#64748b;line-height:1.4">${esc(hm.source)}</div>
+                ${hm.data_as_of?`<div style="font-size:8px;color:#94a3b8;margin-top:2px">${esc(hm.data_as_of)}</div>`:""}
+              </div>`:""}
+            </div>`:`<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;display:flex;align-items:center;justify-content:center">
+              <div style="text-align:center;color:#94a3b8;font-size:11px">No hotel market data</div>
+            </div>`}
+          </div>
+
+          <!-- DOCKAGE RATES -->
+          ${marina.dockage_rates&&ratesHtml?`<div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;margin-bottom:18px">
+            ${secHdr("Dockage Rates","#0891b2")}
+            <div style="display:flex;flex-wrap:wrap;gap:4px">${ratesHtml}</div>
+          </div>`:""}
+
+          <!-- AMENITIES -->
+          ${(marina.amenities||[]).length>0?`<div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;margin-bottom:18px">
+            ${secHdr("Amenities")}
+            <div style="line-height:1.8">${amenityChips}</div>
+          </div>`:""}
+
+          <!-- ABOUT -->
+          ${marina.about?`<div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;margin-bottom:18px">
+            ${secHdr("About")}
+            <div style="font-size:10.5px;color:#475569;line-height:1.7">${esc(marina.about)}</div>
+          </div>`:""}
+
+          <!-- NOTES -->
+          ${notes?`<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px 16px;margin-bottom:18px">
+            ${secHdr("GP Notes","#b45309")}
+            <div style="font-size:10.5px;color:#1a2e44;line-height:1.7;white-space:pre-wrap">${esc(notes)}</div>
+          </div>`:""}
+
+          <!-- FOOTER -->
+          <div style="background:#0a2342;border-radius:0 0 10px 10px;padding:10px 24px;display:flex;justify-content:space-between;align-items:center">
+            <div style="font-size:8px;color:rgba(255,255,255,.4);letter-spacing:.04em">GP FUND I · CONFIDENTIAL · INTERNAL USE ONLY${marina.scraped_at?` · Data scraped ${esc(new Date(marina.scraped_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}))}`:""}</div>
+            ${marina.source_url?`<a href="${esc(marina.source_url)}" style="font-size:8px;color:rgba(255,255,255,.35)">Marinas.com ↗</a>`:""}
+          </div>
+
+        </div>`;
+
+      document.body.appendChild(div);
+      window.addEventListener("afterprint",()=>{const el=document.getElementById("__gp_tearsheet");if(el)el.remove();},{once:true});
+      window.print();
+    };
+
+    // Preload aerial map tile — wait for decode before printing so the image actually shows
+    if(tileUrl){
+      const img=new Image();img.crossOrigin="anonymous";
+      const canvas=document.createElement("canvas");canvas.width=720;canvas.height=160;
+      const ctx=canvas.getContext("2d");
+      const onLoad=()=>{
+        try{ctx.drawImage(img,0,0,720,160);buildAndPrint(canvas.toDataURL("image/jpeg",.9));}
+        catch(e){buildAndPrint(tileUrl);}  // CORS blocked — fall back to src URL
+      };
+      img.onload=onLoad;img.onerror=()=>buildAndPrint(tileUrl);
+      img.src=tileUrl;
+      // Safety timeout: print even if tile takes too long
+      setTimeout(()=>{if(!document.getElementById("__gp_tearsheet"))buildAndPrint(tileUrl);},4000);
+    } else {
+      buildAndPrint("");
+    }
   },[interestMap]);
 
   const handleUpload=useCallback(async(file)=>{if(!file)return;setUploading(true);setUploadMsg("Parsing...");
