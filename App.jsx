@@ -3104,10 +3104,29 @@ function scoreMarina(m){
   return Math.round(s);
 }
 
+/* ── Gradient color helper ──────────────────────────────────────────────────── */
+function heatColor(t){
+  // 0 = light ice blue, 1 = dark navy
+  const r=Math.round(191+(10-191)*t);const g=Math.round(219+(35-219)*t);const b=Math.round(254+(66-254)*t);
+  return `rgb(${r},${g},${b})`;
+}
+
 /* ── Full marina overview map (OSM tiles, all filtered locations) ───────────── */
 function TargetsMapView({marinas,interestMap,onSelect}){
   const divRef=useRef(null);const mapRef=useRef(null);const markersRef=useRef([]);
+  const [colorBy,setColorBy]=useState("stage"); // stage|adr|revpar|score
   const withCoords=useMemo(()=>marinas.filter(m=>m.lat&&m.lon),[marinas]);
+
+  // Compute min/max for gradient dimensions
+  const {minVal,maxVal}=useMemo(()=>{
+    if(colorBy==="stage")return{minVal:0,maxVal:1};
+    const vals=withCoords.map(m=>
+      colorBy==="adr"?m.hotel_market?.adr:
+      colorBy==="revpar"?m.hotel_market?.revpar:
+      colorBy==="score"?scoreMarina(m):0).filter(v=>v!=null&&v>0);
+    if(!vals.length)return{minVal:0,maxVal:1};
+    return{minVal:Math.min(...vals),maxVal:Math.max(...vals)};
+  },[colorBy,withCoords]);
 
   // Ensure Leaflet loaded then init/refresh map
   useEffect(()=>{
@@ -3130,11 +3149,19 @@ function TargetsMapView({marinas,interestMap,onSelect}){
       withCoords.forEach(m=>{
         const status=interestMap[m.id]?.status;
         const stg=STAGES.find(s=>s.key===status);
-        const color=stg?stg.color:"#94A3B8";
+        let color,fillOp,radius;
+        if(colorBy==="stage"){
+          color=stg?stg.color:"#94A3B8";fillOp=status?.92:.7;radius=status?6:4;
+        } else {
+          const rawVal=colorBy==="adr"?m.hotel_market?.adr:colorBy==="revpar"?m.hotel_market?.revpar:colorBy==="score"?scoreMarina(m):null;
+          const t=rawVal!=null&&maxVal>minVal?(rawVal-minVal)/(maxVal-minVal):0;
+          color=heatColor(t);fillOp=.88;radius=5;
+        }
+        const metricLabel=colorBy==="adr"?`ADR $${m.hotel_market?.adr||"—"}`:colorBy==="revpar"?`RevPAR $${m.hotel_market?.revpar||"—"}`:colorBy==="score"?`Score ${scoreMarina(m)}`:"";
         const cm=window.L.circleMarker([m.lat,m.lon],{
-          radius:status?6:4,fillColor:color,color:"#fff",weight:1.5,fillOpacity:status?.92:.7})
+          radius,fillColor:color,color:"#fff",weight:1.5,fillOpacity:fillOp})
           .addTo(mapRef.current)
-          .bindTooltip(`<strong>${m.name}</strong><br/>${m.city}, ${m.state}${m.slips?`<br/>${m.slips} slips`:""}${stg?`<br/><em>${stg.label}</em>`:""}`,
+          .bindTooltip(`<strong>${m.name}</strong><br/>${m.city}, ${m.state}${m.slips?`<br/>${m.slips} slips`:""}${stg&&colorBy==="stage"?`<br/><em>${stg.label}</em>`:""}${colorBy!=="stage"?`<br/>${metricLabel}`:""}`,
             {direction:"top",offset:[0,-4]});
         cm.on("click",()=>onSelect(m));
         markersRef.current.push(cm);bounds.push([m.lat,m.lon]);});
@@ -3143,28 +3170,49 @@ function TargetsMapView({marinas,interestMap,onSelect}){
     if(window.L){buildMap();}
     else{const s=document.createElement("script");s.src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
       s.onload=buildMap;document.head.appendChild(s);}
-  },[withCoords,interestMap,onSelect]);
+  },[withCoords,interestMap,onSelect,colorBy,minVal,maxVal]);
 
   // Destroy on unmount
   useEffect(()=>()=>{if(mapRef.current){mapRef.current.remove();mapRef.current=null;}},[]);
 
   return(
     <div style={{position:"relative"}}>
-      <div ref={divRef} style={{height:"calc(100vh - 280px)",minHeight:480,borderRadius:12,
+      {/* Toolbar */}
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+        <span style={{fontSize:10,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:".06em"}}>Color by</span>
+        {["stage","adr","revpar","score"].map(k=>(
+          <button key={k} onClick={()=>setColorBy(k)}
+            style={{padding:"4px 12px",borderRadius:20,fontSize:10,fontWeight:600,cursor:"pointer",
+              background:colorBy===k?C.navy:"transparent",color:colorBy===k?"#fff":C.textDim,
+              border:`1px solid ${colorBy===k?C.navy:C.border}`}}>
+            {k==="stage"?"Stage":k==="adr"?"Hotel ADR":k==="revpar"?"RevPAR":"Score"}
+          </button>))}
+      </div>
+      <div ref={divRef} style={{height:"calc(100vh - 320px)",minHeight:440,borderRadius:12,
         overflow:"hidden",border:`1px solid ${C.border}`,boxShadow:"0 2px 12px rgba(0,0,0,.06)"}}/>
       {/* Legend */}
       <div style={{position:"absolute",bottom:20,right:20,background:"rgba(255,255,255,.95)",
         backdropFilter:"blur(6px)",border:`1px solid ${C.border}`,borderRadius:10,
         padding:"10px 14px",fontSize:10,fontWeight:600,display:"flex",flexDirection:"column",gap:5,zIndex:999}}>
-        <div style={{color:C.textFaint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:2}}>Pipeline Stage</div>
-        {[...STAGES.map(s=>([s.color,s.label])),["#94A3B8","Unreviewed"]].map(([col,lbl])=>(
-          <div key={lbl} style={{display:"flex",alignItems:"center",gap:7}}>
-            <div style={{width:10,height:10,borderRadius:"50%",background:col,border:"1.5px solid #fff",
-              boxShadow:"0 1px 3px rgba(0,0,0,.25)"}}/>
-            <span style={{color:C.text}}>{lbl}</span>
-          </div>))}
+        {colorBy==="stage"?(<>
+          <div style={{color:C.textFaint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:2}}>Pipeline Stage</div>
+          {[...STAGES.map(s=>([s.color,s.label])),["#94A3B8","Unreviewed"]].map(([col,lbl])=>(
+            <div key={lbl} style={{display:"flex",alignItems:"center",gap:7}}>
+              <div style={{width:10,height:10,borderRadius:"50%",background:col,border:"1.5px solid #fff",boxShadow:"0 1px 3px rgba(0,0,0,.25)"}}/>
+              <span style={{color:C.text}}>{lbl}</span>
+            </div>))}
+        </>):(<>
+          <div style={{color:C.textFaint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:4}}>
+            {colorBy==="adr"?"ADR":colorBy==="revpar"?"RevPAR":"Score"}
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:2,alignItems:"center"}}>
+            <span style={{fontSize:9,color:C.textDim}}>{colorBy==="score"?Math.round(maxVal):`$${Math.round(maxVal)}`} (high)</span>
+            <div style={{width:14,height:80,background:`linear-gradient(to top,${heatColor(0)},${heatColor(1)})`,borderRadius:4,margin:"2px 0"}}/>
+            <span style={{fontSize:9,color:C.textDim}}>{colorBy==="score"?Math.round(minVal):`$${Math.round(minVal)}`} (low)</span>
+          </div>
+        </>)}
         <div style={{borderTop:`1px solid ${C.border}`,marginTop:3,paddingTop:5,color:C.textFaint}}>
-          {withCoords.length.toLocaleString()} locations shown
+          {withCoords.length.toLocaleString()} locations
         </div>
       </div>
     </div>);
@@ -3220,6 +3268,7 @@ function TabTargets({a,setA}){
   const [uploadMsg,setUploadMsg]=useState("");
   const [showUpload,setShowUpload]=useState(false);
   const [showAnalytics,setShowAnalytics]=useState(false);
+  const [showComps,setShowComps]=useState(false);
   const [popupTab,setPopupTab]=useState("details"); // details|outreach|activity
   const [outreachLog,setOutreachLog]=useState([]);
   const [activityLog,setActivityLog]=useState([]);
@@ -3243,7 +3292,7 @@ function TabTargets({a,setA}){
   useEffect(()=>{
     if(selected){
       setPopupNotes(interestMap[selected.id]?.notes||"");
-      setPopupTab("details");
+      setPopupTab("details");setShowComps(false);
       setOutreachLog([]);setActivityLog([]);
       setOutreachForm({contact_date:new Date().toISOString().split("T")[0],method:"call",contact_name:"",response_status:"no_response",notes:""});
       fetch(`/api/marina-outreach/${selected.id}`).then(r=>r.ok?r.json():[]).then(setOutreachLog).catch(()=>{});
@@ -3298,6 +3347,86 @@ function TabTargets({a,setA}){
     await fetch(`/api/marina-outreach/${selected.id}/${entryId}`,{method:"DELETE"});
     setOutreachLog(p=>p.filter(e=>e.id!==entryId));
   },[selected]);
+
+  const exportPDF=useCallback((marina,notes)=>{
+    const existing=document.getElementById("__gp_tearsheet");
+    if(existing)existing.remove();
+    const score=scoreMarina(marina);
+    const stage=STAGES.find(s=>s.key===interestMap[marina.id]?.status);
+    const hm=marina.hotel_market;
+    const today=new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});
+    // Build static tile URL for aerial map (ESRI World Imagery)
+    let mapHtml="";
+    if(marina.lat&&marina.lon){
+      const z=15;const n=Math.pow(2,z);
+      const tileX=Math.floor((marina.lon+180)/360*n);
+      const latRad=marina.lat*Math.PI/180;
+      const tileY=Math.floor((1-Math.log(Math.tan(latRad)+1/Math.cos(latRad))/Math.PI)/2*n);
+      const tileUrl=`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${tileY}/${tileX}`;
+      mapHtml=`<div style="margin-bottom:16px;border-radius:6px;overflow:hidden;border:1px solid #ccc;height:180px;background:#e8f4fd;display:flex;align-items:center;justify-content:center;">
+        <img src="${tileUrl}" alt="Aerial view" style="width:100%;height:100%;object-fit:cover;" onerror="this.parentNode.innerHTML='<span style=color:#999;font-size:11px>Aerial view not available</span>'"/>
+      </div>`;
+    }
+    const statRow=(label,val)=>val?`<tr><td style="padding:4px 8px 4px 0;color:#64748b;font-size:11px;white-space:nowrap">${label}</td><td style="padding:4px 0;font-size:11px;font-weight:600;color:#1a2e44">${val}</td></tr>`:"";
+    const div=document.createElement("div");div.id="__gp_tearsheet";
+    div.style.cssText="display:none;font-family:'DM Sans',sans-serif;";
+    div.innerHTML=`
+      <style id="__gp_tearsheet_style">
+        @media print{
+          body>*:not(#__gp_tearsheet){display:none!important;}
+          #__gp_tearsheet{display:block!important;padding:32px;max-width:720px;margin:0 auto;}
+        }
+      </style>
+      <div class="ts-header" style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid #0a2342">
+        <div>
+          <div style="font-size:10px;font-weight:700;letter-spacing:.1em;color:#0a2342;text-transform:uppercase;margin-bottom:2px">GP Fund I — Deal Tearsheet</div>
+          <div style="font-size:22px;font-weight:800;color:#0a2342;line-height:1.2">${marina.name}</div>
+          <div style="font-size:12px;color:#64748b;margin-top:3px">${[marina.city,marina.state,marina.region].filter(Boolean).join(" · ")}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;margin-left:16px">
+          ${stage?`<div style="background:${stage.bg};color:${stage.color};border:1px solid ${stage.color}66;padding:4px 12px;border-radius:20px;font-size:10px;font-weight:700;margin-bottom:6px">${stage.label}</div>`:""}
+          <div style="font-size:28px;font-weight:800;color:${score>=70?"#059669":score>=50?"#0891b2":"#64748b"}">${score}</div>
+          <div style="font-size:9px;font-weight:700;color:#94a3b8;text-transform:uppercase">Acquisition Score</div>
+        </div>
+      </div>
+      ${mapHtml}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <div>
+          <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:#94a3b8;margin-bottom:6px">Marina Details</div>
+          <table style="border-collapse:collapse;width:100%">
+            ${statRow("Slips",marina.slips?.toLocaleString())}
+            ${statRow("Linear Ft",marina.linear_ft)}
+            ${statRow("Max LOA",marina.max_loa?`${marina.max_loa} ft`:null)}
+            ${statRow("Fuel Dock",marina.has_fuel_dock?(marina.diesel?`Yes — Diesel $${marina.diesel.toFixed(2)}/gal`:"Yes"):null)}
+            ${statRow("Reviews",marina.reviews?.toLocaleString())}
+            ${statRow("Harbor",marina.harbor)}
+            ${statRow("Source",marina.source_url?"Marinas.com":null)}
+          </table>
+        </div>
+        ${hm?`<div>
+          <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:#94a3b8;margin-bottom:6px">Hotel Market Proxy</div>
+          <table style="border-collapse:collapse;width:100%">
+            ${statRow("Tier",hm.tier_label)}
+            ${statRow("ADR",hm.adr?`$${hm.adr}`:"—")}
+            ${statRow("RevPAR",hm.revpar?`$${hm.revpar}`:"—")}
+            ${statRow("Occupancy",hm.occupancy?`${(hm.occupancy*100).toFixed(0)}%`:"—")}
+            ${statRow("Market",hm.market_name)}
+          </table>
+        </div>`:""}
+      </div>
+      ${notes?`<div style="margin-bottom:16px">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:#94a3b8;margin-bottom:6px">GP Notes</div>
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px 12px;font-size:11px;color:#1a2e44;line-height:1.6;white-space:pre-wrap">${notes}</div>
+      </div>`:""}
+      <div style="margin-top:24px;padding-top:10px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;font-size:9px;color:#94a3b8">
+        <span>GP Fund I — Confidential, for internal use only</span>
+        <span>${today}</span>
+      </div>
+    `;
+    document.body.appendChild(div);
+    window.addEventListener("afterprint",()=>{const el=document.getElementById("__gp_tearsheet");if(el)el.remove();},{once:true});
+    window.print();
+  },[interestMap]);
 
   const handleUpload=useCallback(async(file)=>{if(!file)return;setUploading(true);setUploadMsg("Parsing...");
     try{
@@ -3805,12 +3934,56 @@ function TabTargets({a,setA}){
             </div>
           </div>
 
+          {/* Nearby Comps */}
+          {(()=>{
+            const comps=marinas.filter(m=>m.id!==selected.id&&m.region&&m.region===selected.region)
+              .map(m=>({...m,_score:scoreMarina(m)})).sort((a,b)=>b._score-a._score).slice(0,5);
+            return comps.length>0?(<div style={{marginBottom:14}}>
+              <button onClick={()=>setShowComps(v=>!v)}
+                style={{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",
+                  background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:8,
+                  padding:"8px 12px",cursor:"pointer",marginBottom:showComps?6:0}}>
+                <span style={{fontSize:11,fontWeight:700,color:C.text}}>Nearby Comps <span style={{color:C.textDim,fontWeight:500}}>— {selected.region}</span></span>
+                <span style={{fontSize:10,color:C.textDim}}>{showComps?"▲":"▼"} {comps.length} marinas</span>
+              </button>
+              {showComps&&(<div style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden",marginBottom:6}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:10}}>
+                  <thead>
+                    <tr style={{background:C.surfaceAlt}}>
+                      {["Marina","Slips","ADR","Score","Stage"].map(h=>(
+                        <th key={h} style={{padding:"5px 8px",textAlign:"left",fontWeight:700,color:C.textDim,fontSize:9,textTransform:"uppercase",letterSpacing:".04em",whiteSpace:"nowrap"}}>{h}</th>))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {comps.map((c,i)=>{const cs=STAGES.find(s=>s.key===interestMap[c.id]?.status);return(
+                      <tr key={c.id} onClick={()=>setSelected(c)} style={{cursor:"pointer",background:i%2===0?C.surface:C.surfaceAlt,borderTop:`1px solid ${C.border}`}}>
+                        <td style={{padding:"6px 8px",fontWeight:600,color:C.text,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</td>
+                        <td style={{padding:"6px 8px",color:C.textDim}}>{c.slips?.toLocaleString()||"—"}</td>
+                        <td style={{padding:"6px 8px",color:C.textDim}}>{c.hotel_market?.adr?`$${c.hotel_market.adr}`:"—"}</td>
+                        <td style={{padding:"6px 8px"}}>
+                          <span style={{fontWeight:700,color:c._score>=70?C.green:c._score>=50?C.accent:C.textDim}}>{c._score}</span>
+                        </td>
+                        <td style={{padding:"6px 8px"}}>
+                          {cs?<span style={{background:cs.bg,color:cs.color,padding:"1px 6px",borderRadius:8,fontWeight:700,fontSize:8}}>{cs.short}</span>:
+                            <span style={{color:C.textFaint,fontSize:9}}>—</span>}
+                        </td>
+                      </tr>);})}
+                  </tbody>
+                </table>
+              </div>)}
+            </div>):null;
+          })()}
+
           {/* Footer actions */}
           <div style={{display:"flex",gap:8,paddingTop:12,borderTop:`1px solid ${C.border}`}}>
             {isInDeals(selected)?
               <div style={{flex:1,padding:"10px",background:C.greenL,color:C.green,borderRadius:8,textAlign:"center",fontSize:12,fontWeight:700}}>Already in Deals</div>:
               <button onClick={()=>addToDeal(selected)} style={{flex:1,padding:"10px",background:C.accent,color:"#fff",
                 border:"none",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer"}}>Add to Deals</button>}
+            <button onClick={()=>exportPDF(selected,popupNotes)}
+              style={{padding:"10px 14px",background:C.navy,color:"#fff",border:"none",borderRadius:8,fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+              Export PDF
+            </button>
             {selected.source_url&&<a href={selected.source_url} target="_blank" rel="noopener"
               style={{padding:"10px 16px",background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:8,
                 fontSize:10,fontWeight:600,color:C.textDim,textDecoration:"none",whiteSpace:"nowrap"}}>Marinas.com ↗</a>}
