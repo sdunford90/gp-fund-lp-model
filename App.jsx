@@ -565,8 +565,13 @@ const CT=({c})=>(
   <div style={{fontSize:10,color:C.textDim,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:12,fontWeight:700}}>{c}</div>
 );
 
-const TT=({active,payload,label})=>{
+const TT=({active,payload,label,formatters})=>{
   if(!active||!payload?.length)return null;
+  const fmtVal=(p)=>{
+    const custom=formatters?.[p.name]??formatters?.["*"];
+    if(custom)return custom(p.value);
+    return typeof p.value==="number"?f.$(p.value):p.value;
+  };
   return(
     <div style={{background:"#FFFFFF",border:`1px solid ${C.border}`,
       borderRadius:8,padding:"10px 14px",fontSize:11,fontFamily:"'Inter',sans-serif",
@@ -574,7 +579,7 @@ const TT=({active,payload,label})=>{
       {label&&<div style={{color:C.text,marginBottom:4,fontWeight:700}}>{label}</div>}
       {payload.map((p,i)=>(
         <div key={i} style={{color:p.color||C.text}}>
-          {p.name}: {typeof p.value==="number"?f.$(p.value):p.value}
+          {p.name}: {fmtVal(p)}
         </div>
       ))}
     </div>
@@ -970,7 +975,7 @@ function TabOverview({m,a}){
             <BarChart data={m.assetR.map(r=>({name:r.name,irr:r.irr}))}>
               <XAxis dataKey="name" tick={{fill:C.whDim,fontSize:8}} axisLine={false} tickLine={false}/>
               <YAxis tickFormatter={v=>`${(v*100).toFixed(0)}%`} tick={{fill:C.whDim,fontSize:9}} axisLine={false} tickLine={false} width={30}/>
-              <Tooltip content={<TT/>} formatter={v=>`${(v*100).toFixed(1)}%`}/>
+              <Tooltip content={<TT formatters={{IRR:v=>`${(v*100).toFixed(1)}%`}}/>}/>
               <ReferenceLine y={a.prefReturn} stroke={C.gold} strokeDasharray="4 4"/>
               <Bar dataKey="irr" name="IRR" radius={[2,2,0,0]}>
                 {m.assetR.map((e,i)=><Cell key={i} fill={e.irr>=a.prefReturn?C.green:C.red}/>)}
@@ -1897,7 +1902,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
               tick={{fill:C.textFaint,fontSize:9}} axisLine={false} tickLine={false}/>
             <YAxis type="category" dataKey="name" width={70}
               tick={{fill:C.textDim,fontSize:9}} axisLine={false} tickLine={false}/>
-            <Tooltip content={<TT/>} formatter={v=>`${(v*100).toFixed(1)}%`}/>
+            <Tooltip content={<TT formatters={{IRR:v=>`${(v*100).toFixed(1)}%`}}/>}/>
             <ReferenceLine x={a.prefReturn} stroke={C.gold} strokeDasharray="4 4"
               label={{value:`${(a.prefReturn*100)}% Pref`,fill:C.gold,fontSize:9,position:"top"}}/>
             <Bar dataKey="irr" name="IRR" radius={[0,4,4,0]}>
@@ -3042,7 +3047,7 @@ function TabSensitivity({m,a}){
                   <YAxis tickFormatter={v=>`${(v*100).toFixed(0)}%`} tick={{fill:C.whDim,fontSize:9}}
                     axisLine={false} tickLine={false} width={36}
                     domain={[minIRR-pad, maxIRR+pad]}/>
-                  <Tooltip content={<TT/>} formatter={v=>[`${(v*100).toFixed(1)}%`,"LP IRR"]}/>
+                  <Tooltip content={<TT formatters={{"LP IRR":v=>`${(v*100).toFixed(1)}%`}}/>}/>
                   <ReferenceLine y={a.prefReturn} stroke="rgba(255,255,255,.2)" strokeDasharray="3 3"
                     label={{value:`${(a.prefReturn*100).toFixed(0)}% pref`,fill:C.whDim,fontSize:8,position:"insideTopRight"}}/>
                   <ReferenceLine x={`${(a.interestRate*100).toFixed(1)}%`} stroke={C.gold} strokeDasharray="4 4"
