@@ -3075,6 +3075,71 @@ function parseMarinasJSON(raw){
     .map(parseMarinaRecord).filter(r=>{if(!r.id||seen.has(r.id))return false;seen.add(r.id);return true;});
 }
 
+/* ── Full marina overview map (OSM tiles, all filtered locations) ───────────── */
+function TargetsMapView({marinas,interestMap,onSelect}){
+  const divRef=useRef(null);const mapRef=useRef(null);const markersRef=useRef([]);
+  const withCoords=useMemo(()=>marinas.filter(m=>m.lat&&m.lon),[marinas]);
+
+  // Ensure Leaflet loaded then init/refresh map
+  useEffect(()=>{
+    if(!divRef.current)return;
+    const buildMap=()=>{
+      // First call or re-init
+      if(!mapRef.current){
+        if(!document.getElementById("leaflet-css")){
+          const lnk=document.createElement("link");lnk.id="leaflet-css";lnk.rel="stylesheet";
+          lnk.href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";document.head.appendChild(lnk);}
+        mapRef.current=window.L.map(divRef.current,{zoomControl:true,attributionControl:true})
+          .setView([38,-76],6);
+        window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+          {maxZoom:19,attribution:"© OpenStreetMap"}).addTo(mapRef.current);
+      }
+      // Clear old markers
+      markersRef.current.forEach(m=>m.remove());markersRef.current=[];
+      // Add new circle markers
+      const bounds=[];
+      withCoords.forEach(m=>{
+        const status=interestMap[m.id]?.status;
+        const color=status==="interested"?"#16a34a":status==="not_interested"?"#dc2626":C.navy;
+        const cm=window.L.circleMarker([m.lat,m.lon],{
+          radius:5,fillColor:color,color:"#fff",weight:1.5,fillOpacity:.85})
+          .addTo(mapRef.current)
+          .bindTooltip(`<strong>${m.name}</strong><br/>${m.city}, ${m.state}${m.slips?`<br/>${m.slips} slips`:""}`,
+            {direction:"top",offset:[0,-4]});
+        cm.on("click",()=>onSelect(m));
+        markersRef.current.push(cm);bounds.push([m.lat,m.lon]);});
+      if(bounds.length)mapRef.current.fitBounds(bounds,{padding:[24,24],maxZoom:10});
+    };
+    if(window.L){buildMap();}
+    else{const s=document.createElement("script");s.src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+      s.onload=buildMap;document.head.appendChild(s);}
+  },[withCoords,interestMap,onSelect]);
+
+  // Destroy on unmount
+  useEffect(()=>()=>{if(mapRef.current){mapRef.current.remove();mapRef.current=null;}},[]);
+
+  return(
+    <div style={{position:"relative"}}>
+      <div ref={divRef} style={{height:"calc(100vh - 280px)",minHeight:480,borderRadius:12,
+        overflow:"hidden",border:`1px solid ${C.border}`,boxShadow:"0 2px 12px rgba(0,0,0,.06)"}}/>
+      {/* Legend */}
+      <div style={{position:"absolute",bottom:20,right:20,background:"rgba(255,255,255,.95)",
+        backdropFilter:"blur(6px)",border:`1px solid ${C.border}`,borderRadius:10,
+        padding:"10px 14px",fontSize:10,fontWeight:600,display:"flex",flexDirection:"column",gap:5,zIndex:999}}>
+        <div style={{color:C.textFaint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:2}}>Legend</div>
+        {[["#16a34a","Interested"],["#dc2626","Passed"],[C.navy,"Unreviewed"]].map(([col,lbl])=>(
+          <div key={lbl} style={{display:"flex",alignItems:"center",gap:7}}>
+            <div style={{width:10,height:10,borderRadius:"50%",background:col,border:"1.5px solid #fff",
+              boxShadow:"0 1px 3px rgba(0,0,0,.25)"}}/>
+            <span style={{color:C.text}}>{lbl}</span>
+          </div>))}
+        <div style={{borderTop:`1px solid ${C.border}`,marginTop:3,paddingTop:5,color:C.textFaint}}>
+          {withCoords.length.toLocaleString()} locations shown
+        </div>
+      </div>
+    </div>);
+}
+
 /* ── Leaflet aerial satellite map (ESRI tiles, no API key) ─────────────────── */
 function AerialMap({lat,lon,name}){
   const divRef=useRef(null);const mapRef=useRef(null);
@@ -3120,6 +3185,7 @@ function TabTargets({a,setA}){
   const [popupNotes,setPopupNotes]=useState("");
   const [savingNote,setSavingNote]=useState(false);
   const [interestMap,setInterestMap]=useState({}); // {marina_id: {status, notes}}
+  const [showMap,setShowMap]=useState(false);
   const [uploading,setUploading]=useState(false);
   const [uploadMsg,setUploadMsg]=useState("");
   const [showUpload,setShowUpload]=useState(false);
@@ -3250,12 +3316,22 @@ function TabTargets({a,setA}){
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,gap:12}}>
       <PHdr title="Acquisition Targets"
         sub={`${marinas.length.toLocaleString()} marinas · ${stateCounts.length} states · ${interestedCount} interested · ${notIntCount} passed`}/>
-      <button onClick={()=>{setShowUpload(v=>!v);setUploadMsg("");}}
-        style={{padding:"7px 16px",background:showUpload?C.navy:"transparent",color:showUpload?"#fff":C.textDim,
-          border:`1px solid ${showUpload?C.navy:C.border}`,borderRadius:7,fontSize:10,fontWeight:700,
-          cursor:"pointer",flexShrink:0,letterSpacing:".04em",textTransform:"uppercase"}}>
-        {showUpload?"✕ Cancel":"↑ Upload Database"}
-      </button>
+      <div style={{display:"flex",gap:6,flexShrink:0}}>
+        <button onClick={()=>setShowMap(false)}
+          style={{padding:"7px 14px",borderRadius:"7px 0 0 7px",fontSize:10,fontWeight:700,cursor:"pointer",
+            background:!showMap?C.navy:"transparent",color:!showMap?"#fff":C.textDim,
+            border:`1px solid ${!showMap?C.navy:C.border}`,letterSpacing:".04em"}}>☰ LIST</button>
+        <button onClick={()=>setShowMap(true)}
+          style={{padding:"7px 14px",borderRadius:"0 7px 7px 0",fontSize:10,fontWeight:700,cursor:"pointer",
+            background:showMap?C.navy:"transparent",color:showMap?"#fff":C.textDim,
+            border:`1px solid ${showMap?C.navy:C.border}`,marginLeft:-1,letterSpacing:".04em"}}>🗺 MAP</button>
+        <button onClick={()=>{setShowUpload(v=>!v);setUploadMsg("");}}
+          style={{padding:"7px 14px",background:"transparent",color:C.textDim,
+            border:`1px solid ${C.border}`,borderRadius:7,fontSize:10,fontWeight:700,
+            cursor:"pointer",letterSpacing:".04em",textTransform:"uppercase"}}>
+          ↑ DB
+        </button>
+      </div>
     </div>
 
     {/* UPLOAD PANEL */}
@@ -3381,8 +3457,11 @@ function TabTargets({a,setA}){
           border:`1px solid ${regionFilter===r?C.navy:C.border}`}}>{r} <span style={{opacity:.65}}>({c})</span></button>))}
     </div>)}
 
+    {/* MAP VIEW */}
+    {showMap&&(<TargetsMapView marinas={filtered} interestMap={interestMap} onSelect={setSelected}/>)}
+
     {/* MARINA GRID */}
-    {filtered.length===0?(<Card style={{padding:"40px",textAlign:"center"}}>
+    {!showMap&&(filtered.length===0?(<Card style={{padding:"40px",textAlign:"center"}}>
       <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:6}}>No marinas match</div>
       <div style={{fontSize:12,color:C.textDim}}>Try adjusting your filters or search.</div>
     </Card>):(
@@ -3418,10 +3497,10 @@ function TabTargets({a,setA}){
             {hm.occupancy&&<span> · Occ {(hm.occupancy*100).toFixed(0)}%</span>}
           </div>}
         </div>);})}
-    </div>)}
+    </div>))}
 
     {/* PAGINATION */}
-    {totalPages>1&&(<div style={{display:"flex",justifyContent:"center",gap:6,marginBottom:16,alignItems:"center"}}>
+    {!showMap&&totalPages>1&&(<div style={{display:"flex",justifyContent:"center",gap:6,marginBottom:16,alignItems:"center"}}>
       <button disabled={page===0} onClick={()=>setPage(p=>p-1)} style={{padding:"6px 14px",borderRadius:6,fontSize:11,fontWeight:600,
         border:`1px solid ${C.border}`,background:C.surface,color:C.textDim,cursor:page===0?"default":"pointer",opacity:page===0?.4:1}}>← Prev</button>
       <span style={{fontSize:11,color:C.textDim,minWidth:120,textAlign:"center"}}>Page {page+1} of {totalPages} · {filtered.length.toLocaleString()} results</span>
