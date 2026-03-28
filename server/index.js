@@ -54,6 +54,14 @@ async function initDb() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS marina_interest (
+      marina_id  TEXT PRIMARY KEY,
+      status     TEXT NOT NULL,
+      notes      TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
   console.log("DB ready");
 }
 
@@ -153,6 +161,44 @@ app.post("/api/marinas", async (req, res) => {
     res.json({ ok: true, total });
   } catch (e) {
     console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Marina interest tracking ──────────────────────────────────────────────────
+
+app.get("/api/marina-interest", async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      "SELECT marina_id, status, notes, updated_at FROM marina_interest ORDER BY updated_at DESC"
+    );
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/marina-interest/:id", async (req, res) => {
+  try {
+    const { status, notes = "" } = req.body;
+    await pool.query(
+      `INSERT INTO marina_interest (marina_id, status, notes, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (marina_id) DO UPDATE
+         SET status = EXCLUDED.status, notes = EXCLUDED.notes, updated_at = NOW()`,
+      [req.params.id, status, notes]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete("/api/marina-interest/:id", async (req, res) => {
+  try {
+    await pool.query("DELETE FROM marina_interest WHERE marina_id = $1", [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });

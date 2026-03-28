@@ -3075,33 +3075,99 @@ function parseMarinasJSON(raw){
     .map(parseMarinaRecord).filter(r=>{if(!r.id||seen.has(r.id))return false;seen.add(r.id);return true;});
 }
 
+/* ── Leaflet aerial satellite map (ESRI tiles, no API key) ─────────────────── */
+function AerialMap({lat,lon,name}){
+  const divRef=useRef(null);const mapRef=useRef(null);
+  useEffect(()=>{
+    if(!lat||!lon)return;
+    if(!document.getElementById("leaflet-css")){
+      const l=document.createElement("link");l.id="leaflet-css";l.rel="stylesheet";
+      l.href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";document.head.appendChild(l);}
+    const init=()=>{
+      if(!divRef.current)return;
+      if(mapRef.current){mapRef.current.remove();mapRef.current=null;}
+      const map=window.L.map(divRef.current,{zoomControl:true,attributionControl:false}).setView([lat,lon],16);
+      window.L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        {maxZoom:19}).addTo(map);
+      const icon=window.L.divIcon({html:`<div style="width:14px;height:14px;background:${C.accent};border:3px solid #fff;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.4)"></div>`,
+        iconSize:[14,14],iconAnchor:[7,7],className:""});
+      window.L.marker([lat,lon],{icon}).addTo(map).bindPopup(name,{closeButton:false,offset:[0,-4]});
+      mapRef.current=map;};
+    if(window.L){init();}
+    else{const s=document.createElement("script");s.src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+      s.onload=init;document.head.appendChild(s);}
+    return()=>{if(mapRef.current){mapRef.current.remove();mapRef.current=null;}};
+  },[lat,lon,name]);
+  return <div ref={divRef} style={{height:220,borderRadius:"12px 12px 0 0",overflow:"hidden",background:C.surfaceAlt}}/>;
+}
+
 function TabTargets({a,setA}){
   const [marinas,setMarinas]=useState([]);
   const [loading,setLoading]=useState(true);
-  const [search,setSearch]=useState("");const [stateFilter,setStateFilter]=useState("");
+  const [search,setSearch]=useState("");
+  const [stateFilter,setStateFilter]=useState("");
   const [regionFilter,setRegionFilter]=useState("");
-  const [fuelOnly,setFuelOnly]=useState(false);const [slipsOnly,setSlipsOnly]=useState(false);
-  const [sortBy,setSortBy]=useState("name");const [page,setPage]=useState(0);
-  const [selected,setSelected]=useState(null);const [uploading,setUploading]=useState(false);
-  const [uploadMsg,setUploadMsg]=useState("");const [showUpload,setShowUpload]=useState(false);
-  const PG=50;
+  const [viewMode,setViewMode]=useState("all"); // all|interested|not_interested|unreviewed
+  const [fuelOnly,setFuelOnly]=useState(false);
+  const [slipsMin,setSlipsMin]=useState(0);
+  const [reviewsMin,setReviewsMin]=useState(0);
+  const [hotelTier,setHotelTier]=useState("");
+  const [hasRates,setHasRates]=useState(false);
+  const [showFilters,setShowFilters]=useState(false);
+  const [sortBy,setSortBy]=useState("name");
+  const [page,setPage]=useState(0);
+  const [selected,setSelected]=useState(null);
+  const [popupNotes,setPopupNotes]=useState("");
+  const [savingNote,setSavingNote]=useState(false);
+  const [interestMap,setInterestMap]=useState({}); // {marina_id: {status, notes}}
+  const [uploading,setUploading]=useState(false);
+  const [uploadMsg,setUploadMsg]=useState("");
+  const [showUpload,setShowUpload]=useState(false);
+  const PG=60;
 
+  // Load marinas + interest tracking on mount
   useEffect(()=>{
-    setLoading(true);
-    fetch("/api/marinas")
-      .then(r=>r.ok?r.json():null)
-      .then(raw=>{
-        if(raw){const p=parseMarinasJSON(raw);setMarinas(p);}
-        setLoading(false);
-      })
-      .catch(()=>setLoading(false));
+    Promise.all([
+      fetch("/api/marinas").then(r=>r.ok?r.json():null).catch(()=>null),
+      fetch("/api/marina-interest").then(r=>r.ok?r.json():[]).catch(()=>[]),
+    ]).then(([raw,interest])=>{
+      if(raw){const p=parseMarinasJSON(raw);setMarinas(p);}
+      const map={};(interest||[]).forEach(r=>{map[r.marina_id]={status:r.status,notes:r.notes||""};});
+      setInterestMap(map);setLoading(false);
+    });
   },[]);
+
+  // When popup opens, pre-fill notes
+  useEffect(()=>{
+    if(selected)setPopupNotes(interestMap[selected.id]?.notes||"");
+  },[selected]);
+
+  const setInterest=useCallback(async(marina,status)=>{
+    const cur=interestMap[marina.id];
+    if(cur?.status===status){
+      // toggle off
+      setInterestMap(p=>{const n={...p};delete n[marina.id];return n;});
+      await fetch(`/api/marina-interest/${marina.id}`,{method:"DELETE"});
+    } else {
+      const notes=interestMap[marina.id]?.notes||"";
+      setInterestMap(p=>({...p,[marina.id]:{status,notes}}));
+      await fetch(`/api/marina-interest/${marina.id}`,{method:"POST",
+        headers:{"Content-Type":"application/json"},body:JSON.stringify({status,notes})});
+    }
+  },[interestMap]);
+
+  const saveNote=useCallback(async(marina,notes)=>{
+    setSavingNote(true);
+    const status=interestMap[marina.id]?.status||"interested";
+    setInterestMap(p=>({...p,[marina.id]:{status,notes}}));
+    await fetch(`/api/marina-interest/${marina.id}`,{method:"POST",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify({status,notes})});
+    setSavingNote(false);
+  },[interestMap]);
 
   const handleUpload=useCallback(async(file)=>{if(!file)return;setUploading(true);setUploadMsg("Parsing...");
     try{
-      const text=await file.text();
-      const raw=JSON.parse(text);
-      const p=parseMarinasJSON(raw);
+      const text=await file.text();const raw=JSON.parse(text);const p=parseMarinasJSON(raw);
       if(p.length===0)throw new Error("No valid marina records found in file");
       setUploadMsg(`Saving ${p.length.toLocaleString()} marinas to server...`);
       const res=await fetch("/api/marinas",{method:"POST",headers:{"Content-Type":"application/json"},body:text});
@@ -3112,48 +3178,78 @@ function TabTargets({a,setA}){
     setUploading(false);
   },[]);
 
-  const filtered=useMemo(()=>{let list=marinas;
-    if(search){const s=search.toLowerCase();list=list.filter(m=>(m.name+m.city+m.state+m.address+m.harbor).toLowerCase().includes(s));}
-    if(stateFilter)list=list.filter(m=>m.state===stateFilter);
-    if(fuelOnly)list=list.filter(m=>m.has_fuel_dock);
-    if(slipsOnly)list=list.filter(m=>m.slips!=null&&m.slips>0);
-    if(sortBy==="name")list=[...list].sort((a,b)=>a.name.localeCompare(b.name));
-    else if(sortBy==="slips")list=[...list].sort((a,b)=>(b.slips||0)-(a.slips||0));
-    else if(sortBy==="reviews")list=[...list].sort((a,b)=>b.reviews-a.reviews);
-    else if(sortBy==="state")list=[...list].sort((a,b)=>a.state.localeCompare(b.state)||a.name.localeCompare(b.name));
-    return list;},[marinas,search,stateFilter,fuelOnly,slipsOnly,sortBy]);
-
-  const paged=filtered.slice(page*PG,(page+1)*PG);const totalPages=Math.ceil(filtered.length/PG);
+  // Derived filter options
   const stateCounts=useMemo(()=>{const c={};marinas.forEach(m=>{c[m.state]=(c[m.state]||0)+1;});
     return Object.entries(c).sort((a,b)=>b[1]-a[1]);},[marinas]);
+  const regionsByState=useMemo(()=>{const c={};marinas.forEach(m=>{
+    if(stateFilter&&m.state!==stateFilter)return;
+    if(m.region)c[m.region]=(c[m.region]||0)+1;});
+    return Object.entries(c).sort((a,b)=>b[1]-a[1]);},[marinas,stateFilter]);
+  const hotelTiers=useMemo(()=>{const s=new Set();marinas.forEach(m=>{
+    if(m.hotel_market?.tier_label)s.add(m.hotel_market.tier_label);});return [...s].sort();},[marinas]);
 
+  const interestedCount=useMemo(()=>Object.values(interestMap).filter(v=>v.status==="interested").length,[interestMap]);
+  const notIntCount=useMemo(()=>Object.values(interestMap).filter(v=>v.status==="not_interested").length,[interestMap]);
+
+  const filtered=useMemo(()=>{
+    let list=marinas;
+    if(viewMode==="interested")list=list.filter(m=>interestMap[m.id]?.status==="interested");
+    else if(viewMode==="not_interested")list=list.filter(m=>interestMap[m.id]?.status==="not_interested");
+    else if(viewMode==="unreviewed")list=list.filter(m=>!interestMap[m.id]);
+    if(search){const s=search.toLowerCase();
+      list=list.filter(m=>(m.name+m.city+m.state+(m.address||"")+(m.harbor||"")+(m.region||"")).toLowerCase().includes(s));}
+    if(stateFilter)list=list.filter(m=>m.state===stateFilter);
+    if(regionFilter)list=list.filter(m=>m.region===regionFilter);
+    if(fuelOnly)list=list.filter(m=>m.has_fuel_dock);
+    if(slipsMin>0)list=list.filter(m=>m.slips!=null&&m.slips>=slipsMin);
+    if(reviewsMin>0)list=list.filter(m=>m.reviews>=reviewsMin);
+    if(hotelTier)list=list.filter(m=>m.hotel_market?.tier_label===hotelTier);
+    if(hasRates)list=list.filter(m=>m.dockage_rates);
+    const sorted=[...list];
+    if(sortBy==="name")sorted.sort((a,b)=>a.name.localeCompare(b.name));
+    else if(sortBy==="slips")sorted.sort((a,b)=>(b.slips||0)-(a.slips||0));
+    else if(sortBy==="reviews")sorted.sort((a,b)=>(b.reviews||0)-(a.reviews||0));
+    else if(sortBy==="region")sorted.sort((a,b)=>(a.region||"").localeCompare(b.region||"")||a.name.localeCompare(b.name));
+    else if(sortBy==="adr")sorted.sort((a,b)=>(b.hotel_market?.adr||0)-(a.hotel_market?.adr||0));
+    return sorted;
+  },[marinas,search,stateFilter,regionFilter,viewMode,fuelOnly,slipsMin,reviewsMin,hotelTier,hasRates,sortBy,interestMap]);
+
+  const paged=filtered.slice(page*PG,(page+1)*PG);
+  const totalPages=Math.ceil(filtered.length/PG);
   const addToDeal=useCallback((marina)=>{
     const deal={...DEF_ASSET_BASE,name:marina.name,price:4500000,cap:.075,
       startMonth:Math.min(72,Math.max(1,(a.assets||[]).length*2+1)),
       slips:marina.slips?[{type:"Marina Slips",count:marina.slips,rate:417,occ:.85,period:"y2"}]:[],
-      lodging:[{type:"Hotel Units",units:15,adr:325,occ:.247,period:"y1"},{type:"Hotel Units",units:30,adr:325,occ:.411,period:"y2"}],
+      lodging:[{type:"Hotel Units",units:15,adr:marina.hotel_market?.adr||325,occ:.247,period:"y1"},
+        {type:"Hotel Units",units:30,adr:marina.hotel_market?.adr||325,occ:.411,period:"y2"}],
       upland:[],opex:[{label:"Hotel Operating Costs",amount:219375,growth:.03},{label:"Marina Operating Costs",amount:81250,growth:.05}],
       capexItems:[{label:"Hotel Conversion Ph1",amount:2600000,year:0},{label:"Hotel Conversion Ph2",amount:2600000,year:1}],
       targetSource:{id:marina.id,name:marina.name,city:marina.city,state:marina.state,slips:marina.slips,url:marina.source_url}};
     setA(p=>({...p,assets:[...p.assets,deal]}));setSelected(null);},[a,setA]);
   const isInDeals=useCallback((m)=>(a.assets||[]).some(d=>d.targetSource?.id===m.id),[a]);
 
+  const activeFilters=[stateFilter&&`State: ${stateFilter}`,regionFilter&&`Region: ${regionFilter}`,
+    fuelOnly&&"Fuel Dock",slipsMin>0&&`≥${slipsMin} slips`,reviewsMin>0&&`≥${reviewsMin} reviews`,
+    hotelTier&&`Hotel: ${hotelTier}`,hasRates&&"Has Rates"].filter(Boolean);
+
   if(loading)return(
     <div><PHdr title="Acquisition Targets" sub="Loading marina database..."/>
       <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:300,gap:12,color:C.textDim,fontSize:13}}>
-        <div style={{width:20,height:20,border:`2px solid ${C.border}`,borderTopColor:C.accent,borderRadius:"50%",
-          animation:"spin 0.8s linear infinite"}}/>
+        <div style={{width:20,height:20,border:`2px solid ${C.border}`,borderTopColor:C.accent,borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
         Loading 5,500+ marinas…
       </div>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>);
 
+  const interestStatus=selected?interestMap[selected.id]?.status:null;
+
   return(<div>
+    <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes fadeIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}`}</style>
+
     {/* HEADER */}
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,gap:12}}>
       <PHdr title="Acquisition Targets"
-        sub={marinas.length===0?"No data loaded — upload a marina database below"
-          :`${marinas.length.toLocaleString()} marinas · ${stateCounts.length} states · ${marinas.filter(m=>m.has_fuel_dock).length.toLocaleString()} fuel docks · ${marinas.filter(m=>m.slips).length.toLocaleString()} with slip data`}/>
+        sub={`${marinas.length.toLocaleString()} marinas · ${stateCounts.length} states · ${interestedCount} interested · ${notIntCount} passed`}/>
       <button onClick={()=>{setShowUpload(v=>!v);setUploadMsg("");}}
         style={{padding:"7px 16px",background:showUpload?C.navy:"transparent",color:showUpload?"#fff":C.textDim,
           border:`1px solid ${showUpload?C.navy:C.border}`,borderRadius:7,fontSize:10,fontWeight:700,
@@ -3163,142 +3259,338 @@ function TabTargets({a,setA}){
     </div>
 
     {/* UPLOAD PANEL */}
-    {showUpload&&(
-      <Card style={{padding:"24px 28px",marginBottom:20,border:`1px solid ${C.border}`}}>
-        <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:4}}>Upload New Marina Database</div>
-        <div style={{fontSize:11,color:C.textDim,marginBottom:16,lineHeight:1.6}}>
-          Upload a JSON file exported from marinas.com (Browse.ai v2 format). This will replace the current database on the server — all users will see the new data immediately.</div>
-        <label style={{display:"inline-flex",alignItems:"center",gap:8,padding:"10px 24px",
-          background:C.navy,color:"#fff",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer"}}>
-          {uploading?"Uploading…":"Choose File (.json)"}
-          <input type="file" accept=".json" disabled={uploading} style={{display:"none"}}
-            onChange={e=>{if(e.target.files[0])handleUpload(e.target.files[0]);}}/>
-        </label>
-        {uploadMsg&&<div style={{marginTop:12,fontSize:12,fontWeight:600,
-          color:uploading?C.accent:uploadMsg.startsWith("Error")?C.red:C.green}}>{uploadMsg}</div>}
-      </Card>
-    )}
+    {showUpload&&(<Card style={{padding:"20px 24px",marginBottom:16,border:`1px solid ${C.border}`}}>
+      <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:8}}>Upload New Marina Database (v3 JSON)</div>
+      <label style={{display:"inline-flex",alignItems:"center",gap:8,padding:"8px 20px",
+        background:C.navy,color:"#fff",borderRadius:7,fontSize:11,fontWeight:700,cursor:"pointer"}}>
+        {uploading?"Uploading…":"Choose File (.json)"}
+        <input type="file" accept=".json" disabled={uploading} style={{display:"none"}}
+          onChange={e=>{if(e.target.files[0])handleUpload(e.target.files[0]);}}/>
+      </label>
+      {uploadMsg&&<div style={{marginTop:10,fontSize:11,fontWeight:600,
+        color:uploading?C.accent:uploadMsg.startsWith("Error")?"#dc2626":C.green}}>{uploadMsg}</div>}
+    </Card>)}
 
-    {/* NO DATA STATE */}
-    {marinas.length===0&&!showUpload&&(
-      <Card style={{padding:"48px 32px",textAlign:"center",maxWidth:560,margin:"0 auto 24px"}}>
-        <div style={{fontSize:36,marginBottom:12}}>🎯</div>
-        <div style={{fontSize:16,fontWeight:700,color:C.text,marginBottom:8}}>No Marina Data Loaded</div>
-        <div style={{fontSize:12,color:C.textDim,marginBottom:20,lineHeight:1.6}}>
-          Click <strong>↑ Upload Database</strong> above to load your marina JSON file.</div>
-      </Card>
-    )}
-    <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center",flexWrap:"wrap"}}>
-      <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="Search name, city, address..."
+    {/* VIEW MODE TABS */}
+    <div style={{display:"flex",gap:6,marginBottom:14,borderBottom:`1px solid ${C.border}`,paddingBottom:10}}>
+      {[{k:"all",label:`All (${marinas.length.toLocaleString()})`},
+        {k:"interested",label:`Interested (${interestedCount})`},
+        {k:"not_interested",label:`Passed (${notIntCount})`},
+        {k:"unreviewed",label:`Unreviewed (${(marinas.length-interestedCount-notIntCount).toLocaleString()})`}
+      ].map(({k,label})=>(
+        <button key={k} onClick={()=>{setViewMode(k);setPage(0);}}
+          style={{padding:"6px 14px",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",
+            background:viewMode===k?C.navy:"transparent",color:viewMode===k?"#fff":C.textDim,
+            border:`1px solid ${viewMode===k?C.navy:C.border}`}}>{label}</button>))}
+    </div>
+
+    {/* SEARCH + SORT BAR */}
+    <div style={{display:"flex",gap:8,marginBottom:10,alignItems:"center",flexWrap:"wrap"}}>
+      <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="Search name, city, region, address…"
         style={{flex:1,minWidth:200,padding:"8px 14px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,fontSize:12,color:C.text,outline:"none"}}/>
       <select value={sortBy} onChange={e=>setSortBy(e.target.value)}
         style={{padding:"8px 12px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,fontSize:11,color:C.text,cursor:"pointer",outline:"none"}}>
         <option value="name">Sort: Name</option><option value="slips">Sort: Most Slips</option>
-        <option value="reviews">Sort: Reviews</option><option value="state">Sort: State</option></select>
-      <button onClick={()=>{setFuelOnly(!fuelOnly);setPage(0);}} style={{padding:"6px 12px",borderRadius:6,fontSize:10,fontWeight:600,
-        cursor:"pointer",background:fuelOnly?C.accentDim:C.surfaceAlt,color:fuelOnly?C.accent:C.textDim,
-        border:`1px solid ${fuelOnly?C.accent:C.border}`}}>⛽ Fuel Dock</button>
-      <button onClick={()=>{setSlipsOnly(!slipsOnly);setPage(0);}} style={{padding:"6px 12px",borderRadius:6,fontSize:10,fontWeight:600,
-        cursor:"pointer",background:slipsOnly?C.accentDim:C.surfaceAlt,color:slipsOnly?C.accent:C.textDim,
-        border:`1px solid ${slipsOnly?C.accent:C.border}`}}>⚓ Has Slips</button>
-      <span style={{fontSize:11,color:C.textFaint,fontWeight:600}}>{filtered.length.toLocaleString()} results</span>
+        <option value="reviews">Sort: Reviews</option><option value="region">Sort: Sub-Market</option>
+        <option value="adr">Sort: Hotel ADR</option></select>
+      <button onClick={()=>setShowFilters(v=>!v)}
+        style={{padding:"8px 14px",borderRadius:8,fontSize:11,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:5,
+          background:showFilters||activeFilters.length?C.accentDim:C.surfaceAlt,
+          color:showFilters||activeFilters.length?C.accent:C.textDim,
+          border:`1px solid ${showFilters||activeFilters.length?C.accent:C.border}`}}>
+        ⚙ Filters {activeFilters.length>0&&<span style={{background:C.accent,color:"#fff",borderRadius:10,padding:"1px 6px",fontSize:9,fontWeight:700}}>{activeFilters.length}</span>}
+      </button>
+      <span style={{fontSize:11,color:C.textFaint,fontWeight:600,whiteSpace:"nowrap"}}>{filtered.length.toLocaleString()} results</span>
     </div>
-    <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:16}}>
-      <button onClick={()=>{setStateFilter("");setPage(0);}} style={{padding:"4px 12px",borderRadius:20,fontSize:10,fontWeight:600,
-        cursor:"pointer",background:!stateFilter?C.accent:C.surfaceAlt,color:!stateFilter?"#FFF":C.textDim,
-        border:`1px solid ${!stateFilter?C.accent:C.border}`}}>All</button>
-      {stateCounts.map(([st,cnt])=>(<button key={st} onClick={()=>{setStateFilter(stateFilter===st?"":st);setPage(0);}}
+
+    {/* STATE PILLS */}
+    <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:10}}>
+      <button onClick={()=>{setStateFilter("");setRegionFilter("");setPage(0);}}
+        style={{padding:"4px 12px",borderRadius:20,fontSize:10,fontWeight:600,cursor:"pointer",
+          background:!stateFilter?C.accent:C.surfaceAlt,color:!stateFilter?"#fff":C.textDim,
+          border:`1px solid ${!stateFilter?C.accent:C.border}`}}>All States</button>
+      {stateCounts.map(([st,cnt])=>(<button key={st} onClick={()=>{setStateFilter(stateFilter===st?"":st);setRegionFilter("");setPage(0);}}
         style={{padding:"4px 10px",borderRadius:20,fontSize:10,fontWeight:600,cursor:"pointer",
-          background:stateFilter===st?C.accent:C.surfaceAlt,color:stateFilter===st?"#FFF":C.textDim,
-          border:`1px solid ${stateFilter===st?C.accent:C.border}`}}>{st} ({cnt})</button>))}
+          background:stateFilter===st?C.accent:C.surfaceAlt,color:stateFilter===st?"#fff":C.textDim,
+          border:`1px solid ${stateFilter===st?C.accent:C.border}`}}>{st} <span style={{opacity:.7}}>({cnt})</span></button>))}
     </div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:10,marginBottom:16}}>
-      {paged.map(m=>{const inD=isInDeals(m);return(
-        <div key={m.id} onClick={()=>setSelected(m)} style={{background:C.surface,border:`1px solid ${inD?C.green:C.border}`,
-          borderRadius:10,padding:"14px 16px",cursor:"pointer",boxShadow:"0 1px 3px rgba(0,0,0,0.04)",position:"relative"}}>
-          {inD&&<div style={{position:"absolute",top:8,right:10,background:C.greenL,color:C.green,
-            padding:"2px 8px",borderRadius:12,fontSize:8,fontWeight:700}}>IN DEALS</div>}
-          <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:3,overflow:"hidden",
-            textOverflow:"ellipsis",whiteSpace:"nowrap",paddingRight:inD?60:0}}>{m.name}</div>
-          <div style={{fontSize:11,color:C.textDim,marginBottom:8}}>{m.city}{m.city&&m.state?", ":""}{m.state}</div>
-          <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:6}}>
+
+    {/* ADVANCED FILTERS PANEL */}
+    {showFilters&&(<Card style={{padding:"16px 20px",marginBottom:12,border:`1px solid ${C.border}`}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12}}>
+        <div>
+          <div style={{fontSize:9,fontWeight:700,color:C.textFaint,textTransform:"uppercase",marginBottom:5}}>Sub-Market / Region</div>
+          <select value={regionFilter} onChange={e=>{setRegionFilter(e.target.value);setPage(0);}}
+            style={{width:"100%",padding:"7px 10px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,fontSize:11,color:C.text,outline:"none"}}>
+            <option value="">All Regions</option>
+            {regionsByState.map(([r,c])=><option key={r} value={r}>{r} ({c})</option>)}
+          </select>
+        </div>
+        <div>
+          <div style={{fontSize:9,fontWeight:700,color:C.textFaint,textTransform:"uppercase",marginBottom:5}}>Hotel Market Tier</div>
+          <select value={hotelTier} onChange={e=>{setHotelTier(e.target.value);setPage(0);}}
+            style={{width:"100%",padding:"7px 10px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,fontSize:11,color:C.text,outline:"none"}}>
+            <option value="">All Tiers</option>
+            {hotelTiers.map(t=><option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <div>
+          <div style={{fontSize:9,fontWeight:700,color:C.textFaint,textTransform:"uppercase",marginBottom:5}}>Min Slips</div>
+          <select value={slipsMin} onChange={e=>{setSlipsMin(Number(e.target.value));setPage(0);}}
+            style={{width:"100%",padding:"7px 10px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,fontSize:11,color:C.text,outline:"none"}}>
+            {[0,10,25,50,100,200,500].map(v=><option key={v} value={v}>{v===0?"Any":v+"+ slips"}</option>)}
+          </select>
+        </div>
+        <div>
+          <div style={{fontSize:9,fontWeight:700,color:C.textFaint,textTransform:"uppercase",marginBottom:5}}>Min Reviews</div>
+          <select value={reviewsMin} onChange={e=>{setReviewsMin(Number(e.target.value));setPage(0);}}
+            style={{width:"100%",padding:"7px 10px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,fontSize:11,color:C.text,outline:"none"}}>
+            {[0,1,5,10,25,50].map(v=><option key={v} value={v}>{v===0?"Any":v+"+ reviews"}</option>)}
+          </select>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:8,justifyContent:"flex-end"}}>
+          <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:11,color:C.text}}>
+            <input type="checkbox" checked={fuelOnly} onChange={e=>{setFuelOnly(e.target.checked);setPage(0);}}/>
+            Has Fuel Dock
+          </label>
+          <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:11,color:C.text}}>
+            <input type="checkbox" checked={hasRates} onChange={e=>{setHasRates(e.target.checked);setPage(0);}}/>
+            Has Dockage Rates
+          </label>
+        </div>
+        {activeFilters.length>0&&<div style={{display:"flex",alignItems:"flex-end"}}>
+          <button onClick={()=>{setStateFilter("");setRegionFilter("");setFuelOnly(false);setSlipsMin(0);setReviewsMin(0);setHotelTier("");setHasRates(false);setPage(0);}}
+            style={{padding:"7px 14px",borderRadius:7,fontSize:11,fontWeight:600,cursor:"pointer",
+              background:"transparent",color:"#dc2626",border:"1px solid #fca5a5"}}>✕ Clear All</button>
+        </div>}
+      </div>
+      {activeFilters.length>0&&<div style={{marginTop:10,display:"flex",gap:5,flexWrap:"wrap"}}>
+        {activeFilters.map(f=><span key={f} style={{background:C.accentDim,color:C.accent,padding:"2px 8px",borderRadius:10,fontSize:9,fontWeight:700}}>{f}</span>)}
+      </div>}
+    </Card>)}
+
+    {/* REGION PILLS (when state selected) */}
+    {stateFilter&&regionsByState.length>0&&(<div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:12}}>
+      <button onClick={()=>{setRegionFilter("");setPage(0);}}
+        style={{padding:"3px 10px",borderRadius:20,fontSize:9,fontWeight:600,cursor:"pointer",
+          background:!regionFilter?C.navy:C.surfaceAlt,color:!regionFilter?"#fff":C.textDim,
+          border:`1px solid ${!regionFilter?C.navy:C.border}`}}>All {stateFilter}</button>
+      {regionsByState.slice(0,20).map(([r,c])=>(<button key={r} onClick={()=>{setRegionFilter(regionFilter===r?"":r);setPage(0);}}
+        style={{padding:"3px 10px",borderRadius:20,fontSize:9,fontWeight:600,cursor:"pointer",
+          background:regionFilter===r?C.navy:C.surfaceAlt,color:regionFilter===r?"#fff":C.textDim,
+          border:`1px solid ${regionFilter===r?C.navy:C.border}`}}>{r} <span style={{opacity:.65}}>({c})</span></button>))}
+    </div>)}
+
+    {/* MARINA GRID */}
+    {filtered.length===0?(<Card style={{padding:"40px",textAlign:"center"}}>
+      <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:6}}>No marinas match</div>
+      <div style={{fontSize:12,color:C.textDim}}>Try adjusting your filters or search.</div>
+    </Card>):(
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(290px,1fr))",gap:10,marginBottom:16}}>
+      {paged.map(m=>{
+        const inD=isInDeals(m);
+        const status=interestMap[m.id]?.status;
+        const bdr=status==="interested"?C.green:status==="not_interested"?"#fca5a5":inD?C.green:C.border;
+        const hm=m.hotel_market;
+        return(
+        <div key={m.id} onClick={()=>setSelected(m)}
+          style={{background:C.surface,border:`1px solid ${bdr}`,borderRadius:10,padding:"13px 15px",
+            cursor:"pointer",boxShadow:"0 1px 3px rgba(0,0,0,0.04)",position:"relative",
+            transition:"box-shadow .15s",opacity:status==="not_interested"?.65:1}}>
+          <div style={{position:"absolute",top:8,right:8,display:"flex",gap:4}}>
+            {status==="interested"&&<span style={{background:"#dcfce7",color:C.green,padding:"2px 7px",borderRadius:10,fontSize:8,fontWeight:700}}>✓ INTERESTED</span>}
+            {status==="not_interested"&&<span style={{background:"#fee2e2",color:"#dc2626",padding:"2px 7px",borderRadius:10,fontSize:8,fontWeight:700}}>✗ PASSED</span>}
+            {inD&&!status&&<span style={{background:C.greenL,color:C.green,padding:"2px 7px",borderRadius:10,fontSize:8,fontWeight:700}}>IN DEALS</span>}
+          </div>
+          <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:2,paddingRight:90,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</div>
+          <div style={{fontSize:10,color:C.textDim,marginBottom:7}}>{m.city}{m.city&&m.state?", ":""}{m.state}{m.region&&<span style={{color:C.textFaint}}> · {m.region}</span>}</div>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:m.hotel_market?6:0}}>
             {m.slips!=null&&<span style={{background:C.accentDim,color:C.accent,padding:"2px 7px",borderRadius:12,fontSize:9,fontWeight:700}}>{m.slips} slips</span>}
             {m.slips==null&&m.linear_ft&&<span style={{background:C.accentDim,color:C.accent,padding:"2px 7px",borderRadius:12,fontSize:9,fontWeight:700}}>{m.linear_ft} ft</span>}
             {m.max_loa&&<span style={{background:C.surfaceAlt,color:C.textDim,padding:"2px 7px",borderRadius:12,fontSize:9,fontWeight:600}}>LOA {m.max_loa}'</span>}
-            {m.has_fuel_dock&&<span style={{background:"rgba(8,145,178,0.08)",color:C.cyan,padding:"2px 7px",borderRadius:12,fontSize:9,fontWeight:700}}>
-              {m.diesel?`⛽ $${m.diesel.toFixed(2)}`:"⛽ Fuel"}</span>}
+            {m.has_fuel_dock&&<span style={{background:"rgba(8,145,178,0.08)",color:C.cyan,padding:"2px 7px",borderRadius:12,fontSize:9,fontWeight:700}}>{m.diesel?`⛽ $${m.diesel.toFixed(2)}`:"⛽ Fuel"}</span>}
             {m.reviews>0&&<span style={{background:C.surfaceAlt,color:C.textFaint,padding:"2px 7px",borderRadius:12,fontSize:9,fontWeight:600}}>★ {m.reviews}</span>}
           </div>
-          {m.about&&<div style={{fontSize:10,color:C.textFaint,lineHeight:1.4,overflow:"hidden",
-            display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical"}}>{m.about}</div>}
+          {hm&&<div style={{fontSize:9,color:C.textDim,marginTop:3,fontWeight:500}}>
+            <span style={{color:C.text,fontWeight:700}}>{hm.tier_label}</span>
+            {hm.adr&&<span> · ADR ${hm.adr}</span>}
+            {hm.revpar&&<span> · RevPAR ${hm.revpar}</span>}
+            {hm.occupancy&&<span> · Occ {(hm.occupancy*100).toFixed(0)}%</span>}
+          </div>}
         </div>);})}
-    </div>
-    {totalPages>1&&<div style={{display:"flex",justifyContent:"center",gap:6,marginBottom:16,alignItems:"center"}}>
+    </div>)}
+
+    {/* PAGINATION */}
+    {totalPages>1&&(<div style={{display:"flex",justifyContent:"center",gap:6,marginBottom:16,alignItems:"center"}}>
       <button disabled={page===0} onClick={()=>setPage(p=>p-1)} style={{padding:"6px 14px",borderRadius:6,fontSize:11,fontWeight:600,
         border:`1px solid ${C.border}`,background:C.surface,color:C.textDim,cursor:page===0?"default":"pointer",opacity:page===0?.4:1}}>← Prev</button>
-      <span style={{fontSize:11,color:C.textDim,minWidth:100,textAlign:"center"}}>Page {page+1} of {totalPages}</span>
+      <span style={{fontSize:11,color:C.textDim,minWidth:120,textAlign:"center"}}>Page {page+1} of {totalPages} · {filtered.length.toLocaleString()} results</span>
       <button disabled={page>=totalPages-1} onClick={()=>setPage(p=>p+1)} style={{padding:"6px 14px",borderRadius:6,fontSize:11,fontWeight:600,
         border:`1px solid ${C.border}`,background:C.surface,color:C.textDim,cursor:page>=totalPages-1?"default":"pointer",opacity:page>=totalPages-1?.4:1}}>Next →</button>
-    </div>}
-    {selected&&<div onClick={()=>setSelected(null)} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.12)",zIndex:999}}/>}
-    {selected&&(<div style={{position:"fixed",top:0,right:0,bottom:0,width:520,background:C.surface,
-      borderLeft:`1px solid ${C.border}`,boxShadow:"-8px 0 32px rgba(0,0,0,0.08)",zIndex:1000,overflowY:"auto",
-      padding:"24px 28px",display:"flex",flexDirection:"column"}}>
-      <button onClick={()=>setSelected(null)} style={{position:"absolute",top:14,right:14,background:C.surfaceAlt,
-        border:`1px solid ${C.border}`,borderRadius:8,width:30,height:30,display:"flex",alignItems:"center",
-        justifyContent:"center",fontSize:14,cursor:"pointer",color:C.textDim}}>✕</button>
-      <div style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:3,paddingRight:36}}>{selected.name}</div>
-      <div style={{fontSize:12,color:C.textDim,marginBottom:16}}>{selected.city}{selected.city&&selected.state?", ":""}{selected.state}
-        {selected.harbor&&<span style={{color:C.textFaint}}> · {selected.harbor}</span>}</div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6,marginBottom:16}}>
-        {[{l:"Slips",v:selected.slips!=null?selected.slips:(selected.linear_ft?`${selected.linear_ft} ft`:"—")},
-          {l:"Moorings",v:selected.moorings||"—"},{l:"Max LOA",v:selected.max_loa?`${selected.max_loa}'`:"—"},
-          {l:"Approach",v:selected.approach_depth?`${selected.approach_depth} ft`:"—"},
-          {l:"Dock Depth",v:selected.dock_depth?`${selected.dock_depth} ft`:"—"},
-          {l:"Reviews",v:selected.reviews||"—"}].map(({l,v})=>(
-          <div key={l} style={{background:C.surfaceAlt,borderRadius:8,padding:"8px 10px"}}>
-            <div style={{fontSize:8,color:C.textFaint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,marginBottom:2}}>{l}</div>
-            <div style={{fontSize:13,fontWeight:700,color:C.text}}>{v}</div></div>))}
-      </div>
-      {selected.has_fuel_dock&&<div style={{background:"rgba(8,145,178,0.05)",border:"1px solid rgba(8,145,178,0.12)",
-        borderRadius:8,padding:"10px 12px",marginBottom:14}}>
-        <div style={{fontSize:9,fontWeight:700,color:C.cyan,textTransform:"uppercase",marginBottom:4}}>Fuel Dock</div>
-        <div style={{fontSize:12,color:C.text}}>
-          {selected.diesel&&<span>Diesel: <strong>${selected.diesel.toFixed(2)}/gal</strong></span>}
-          {selected.diesel&&selected.gas&&" · "}
-          {selected.gas&&<span>{selected.gas_type||"Gas"}: <strong>${selected.gas.toFixed(2)}/gal</strong></span>}
-          {!selected.diesel&&!selected.gas&&<span style={{color:C.textDim}}>Fuel available — price not in dataset</span>}
-        </div>
-        {selected.fuel_updated&&<div style={{fontSize:9,color:C.textFaint,marginTop:2}}>Updated: {selected.fuel_updated}</div>}
-      </div>}
-      {selected.amenities.length>0&&<div style={{marginBottom:14}}>
-        <div style={{fontSize:9,fontWeight:700,color:C.textDim,textTransform:"uppercase",marginBottom:4}}>Amenities ({selected.amenity_count})</div>
-        <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{selected.amenities.map((am,i)=>(
-          <span key={i} style={{background:i<3?C.accentDim:C.surfaceAlt,color:i<3?C.accent:C.textDim,
-            padding:"2px 8px",borderRadius:14,fontSize:9,fontWeight:600}}>{am}</span>))}</div></div>}
-      {selected.about&&<div style={{marginBottom:14}}>
-        <div style={{fontSize:9,fontWeight:700,color:C.textDim,textTransform:"uppercase",marginBottom:4}}>About</div>
-        <div style={{fontSize:11,color:C.textDim,lineHeight:1.6}}>{selected.about}</div></div>}
-      <div style={{marginBottom:16}}>
-        <div style={{fontSize:9,fontWeight:700,color:C.textDim,textTransform:"uppercase",marginBottom:4}}>Contact</div>
-        <div style={{fontSize:11,color:C.textDim,lineHeight:1.8}}>
-          {selected.address?<div>{selected.address}</div>
-            :selected.lat?<div><a href={`https://maps.google.com/?q=${selected.lat},${selected.lon}`} target="_blank" rel="noopener" style={{color:C.accent}}>View on Map</a></div>
-            :<div>{selected.city}, {selected.state}</div>}
-          {selected.phone&&<div>{selected.phone}</div>}{selected.vhf&&<div>{selected.vhf}</div>}
-          {selected.website&&<div><a href={`https://${selected.website}`} target="_blank" rel="noopener" style={{color:C.accent}}>{selected.website}</a></div>}
-        </div>
-      </div>
-      <div style={{marginTop:"auto",position:"sticky",bottom:0,background:C.surface,paddingTop:12,
-        borderTop:`1px solid ${C.border}`,display:"flex",gap:8}}>
-        {isInDeals(selected)?<div style={{flex:1,padding:"10px",background:C.greenL,color:C.green,borderRadius:8,
-          textAlign:"center",fontSize:12,fontWeight:700}}>Already in Deals</div>
-          :<button onClick={()=>addToDeal(selected)} style={{flex:1,padding:"10px",background:C.accent,color:"#FFF",
-            border:"none",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer"}}>Add to Deals</button>}
-        <a href={selected.source_url} target="_blank" rel="noopener"
-          style={{padding:"10px 14px",background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:8,
-            fontSize:10,fontWeight:600,color:C.textDim,textDecoration:"none"}}>Marinas.com ↗</a>
-      </div>
     </div>)}
+
+    {/* POPUP MODAL */}
+    {selected&&(<>
+      <div onClick={()=>setSelected(null)}
+        style={{position:"fixed",inset:0,background:"rgba(10,35,66,0.45)",backdropFilter:"blur(3px)",zIndex:1000}}/>
+      <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",
+        width:"min(680px,96vw)",maxHeight:"90vh",background:C.surface,borderRadius:16,
+        boxShadow:"0 24px 80px rgba(0,0,0,0.22)",zIndex:1001,overflowY:"auto",animation:"fadeIn .18s ease"}}>
+
+        {/* Aerial Map */}
+        {(selected.lat&&selected.lon)?
+          <AerialMap key={selected.id} lat={selected.lat} lon={selected.lon} name={selected.name}/>:
+          <div style={{height:80,background:`linear-gradient(135deg,${C.navy} 0%,#1e3a5f 100%)`,
+            borderRadius:"16px 16px 0 0",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <span style={{color:"rgba(255,255,255,.4)",fontSize:12}}>No location data</span>
+          </div>}
+
+        <div style={{padding:"20px 24px 24px"}}>
+          {/* Close */}
+          <button onClick={()=>setSelected(null)}
+            style={{position:"absolute",top:12,right:12,width:32,height:32,borderRadius:8,
+              background:"rgba(0,0,0,0.35)",border:"none",color:"#fff",fontSize:16,cursor:"pointer",
+              display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>✕</button>
+
+          {/* Name & location */}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4,gap:12}}>
+            <div>
+              <div style={{fontSize:20,fontWeight:700,color:C.text,lineHeight:1.2}}>{selected.name}</div>
+              <div style={{fontSize:12,color:C.textDim,marginTop:3}}>
+                {selected.city}{selected.city&&selected.state?", ":""}{selected.state}
+                {selected.region&&<span style={{color:C.textFaint}}> · {selected.region}</span>}
+                {selected.harbor&&<span style={{color:C.textFaint}}> · {selected.harbor}</span>}
+              </div>
+            </div>
+            {/* Interest buttons */}
+            <div style={{display:"flex",gap:6,flexShrink:0}}>
+              <button onClick={e=>{e.stopPropagation();setInterest(selected,"interested");}}
+                style={{padding:"7px 14px",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",
+                  background:interestStatus==="interested"?"#16a34a":"transparent",
+                  color:interestStatus==="interested"?"#fff":C.green,
+                  border:`2px solid ${interestStatus==="interested"?"#16a34a":C.green}`,transition:"all .15s"}}>
+                ✓ Interested
+              </button>
+              <button onClick={e=>{e.stopPropagation();setInterest(selected,"not_interested");}}
+                style={{padding:"7px 14px",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",
+                  background:interestStatus==="not_interested"?"#dc2626":"transparent",
+                  color:interestStatus==="not_interested"?"#fff":"#dc2626",
+                  border:`2px solid ${interestStatus==="not_interested"?"#dc2626":"#fca5a5"}`,transition:"all .15s"}}>
+                ✗ Pass
+              </button>
+            </div>
+          </div>
+
+          {/* Key stats */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:6,marginTop:14,marginBottom:14}}>
+            {[{l:"Slips",v:selected.slips!=null?selected.slips:(selected.linear_ft?`${selected.linear_ft}ft`:"—")},
+              {l:"Moorings",v:selected.moorings||"—"},
+              {l:"Max LOA",v:selected.max_loa?`${selected.max_loa}'`:"—"},
+              {l:"Approach",v:selected.approach_depth?`${selected.approach_depth}ft`:"—"},
+              {l:"Dock Depth",v:selected.dock_depth?`${selected.dock_depth}ft`:"—"},
+              {l:"Reviews",v:selected.reviews||"—"}].map(({l,v})=>(
+              <div key={l} style={{background:C.surfaceAlt,borderRadius:8,padding:"8px 6px",textAlign:"center"}}>
+                <div style={{fontSize:8,color:C.textFaint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,marginBottom:2}}>{l}</div>
+                <div style={{fontSize:13,fontWeight:700,color:C.text}}>{v}</div>
+              </div>))}
+          </div>
+
+          {/* Hotel Market */}
+          {selected.hotel_market&&(<div style={{background:`linear-gradient(135deg,rgba(10,35,66,.04) 0%,rgba(10,35,66,.02) 100%)`,
+            border:`1px solid rgba(10,35,66,.1)`,borderRadius:10,padding:"12px 14px",marginBottom:12}}>
+            <div style={{fontSize:9,fontWeight:700,color:C.navy,textTransform:"uppercase",letterSpacing:".07em",marginBottom:8}}>Hotel Market Data</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6}}>
+              {[{l:"Market",v:selected.hotel_market.market_name||selected.region},
+                {l:"Tier",v:selected.hotel_market.tier_label},
+                {l:"ADR",v:selected.hotel_market.adr?`$${selected.hotel_market.adr}`:"—"},
+                {l:"RevPAR",v:selected.hotel_market.revpar?`$${selected.hotel_market.revpar}`:"—"},
+                {l:"Occupancy",v:selected.hotel_market.occupancy?`${(selected.hotel_market.occupancy*100).toFixed(0)}%`:"—"},
+                {l:"Demand Score",v:selected.hotel_market.demand_score?selected.hotel_market.demand_score.toFixed(1):"—"},
+                {l:"Seasonality",v:selected.hotel_market.seasonality?.replace("_"," ")||"—"},
+                {l:"Supply",v:selected.hotel_market.supply_constrained?"Constrained":"Open"}
+              ].map(({l,v})=>(
+                <div key={l}>
+                  <div style={{fontSize:8,color:C.textFaint,textTransform:"uppercase",fontWeight:700,marginBottom:1}}>{l}</div>
+                  <div style={{fontSize:12,fontWeight:700,color:C.text}}>{v}</div>
+                </div>))}
+            </div>
+          </div>)}
+
+          {/* Dockage Rates */}
+          {selected.dockage_rates&&(<div style={{background:"rgba(0,212,255,.04)",border:"1px solid rgba(0,212,255,.15)",
+            borderRadius:10,padding:"10px 14px",marginBottom:12}}>
+            <div style={{fontSize:9,fontWeight:700,color:C.accent,textTransform:"uppercase",marginBottom:6}}>Dockage Rates</div>
+            <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+              {Object.entries(selected.dockage_rates).map(([k,v])=>(
+                <div key={k}><span style={{fontSize:9,color:C.textFaint,textTransform:"uppercase"}}>{k.replace(/_/g," ")}: </span>
+                  <strong style={{fontSize:12,color:C.text}}>{typeof v==="number"?`$${v}`:v}</strong></div>))}
+            </div>
+          </div>)}
+
+          {/* Fuel */}
+          {selected.has_fuel_dock&&(<div style={{background:"rgba(8,145,178,.05)",border:"1px solid rgba(8,145,178,.12)",
+            borderRadius:10,padding:"10px 14px",marginBottom:12,display:"flex",gap:16,alignItems:"center"}}>
+            <div style={{fontSize:9,fontWeight:700,color:C.cyan,textTransform:"uppercase"}}>⛽ Fuel Dock</div>
+            {selected.diesel&&<span style={{fontSize:12}}>Diesel: <strong>${selected.diesel.toFixed(2)}/gal</strong></span>}
+            {selected.gas&&<span style={{fontSize:12}}>{selected.gas_type||"Gas"}: <strong>${selected.gas.toFixed(2)}/gal</strong></span>}
+            {!selected.diesel&&!selected.gas&&<span style={{fontSize:11,color:C.textDim}}>Price not in dataset</span>}
+            {selected.fuel_updated&&<span style={{fontSize:9,color:C.textFaint}}>Updated {selected.fuel_updated}</span>}
+          </div>)}
+
+          {/* Amenities */}
+          {selected.amenities?.length>0&&(<div style={{marginBottom:12}}>
+            <div style={{fontSize:9,fontWeight:700,color:C.textDim,textTransform:"uppercase",marginBottom:5}}>Amenities</div>
+            <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+              {selected.amenities.map((am,i)=>(
+                <span key={i} style={{background:i<3?C.accentDim:C.surfaceAlt,color:i<3?C.accent:C.textDim,
+                  padding:"2px 8px",borderRadius:14,fontSize:9,fontWeight:600}}>{am}</span>))}
+            </div>
+          </div>)}
+
+          {/* About */}
+          {selected.about&&(<div style={{marginBottom:12}}>
+            <div style={{fontSize:9,fontWeight:700,color:C.textDim,textTransform:"uppercase",marginBottom:4}}>About</div>
+            <div style={{fontSize:11,color:C.textDim,lineHeight:1.65}}>{selected.about}</div>
+          </div>)}
+
+          {/* Contact */}
+          <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:14,padding:"10px 14px",
+            background:C.surfaceAlt,borderRadius:8}}>
+            <div style={{fontSize:9,fontWeight:700,color:C.textFaint,textTransform:"uppercase",width:"100%",marginBottom:2}}>Contact</div>
+            {selected.address&&<span style={{fontSize:11,color:C.textDim}}>{selected.address}</span>}
+            {selected.phone&&<span style={{fontSize:11,color:C.textDim}}>{selected.phone}</span>}
+            {selected.vhf&&<span style={{fontSize:11,color:C.textDim}}>{selected.vhf}</span>}
+            {selected.website&&<a href={`https://${selected.website}`} target="_blank" rel="noopener"
+              style={{fontSize:11,color:C.accent}}>{selected.website}</a>}
+            {selected.lat&&selected.lon&&<a href={`https://maps.google.com/?q=${selected.lat},${selected.lon}`} target="_blank" rel="noopener"
+              style={{fontSize:11,color:C.accent}}>📍 Google Maps</a>}
+          </div>
+
+          {/* Notes */}
+          <div style={{marginBottom:14}}>
+            <div style={{fontSize:9,fontWeight:700,color:C.textDim,textTransform:"uppercase",marginBottom:5}}>Notes</div>
+            <textarea value={popupNotes} onChange={e=>setPopupNotes(e.target.value)} placeholder="Add your notes on this marina…"
+              rows={3} style={{width:"100%",padding:"8px 12px",background:C.surface,border:`1px solid ${C.border}`,
+                borderRadius:8,fontSize:11,color:C.text,resize:"vertical",outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
+            <button onClick={()=>saveNote(selected,popupNotes)} disabled={savingNote}
+              style={{marginTop:5,padding:"5px 14px",borderRadius:6,fontSize:10,fontWeight:700,cursor:"pointer",
+                background:C.navy,color:"#fff",border:"none",opacity:savingNote?.6:1}}>
+              {savingNote?"Saving…":"Save Note"}
+            </button>
+          </div>
+
+          {/* Footer actions */}
+          <div style={{display:"flex",gap:8,paddingTop:12,borderTop:`1px solid ${C.border}`}}>
+            {isInDeals(selected)?
+              <div style={{flex:1,padding:"10px",background:C.greenL,color:C.green,borderRadius:8,textAlign:"center",fontSize:12,fontWeight:700}}>Already in Deals</div>:
+              <button onClick={()=>addToDeal(selected)} style={{flex:1,padding:"10px",background:C.accent,color:"#fff",
+                border:"none",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer"}}>Add to Deals</button>}
+            {selected.source_url&&<a href={selected.source_url} target="_blank" rel="noopener"
+              style={{padding:"10px 16px",background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:8,
+                fontSize:10,fontWeight:600,color:C.textDim,textDecoration:"none",whiteSpace:"nowrap"}}>Marinas.com ↗</a>}
+          </div>
+        </div>
+      </div>
+    </>)}
   </div>);
 }
