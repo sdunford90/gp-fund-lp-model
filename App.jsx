@@ -559,7 +559,7 @@ const TT=({active,payload,label})=>{
 };
 
 // ── TABS ──────────────────────────────────────────────────────────────────────
-const TABS=["Overview","Deals","Waterfall","Fund CF","G&A Model","GP Partners","Sensitivity"];
+const TABS=["Overview","Deals","Waterfall","Fund CF","G&A Model","GP Partners","Sensitivity","Targets"];
 
 // ── APP ───────────────────────────────────────────────────────────────────────
 // ── SCENARIO API HELPERS ──────────────────────────────────────────────────────
@@ -893,6 +893,7 @@ export default function Portal(){
           {m&&tab==="G&A Model"   && <TabGA          m={m} a={a} setHire={setHire} addHire={addHire} removeHire={removeHire} setOhead={setOhead} addOhead={addOhead} removeOhead={removeOhead} setPartnerSal={setPartnerSal} setOneTime={setOneTime} addOneTime={addOneTime} removeOneTime={removeOneTime}/>}
           {m&&tab==="GP Partners" && <TabGPPartners  m={m} a={a}/>}
           {m&&tab==="Sensitivity" && <TabSensitivity m={m} a={a}/>}
+          {tab==="Targets" && <TabTargets a={a} setA={setA}/>}
         </div>
       </div>
     </div>
@@ -3010,4 +3011,246 @@ function TabSensitivity({m,a}){
       </Card>
     </div>
   );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TARGETS — Marina Database & Deal Pipeline
+// ═══════════════════════════════════════════════════════════════════════════════
+function parseMarinaRecord(rec){
+  const r={id:null,name:"",city:"",state:"",address:"",lat:null,lon:null,
+    phone:"",vhf:"",website:"",harbor:"",reviews:0,slips:null,moorings:null,linear_ft:null,
+    max_loa:null,approach_depth:null,dock_depth:null,
+    has_fuel_dock:false,diesel:null,gas:null,gas_type:null,fuel_updated:null,
+    amenities:[],amenity_count:0,about:"",source_url:"",scraped_at:""};
+  const url=rec["Origin URL"]||"";r.source_url=url;
+  const idM=url.match(/\/marina\/([^_/]+)/);if(idM)r.id=idM[1];
+  const stM=url.match(/_([A-Z]{2})_United_States/);if(stM)r.state=stM[1];
+  r.scraped_at=rec["Extract Date"]||"";
+  const nm=(rec["Name"]||"").split("\n").map(s=>s.trim());
+  r.name=nm[0]||"";if(nm.length>=4)r.city=nm[3];
+  const revM=(rec["Name"]||"").match(/(\d+)\s+Reviews?/);if(revM)r.reviews=parseInt(revM[1]);
+  const det=rec["details"]||"";
+  const addrM=det.match(/(?:^|\n)\t?([^\n\t]{2,80})\n\t?([A-Za-z][^\n\t]{2,50},\s*[A-Z]{2}[\s-]+\d{5}(?:-\d{4})?)/);
+  if(addrM){const skip=/http|www\.|Last Updated|Edit |Services & Amenities|Contact Marina|Book Reservation/i;
+    if(!skip.test(addrM[1]))r.address=`${addrM[1].replace(/^\t/,"")}, ${addrM[2].replace(/^\t/,"")}`;}
+  const coordM=det.match(/([\d]+)°\s*([\d]+)'\s*([\d.]+)''\s*,\s*-?([\d]+)°\s*([\d]+)'\s*([\d.]+)''/);
+  if(coordM){r.lat=parseFloat(coordM[1])+parseFloat(coordM[2])/60+parseFloat(coordM[3])/3600;
+    r.lon=-(parseFloat(coordM[4])+parseFloat(coordM[5])/60+parseFloat(coordM[6])/3600);}
+  const phM=det.match(/\t(\+\d{10,12})/);if(phM)r.phone=phM[1];
+  const vhfM=det.match(/VHF Ch\.\s*(\d+)/);if(vhfM)r.vhf=`VHF Ch. ${vhfM[1]}`;
+  const webM=det.match(/\t(www\.[^\n\t]+)/);if(webM)r.website=webM[1];
+  const harbM=det.match(/\t([A-Z][^\n\t]{2,40})\nContact Marina/);if(harbM)r.harbor=harbM[1];
+  const loaM=det.match(/Max\.\s*Vessel LOA:([\d.]+)/);if(loaM)r.max_loa=parseFloat(loaM[1]);
+  if(det.includes("Services & Amenities")){const flags=det.match(/(\w[\w\s/&]+):Yes/g);
+    if(flags)r.amenities=flags.map(f=>f.replace(":Yes","").trim());}
+  if(/Fuel Dock:Yes|Gas:Yes|Diesel:Yes/.test(det))r.has_fuel_dock=true;
+  const abt=rec["about"]||"";
+  const slipsM=abt.match(/Slips:(\d+)/);if(slipsM)r.slips=parseInt(slipsM[1]);
+  const moorM=abt.match(/Moorings:(\d+)/);if(moorM)r.moorings=parseInt(moorM[1]);
+  const linM=abt.match(/Linear Docks:(\d+)/);if(linM)r.linear_ft=parseInt(linM[1]);
+  const apM=abt.match(/Minimum Approach Depth:([\d.]+)/);if(apM&&parseFloat(apM[1])>0)r.approach_depth=parseFloat(apM[1]);
+  const dkM=abt.match(/Mean Low Water Dock Depth:([\d.]+)/);if(dkM&&parseFloat(dkM[1])>0)r.dock_depth=parseFloat(dkM[1]);
+  let desc=abt.replace(/^(?:Awards\s*\n+)+/,"").replace(/^(?:Is this your Marina\?[\s\S]*?Claim this Marina\s*\n*)+/,"")
+    .replace(/^(?:Berth Capacity[\s\S]*?Edit Berth Capacity\s*\n*)+/,"").replace(/^(?:Approach[\s\S]*?Edit Approach\s*\n*)+/,"")
+    .replace(/^About\s*\n+/,"").replace(/\s*(?:Berth Capacity|Reviews?\s*\nWrite a Review|Write a Review|No reviews yet)[\s\S]*$/,"")
+    .replace(/\n+/g," ").replace(/\s{2,}/g," ").trim();
+  if(desc.length<40)desc="";if(desc.length>800)desc=desc.slice(0,800)+"...";r.about=desc;
+  const ft=String(rec["fuel"]||"");
+  if(ft.startsWith("Fuel\n")){r.has_fuel_dock=true;
+    const dM=ft.match(/Diesel\s+\$([\d.]+)/);if(dM)r.diesel=parseFloat(dM[1]);
+    const gM=ft.match(/Gas\s+(Regular|Premium|Ethanol Free|Non-Ethanol|E10|E0)?\s*\$([\d.]+)/);
+    if(gM){r.gas=parseFloat(gM[2]);r.gas_type=(gM[1]||"Regular").trim();}
+    const uM=ft.match(/Last Updated:\s*([^\n]+)/);if(uM)r.fuel_updated=uM[1].trim();}
+  r.amenity_count=r.amenities.length;
+  if(!r.id)r.id=`m_${Math.random().toString(36).slice(2,10)}`;return r;
+}
+function parseMarinasJSON(raw){const data=raw.data||raw;if(!Array.isArray(data))return[];
+  const seen=new Set();return data.filter(r=>(r["Status"]||"Successful")==="Successful")
+    .map(parseMarinaRecord).filter(r=>{if(!r.id||seen.has(r.id))return false;seen.add(r.id);return true;});}
+
+function TabTargets({a,setA}){
+  const [marinas,setMarinas]=useState(()=>{try{const d=localStorage.getItem("gpfund_marinas");return d?JSON.parse(d):[];}catch{return[];}});
+  const [search,setSearch]=useState("");const [stateFilter,setStateFilter]=useState("");
+  const [fuelOnly,setFuelOnly]=useState(false);const [slipsOnly,setSlipsOnly]=useState(false);
+  const [sortBy,setSortBy]=useState("name");const [page,setPage]=useState(0);
+  const [selected,setSelected]=useState(null);const [uploading,setUploading]=useState(false);
+  const [uploadMsg,setUploadMsg]=useState("");const PG=50;
+
+  useEffect(()=>{if(marinas.length>0)return;
+    fetch("/data/Main.json").then(r=>r.ok?r.json():null).then(raw=>{
+      if(raw){const p=parseMarinasJSON(raw);if(p.length>0){setMarinas(p);
+        try{localStorage.setItem("gpfund_marinas",JSON.stringify(p));}catch{}}}}).catch(()=>{});},[]);
+
+  const handleUpload=useCallback(async(file)=>{if(!file)return;setUploading(true);setUploadMsg("Parsing...");
+    try{const text=await file.text();const raw=JSON.parse(text);const p=parseMarinasJSON(raw);
+      setMarinas(p);try{localStorage.setItem("gpfund_marinas",JSON.stringify(p));}catch{}
+      try{await fetch(`/api/upload/${encodeURIComponent(file.name)}`,{method:"POST",headers:{"Content-Type":"application/json"},body:text});}catch{}
+      setUploadMsg(`Loaded ${p.length.toLocaleString()} marinas`);setPage(0);
+    }catch(e){setUploadMsg(`Error: ${e.message}`);}setUploading(false);},[]);
+
+  const filtered=useMemo(()=>{let list=marinas;
+    if(search){const s=search.toLowerCase();list=list.filter(m=>(m.name+m.city+m.state+m.address+m.harbor).toLowerCase().includes(s));}
+    if(stateFilter)list=list.filter(m=>m.state===stateFilter);
+    if(fuelOnly)list=list.filter(m=>m.has_fuel_dock);
+    if(slipsOnly)list=list.filter(m=>m.slips!=null&&m.slips>0);
+    if(sortBy==="name")list=[...list].sort((a,b)=>a.name.localeCompare(b.name));
+    else if(sortBy==="slips")list=[...list].sort((a,b)=>(b.slips||0)-(a.slips||0));
+    else if(sortBy==="reviews")list=[...list].sort((a,b)=>b.reviews-a.reviews);
+    else if(sortBy==="state")list=[...list].sort((a,b)=>a.state.localeCompare(b.state)||a.name.localeCompare(b.name));
+    return list;},[marinas,search,stateFilter,fuelOnly,slipsOnly,sortBy]);
+
+  const paged=filtered.slice(page*PG,(page+1)*PG);const totalPages=Math.ceil(filtered.length/PG);
+  const stateCounts=useMemo(()=>{const c={};marinas.forEach(m=>{c[m.state]=(c[m.state]||0)+1;});
+    return Object.entries(c).sort((a,b)=>b[1]-a[1]);},[marinas]);
+
+  const addToDeal=useCallback((marina)=>{
+    const deal={...DEF_ASSET_BASE,name:marina.name,price:4500000,cap:.075,
+      startMonth:Math.min(72,Math.max(1,(a.assets||[]).length*2+1)),
+      slips:marina.slips?[{type:"Marina Slips",count:marina.slips,rate:417,occ:.85,period:"y2"}]:[],
+      lodging:[{type:"Hotel Units",units:15,adr:325,occ:.247,period:"y1"},{type:"Hotel Units",units:30,adr:325,occ:.411,period:"y2"}],
+      upland:[],opex:[{label:"Hotel Operating Costs",amount:219375,growth:.03},{label:"Marina Operating Costs",amount:81250,growth:.05}],
+      capexItems:[{label:"Hotel Conversion Ph1",amount:2600000,year:0},{label:"Hotel Conversion Ph2",amount:2600000,year:1}],
+      targetSource:{id:marina.id,name:marina.name,city:marina.city,state:marina.state,slips:marina.slips,url:marina.source_url}};
+    setA(p=>({...p,assets:[...p.assets,deal]}));setSelected(null);},[a,setA]);
+  const isInDeals=useCallback((m)=>(a.assets||[]).some(d=>d.targetSource?.id===m.id),[a]);
+
+  if(marinas.length===0)return(
+    <div><PHdr title="Acquisition Targets" sub="Upload your marina database to browse and filter targets"/>
+      <Card style={{padding:"48px 32px",textAlign:"center",maxWidth:560,margin:"40px auto"}}>
+        <div style={{fontSize:40,marginBottom:16}}>🎯</div>
+        <div style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:8}}>Upload Marina Database</div>
+        <div style={{fontSize:12,color:C.textDim,marginBottom:24,lineHeight:1.6}}>
+          Drop your <strong>Main.json</strong> Browse.ai export here to load 5,500+ marinas across 14 East Coast states.</div>
+        <label style={{display:"inline-block",padding:"12px 32px",background:C.accent,color:"#FFF",
+          borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer"}}>
+          Choose File<input type="file" accept=".json" style={{display:"none"}}
+            onChange={e=>{if(e.target.files[0])handleUpload(e.target.files[0]);}}/>
+        </label>
+        {uploadMsg&&<div style={{marginTop:12,fontSize:12,color:uploading?C.accent:uploadMsg.startsWith("Error")?C.red:C.green,fontWeight:600}}>{uploadMsg}</div>}
+      </Card>
+    </div>);
+
+  return(<div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
+      <PHdr title="Acquisition Targets"
+        sub={`${marinas.length.toLocaleString()} marinas · ${stateCounts.length} states · ${marinas.filter(m=>m.has_fuel_dock).length.toLocaleString()} fuel docks · ${marinas.filter(m=>m.slips).length.toLocaleString()} with slip data`}/>
+      <label style={{padding:"6px 14px",background:C.surfaceAlt,border:`1px solid ${C.border}`,
+        borderRadius:6,fontSize:10,fontWeight:600,color:C.textDim,cursor:"pointer",flexShrink:0}}>
+        Re-upload<input type="file" accept=".json" style={{display:"none"}}
+          onChange={e=>{if(e.target.files[0])handleUpload(e.target.files[0]);}}/>
+      </label>
+    </div>
+    <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center",flexWrap:"wrap"}}>
+      <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="Search name, city, address..."
+        style={{flex:1,minWidth:200,padding:"8px 14px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,fontSize:12,color:C.text,outline:"none"}}/>
+      <select value={sortBy} onChange={e=>setSortBy(e.target.value)}
+        style={{padding:"8px 12px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,fontSize:11,color:C.text,cursor:"pointer",outline:"none"}}>
+        <option value="name">Sort: Name</option><option value="slips">Sort: Most Slips</option>
+        <option value="reviews">Sort: Reviews</option><option value="state">Sort: State</option></select>
+      <button onClick={()=>{setFuelOnly(!fuelOnly);setPage(0);}} style={{padding:"6px 12px",borderRadius:6,fontSize:10,fontWeight:600,
+        cursor:"pointer",background:fuelOnly?C.accentDim:C.surfaceAlt,color:fuelOnly?C.accent:C.textDim,
+        border:`1px solid ${fuelOnly?C.accent:C.border}`}}>⛽ Fuel Dock</button>
+      <button onClick={()=>{setSlipsOnly(!slipsOnly);setPage(0);}} style={{padding:"6px 12px",borderRadius:6,fontSize:10,fontWeight:600,
+        cursor:"pointer",background:slipsOnly?C.accentDim:C.surfaceAlt,color:slipsOnly?C.accent:C.textDim,
+        border:`1px solid ${slipsOnly?C.accent:C.border}`}}>⚓ Has Slips</button>
+      <span style={{fontSize:11,color:C.textFaint,fontWeight:600}}>{filtered.length.toLocaleString()} results</span>
+    </div>
+    <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:16}}>
+      <button onClick={()=>{setStateFilter("");setPage(0);}} style={{padding:"4px 12px",borderRadius:20,fontSize:10,fontWeight:600,
+        cursor:"pointer",background:!stateFilter?C.accent:C.surfaceAlt,color:!stateFilter?"#FFF":C.textDim,
+        border:`1px solid ${!stateFilter?C.accent:C.border}`}}>All</button>
+      {stateCounts.map(([st,cnt])=>(<button key={st} onClick={()=>{setStateFilter(stateFilter===st?"":st);setPage(0);}}
+        style={{padding:"4px 10px",borderRadius:20,fontSize:10,fontWeight:600,cursor:"pointer",
+          background:stateFilter===st?C.accent:C.surfaceAlt,color:stateFilter===st?"#FFF":C.textDim,
+          border:`1px solid ${stateFilter===st?C.accent:C.border}`}}>{st} ({cnt})</button>))}
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:10,marginBottom:16}}>
+      {paged.map(m=>{const inD=isInDeals(m);return(
+        <div key={m.id} onClick={()=>setSelected(m)} style={{background:C.surface,border:`1px solid ${inD?C.green:C.border}`,
+          borderRadius:10,padding:"14px 16px",cursor:"pointer",boxShadow:"0 1px 3px rgba(0,0,0,0.04)",position:"relative"}}>
+          {inD&&<div style={{position:"absolute",top:8,right:10,background:C.greenL,color:C.green,
+            padding:"2px 8px",borderRadius:12,fontSize:8,fontWeight:700}}>IN DEALS</div>}
+          <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:3,overflow:"hidden",
+            textOverflow:"ellipsis",whiteSpace:"nowrap",paddingRight:inD?60:0}}>{m.name}</div>
+          <div style={{fontSize:11,color:C.textDim,marginBottom:8}}>{m.city}{m.city&&m.state?", ":""}{m.state}</div>
+          <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:6}}>
+            {m.slips!=null&&<span style={{background:C.accentDim,color:C.accent,padding:"2px 7px",borderRadius:12,fontSize:9,fontWeight:700}}>{m.slips} slips</span>}
+            {m.slips==null&&m.linear_ft&&<span style={{background:C.accentDim,color:C.accent,padding:"2px 7px",borderRadius:12,fontSize:9,fontWeight:700}}>{m.linear_ft} ft</span>}
+            {m.max_loa&&<span style={{background:C.surfaceAlt,color:C.textDim,padding:"2px 7px",borderRadius:12,fontSize:9,fontWeight:600}}>LOA {m.max_loa}'</span>}
+            {m.has_fuel_dock&&<span style={{background:"rgba(8,145,178,0.08)",color:C.cyan,padding:"2px 7px",borderRadius:12,fontSize:9,fontWeight:700}}>
+              {m.diesel?`⛽ $${m.diesel.toFixed(2)}`:"⛽ Fuel"}</span>}
+            {m.reviews>0&&<span style={{background:C.surfaceAlt,color:C.textFaint,padding:"2px 7px",borderRadius:12,fontSize:9,fontWeight:600}}>★ {m.reviews}</span>}
+          </div>
+          {m.about&&<div style={{fontSize:10,color:C.textFaint,lineHeight:1.4,overflow:"hidden",
+            display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical"}}>{m.about}</div>}
+        </div>);})}
+    </div>
+    {totalPages>1&&<div style={{display:"flex",justifyContent:"center",gap:6,marginBottom:16,alignItems:"center"}}>
+      <button disabled={page===0} onClick={()=>setPage(p=>p-1)} style={{padding:"6px 14px",borderRadius:6,fontSize:11,fontWeight:600,
+        border:`1px solid ${C.border}`,background:C.surface,color:C.textDim,cursor:page===0?"default":"pointer",opacity:page===0?.4:1}}>← Prev</button>
+      <span style={{fontSize:11,color:C.textDim,minWidth:100,textAlign:"center"}}>Page {page+1} of {totalPages}</span>
+      <button disabled={page>=totalPages-1} onClick={()=>setPage(p=>p+1)} style={{padding:"6px 14px",borderRadius:6,fontSize:11,fontWeight:600,
+        border:`1px solid ${C.border}`,background:C.surface,color:C.textDim,cursor:page>=totalPages-1?"default":"pointer",opacity:page>=totalPages-1?.4:1}}>Next →</button>
+    </div>}
+    {selected&&<div onClick={()=>setSelected(null)} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.12)",zIndex:999}}/>}
+    {selected&&(<div style={{position:"fixed",top:0,right:0,bottom:0,width:520,background:C.surface,
+      borderLeft:`1px solid ${C.border}`,boxShadow:"-8px 0 32px rgba(0,0,0,0.08)",zIndex:1000,overflowY:"auto",
+      padding:"24px 28px",display:"flex",flexDirection:"column"}}>
+      <button onClick={()=>setSelected(null)} style={{position:"absolute",top:14,right:14,background:C.surfaceAlt,
+        border:`1px solid ${C.border}`,borderRadius:8,width:30,height:30,display:"flex",alignItems:"center",
+        justifyContent:"center",fontSize:14,cursor:"pointer",color:C.textDim}}>✕</button>
+      <div style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:3,paddingRight:36}}>{selected.name}</div>
+      <div style={{fontSize:12,color:C.textDim,marginBottom:16}}>{selected.city}{selected.city&&selected.state?", ":""}{selected.state}
+        {selected.harbor&&<span style={{color:C.textFaint}}> · {selected.harbor}</span>}</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6,marginBottom:16}}>
+        {[{l:"Slips",v:selected.slips!=null?selected.slips:(selected.linear_ft?`${selected.linear_ft} ft`:"—")},
+          {l:"Moorings",v:selected.moorings||"—"},{l:"Max LOA",v:selected.max_loa?`${selected.max_loa}'`:"—"},
+          {l:"Approach",v:selected.approach_depth?`${selected.approach_depth} ft`:"—"},
+          {l:"Dock Depth",v:selected.dock_depth?`${selected.dock_depth} ft`:"—"},
+          {l:"Reviews",v:selected.reviews||"—"}].map(({l,v})=>(
+          <div key={l} style={{background:C.surfaceAlt,borderRadius:8,padding:"8px 10px"}}>
+            <div style={{fontSize:8,color:C.textFaint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,marginBottom:2}}>{l}</div>
+            <div style={{fontSize:13,fontWeight:700,color:C.text}}>{v}</div></div>))}
+      </div>
+      {selected.has_fuel_dock&&<div style={{background:"rgba(8,145,178,0.05)",border:"1px solid rgba(8,145,178,0.12)",
+        borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+        <div style={{fontSize:9,fontWeight:700,color:C.cyan,textTransform:"uppercase",marginBottom:4}}>Fuel Dock</div>
+        <div style={{fontSize:12,color:C.text}}>
+          {selected.diesel&&<span>Diesel: <strong>${selected.diesel.toFixed(2)}/gal</strong></span>}
+          {selected.diesel&&selected.gas&&" · "}
+          {selected.gas&&<span>{selected.gas_type||"Gas"}: <strong>${selected.gas.toFixed(2)}/gal</strong></span>}
+          {!selected.diesel&&!selected.gas&&<span style={{color:C.textDim}}>Fuel available — price not in dataset</span>}
+        </div>
+        {selected.fuel_updated&&<div style={{fontSize:9,color:C.textFaint,marginTop:2}}>Updated: {selected.fuel_updated}</div>}
+      </div>}
+      {selected.amenities.length>0&&<div style={{marginBottom:14}}>
+        <div style={{fontSize:9,fontWeight:700,color:C.textDim,textTransform:"uppercase",marginBottom:4}}>Amenities ({selected.amenity_count})</div>
+        <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{selected.amenities.map((am,i)=>(
+          <span key={i} style={{background:i<3?C.accentDim:C.surfaceAlt,color:i<3?C.accent:C.textDim,
+            padding:"2px 8px",borderRadius:14,fontSize:9,fontWeight:600}}>{am}</span>))}</div></div>}
+      {selected.about&&<div style={{marginBottom:14}}>
+        <div style={{fontSize:9,fontWeight:700,color:C.textDim,textTransform:"uppercase",marginBottom:4}}>About</div>
+        <div style={{fontSize:11,color:C.textDim,lineHeight:1.6}}>{selected.about}</div></div>}
+      <div style={{marginBottom:16}}>
+        <div style={{fontSize:9,fontWeight:700,color:C.textDim,textTransform:"uppercase",marginBottom:4}}>Contact</div>
+        <div style={{fontSize:11,color:C.textDim,lineHeight:1.8}}>
+          {selected.address?<div>{selected.address}</div>
+            :selected.lat?<div><a href={`https://maps.google.com/?q=${selected.lat},${selected.lon}`} target="_blank" rel="noopener" style={{color:C.accent}}>View on Map</a></div>
+            :<div>{selected.city}, {selected.state}</div>}
+          {selected.phone&&<div>{selected.phone}</div>}{selected.vhf&&<div>{selected.vhf}</div>}
+          {selected.website&&<div><a href={`https://${selected.website}`} target="_blank" rel="noopener" style={{color:C.accent}}>{selected.website}</a></div>}
+        </div>
+      </div>
+      <div style={{marginTop:"auto",position:"sticky",bottom:0,background:C.surface,paddingTop:12,
+        borderTop:`1px solid ${C.border}`,display:"flex",gap:8}}>
+        {isInDeals(selected)?<div style={{flex:1,padding:"10px",background:C.greenL,color:C.green,borderRadius:8,
+          textAlign:"center",fontSize:12,fontWeight:700}}>Already in Deals</div>
+          :<button onClick={()=>addToDeal(selected)} style={{flex:1,padding:"10px",background:C.accent,color:"#FFF",
+            border:"none",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer"}}>Add to Deals</button>}
+        <a href={selected.source_url} target="_blank" rel="noopener"
+          style={{padding:"10px 14px",background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:8,
+            fontSize:10,fontWeight:600,color:C.textDim,textDecoration:"none"}}>Marinas.com ↗</a>
+      </div>
+    </div>)}
+  </div>);
 }
