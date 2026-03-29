@@ -309,15 +309,25 @@ function run(a){
       ds+=yrDS/12;
     });
     const ga=gaMonthly[i].total;
-    // Operating CF: NOI minus debt service, mgmt fees, and G&A — capex is a separate call
     const netOpCF=noi-ds-bwF-ga;
-    // CapEx capital calls split by ownership share
-    const capxLP=capxF*(1-gpPct);
-    const capxGP=capxF*gpPct;
-    // Acquisition capital calls (at startMonth) + ongoing CapEx capital calls
-    const lpCall=assets.reduce((s,x)=>x.startMonth===mo?s+x.price*(1-debtPct)*(1-gpPct):s,0)+capxLP;
-    const gpCall=assets.reduce((s,x)=>x.startMonth===mo?s+x.price*(1-debtPct)*gpPct:s,0)+capxGP;
-    return{mo,noi,invEq,ds,bwF,netOpCF,capxLP,capxGP,lpCall,gpCall,ga};
+    // LP/GP capital calls — acquisition equity + capex equity + tx costs at deployment
+    let lpCallMo=0, gpCallMo=0;
+    assetR.forEach((ar,ai)=>{
+      const x=assets[ai];
+      if(x.startMonth===mo){
+        const day1Eq = x.price*(1-debtPct) + (ar.capexEqByYear?.[0]||0) + (x.txCosts||0);
+        lpCallMo += day1Eq*(1-gpPct);
+        gpCallMo += day1Eq*gpPct;
+      }
+      if(ar.capexEqByYear){
+        Object.entries(ar.capexEqByYear).forEach(([cy,ceq])=>{
+          const capYr=Number(cy); if(capYr===0) return;
+          const deployMonth = x.startMonth + capYr*12;
+          if(deployMonth===mo){ lpCallMo+=ceq*(1-gpPct); gpCallMo+=ceq*gpPct; }
+        });
+      }
+    });
+    return{mo,noi,invEq,ds,bwF,netOpCF,lpCall:lpCallMo,gpCall:gpCallMo,ga};
   });
 
   // Totals
@@ -455,10 +465,9 @@ function run(a){
   });
 
   // Deployment curve
-  const deplCurve=monthly.map(m=>({
-    mo:m.mo,
-    lp:assets.filter(x=>x.startMonth<=m.mo).reduce((s,x)=>s+x.price*(1-debtPct)*(1-gpPct),0),
-  }));
+  // Deployment curve — cumulative LP capital called
+  let deplCum=0;
+  const deplCurve=monthly.map(m=>{deplCum+=m.lpCall;return{mo:m.mo,lp:deplCum};});
 
   // G&A breakdown
   const gaChart=gaMonthly.map(x=>({mo:x.mo,personnel:x.personnel,fix:x.fix}));
