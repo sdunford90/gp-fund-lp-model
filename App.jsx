@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   ReferenceLine, Cell, AreaChart, Area, ComposedChart } from "recharts";
+import * as XLSX from "xlsx";
 
 const C = {
   // Helm brand palette
@@ -30,7 +31,7 @@ const DEF_ASSET_BASE = {
   opex:[],capexItems:[],
   noiY1Growth:1.012, noiY2Growth:.03,
   noiPlug:463125,   // Y1 NOI: hotel(15×$325×90×50%margin) + slips(65×$5K×75%margin)
-  txCosts:700000,
+  txCosts:0,
   ioPeriod:12,    // months of interest-only before amortizing (per deal)
   bwMarketing:50000, bwAccounting:40000, bwIT:35000, bwRevMgmt:0,
   startMonth:1,
@@ -56,6 +57,7 @@ const DEF_ASSETS = Array.from({length:30},(_,i)=>{
       {label:"Marina Operating Costs (25% margin)",amount:81250,growth:.05},
     ],
     capexItems:[
+      {label:"Deferred Maintenance & R&M",amount:700000,year:0},
       {label:"Hotel Conversion Phase 1 (15 units @ $175K)",amount:2600000,year:0},
       {label:"Hotel Conversion Phase 2 (15 units @ $175K)",amount:2600000,year:1},
     ],
@@ -491,6 +493,176 @@ function run(a){
       {name:"GP Promote", value:gpPromote,  fill:C.gold},
     ],
   };
+}
+
+// ── EXCEL EXPORT ─────────────────────────────────────────────────────────────
+function exportToExcel(m,a){
+  const wb=XLSX.utils.book_new();
+  const ft=a.fundTerm;
+  const yrs=Array.from({length:ft},(_,i)=>`Year ${i+1}`);
+
+  // ── Sheet 1: Portfolio Summary ──
+  const sum=[
+    ["RDM Base Case — Portfolio Summary"],
+    [],
+    ["Fund Structure"],
+    ["Hold Period (years)",ft],["LTV (Debt %)",a.debtPct],["Interest Rate",a.interestRate],
+    ["Amort Period (years)",a.amortYears],["Exit Cap Rate",a.exitCapRate],["Sale Costs",a.saleCosts],
+    ["Preferred Return",a.prefReturn],["Carry",a.carry],["GP Commitment",a.gpPct],
+    [],
+    ["Portfolio Totals"],
+    ["Total Deals",a.assets.length],
+    ["Total Acquisition Cost",a.assets.reduce((s,x)=>s+x.price,0)],
+    ["Total CapEx",m.assetR.reduce((s,x)=>s+(x.totalCapex||0),0)],
+    ["Total Cost Basis",m.assetR.reduce((s,x)=>s+x.price+(x.totalCapex||0)+(x.txCosts||0),0)],
+    ["Total Equity Required",m.assetR.reduce((s,x)=>s+(x.totalEquityIn||0),0)],
+    ["Total Debt",m.assetR.reduce((s,x)=>s+(x.totalDebt||0),0)],
+    ["Total Exit Valuation",m.assetR.reduce((s,x)=>s+(x.exitVal||0),0)],
+    [],
+    ["LP Returns"],
+    ["LP Net IRR",m.lpIRR],["LP MOIC",m.lpMOIC],["LP Capital Deployed",m.lpActualCapital],
+    ["LP Total Distributions",m.lpTotal],["LP ROC",m.lpROC],["LP Pref",m.lpPref],["LP Residual",m.lpResid],
+    [],
+    ["GP Returns"],
+    ["GP Promote",m.gpPromote],["GP ROC",m.gpROC],["GP Net Total",m.gpNetTotal],
+    ["Per Partner Promote",m.promPP],
+    [],
+    ["G&A"],
+    ["Total G&A ("+ft+"yr)",m.totGA],
+    ["Waterfall Pool (Sale + OpCF)",m.pool],
+    ["Total Sale Proceeds",m.totSaleProc],["Total Operating CF",m.totOpCF],
+  ];
+  const ws1=XLSX.utils.aoa_to_sheet(sum);
+  ws1["!cols"]=[{wch:30},{wch:18}];
+  XLSX.utils.book_append_sheet(wb,ws1,"Portfolio Summary");
+
+  // ── Sheet 2: Deal Assumptions ──
+  const dealHdr=["Deal #","Name","Acq Price","Cap Rate","Close Month","I/O Period (mo)",
+    "Tx Costs","Total CapEx","CapEx Items","NOI Plug","Y1 Growth","Y2+ Growth",
+    "BW Marketing","BW Accounting","BW IT","BW Rev Mgmt %",
+    "Slips (Y1)","Slips (Y2+)","Hotel Units (Y1)","Hotel Units (Y2+)","OpEx Items"];
+  const dealRows=a.assets.map((d,i)=>{
+    const slY1=(d.slips||[]).filter(r=>r.period==="y1").reduce((s,r)=>s+r.count,0);
+    const slY2=(d.slips||[]).filter(r=>r.period!=="y1").reduce((s,r)=>s+r.count,0);
+    const ldY1=(d.lodging||[]).filter(r=>r.period==="y1").reduce((s,r)=>s+r.units,0);
+    const ldY2=(d.lodging||[]).filter(r=>r.period!=="y1").reduce((s,r)=>s+r.units,0);
+    const capexStr=(d.capexItems||[]).map(c=>`${c.label}: $${c.amount.toLocaleString()} (Y${c.year})`).join("; ");
+    const opexStr=(d.opex||[]).map(o=>`${o.label}: $${o.amount.toLocaleString()} (${(o.growth*100).toFixed(1)}%/yr)`).join("; ");
+    return[i+1,d.name,d.price,d.cap,d.startMonth,d.ioPeriod||12,
+      d.txCosts||0,(d.capexItems||[]).reduce((s,c)=>s+c.amount,0),capexStr,
+      d.noiPlug||"",d.noiY1Growth,d.noiY2Growth,
+      d.bwMarketing||0,d.bwAccounting||0,d.bwIT||0,d.bwRevMgmt||0,
+      slY1,slY2,ldY1,ldY2,opexStr];
+  });
+  const ws2=XLSX.utils.aoa_to_sheet([dealHdr,...dealRows]);
+  ws2["!cols"]=dealHdr.map((_,i)=>({wch:i===0?6:i===1?20:i===8||i===20?50:14}));
+  XLSX.utils.book_append_sheet(wb,ws2,"Deal Assumptions");
+
+  // ── Sheet 3: NOI Schedule (all deals × years) ──
+  const noiHdr=["Deal #","Name","Base NOI",...yrs,"Exit NOI","Exit Value","Net Sale Proceeds","IRR","MOIC"];
+  const noiRows=m.assetR.map((ar,i)=>[
+    i+1,ar.name,ar.baseNOI,...ar.noi.slice(1),
+    ar.noi[ft],ar.exitVal,ar.saleNet,ar.irr,ar.moic
+  ]);
+  // Portfolio total row
+  noiRows.push(["","PORTFOLIO TOTAL",m.assetR.reduce((s,x)=>s+x.baseNOI,0),
+    ...yrs.map((_,y)=>m.assetR.reduce((s,x)=>s+(x.noi[y+1]||0),0)),
+    m.assetR.reduce((s,x)=>s+(x.noi[ft]||0),0),
+    m.assetR.reduce((s,x)=>s+(x.exitVal||0),0),
+    m.totSaleProc,"",""]);
+  const ws3=XLSX.utils.aoa_to_sheet([noiHdr,...noiRows]);
+  ws3["!cols"]=noiHdr.map((_,i)=>({wch:i===1?20:14}));
+  XLSX.utils.book_append_sheet(wb,ws3,"NOI Schedule");
+
+  // ── Sheet 4: Debt Service Schedule ──
+  const dsHdr=["Deal #","Name","Acq Debt","CapEx Debt","Total Debt","I/O Years",...yrs.map(y=>y+" DS"),"Loan Balance at Exit"];
+  const dsRows=m.assetR.map((ar,i)=>[
+    i+1,ar.name,ar.debt,ar.totalDebt-ar.debt,ar.totalDebt,ar.ioYrs,
+    ...ar.dsByYear.slice(1),ar.lb
+  ]);
+  const ws4=XLSX.utils.aoa_to_sheet([dsHdr,...dsRows]);
+  ws4["!cols"]=dsHdr.map((_,i)=>({wch:i===1?20:14}));
+  XLSX.utils.book_append_sheet(wb,ws4,"Debt Schedule");
+
+  // ── Sheet 5: BW Fees ──
+  const bwHdr=["Deal #","Name","BW Mktg","BW Acct","BW IT","BW Rev %",...yrs.map(y=>y+" BW Fee"),"7yr Total"];
+  const bwRows=m.assetR.map((ar,i)=>[
+    i+1,ar.name,ar.bwMarketing||0,ar.bwAccounting||0,ar.bwIT||0,ar.bwRevMgmt||0,
+    ...ar.bwAnn.slice(1),ar.totBWFee
+  ]);
+  const ws5=XLSX.utils.aoa_to_sheet([bwHdr,...bwRows]);
+  ws5["!cols"]=bwHdr.map((_,i)=>({wch:i===1?20:14}));
+  XLSX.utils.book_append_sheet(wb,ws5,"BW Fees");
+
+  // ── Sheet 6: Equity Cash Flow ──
+  const cfHdr=["Deal #","Name","Y0 (Equity In)",...yrs,"Total Equity In","MOIC","IRR"];
+  const cfRows=m.assetR.map((ar,i)=>{
+    const ecf=ar.noi.map((n,y)=>{
+      if(y===0) return -(ar.eq+(ar.capexEqByYear?.[0]||0)+(ar.txCosts||0));
+      const capEq=ar.capexEqByYear?.[y]||0;
+      return n-(ar.dsByYear?.[y]||0)-(ar.bwAnn?.[y]||0)-capEq;
+    });
+    ecf[ft]+=ar.saleNet;
+    return[i+1,ar.name,...ecf,ar.totalEquityIn,ar.moic,ar.irr];
+  });
+  const ws6=XLSX.utils.aoa_to_sheet([cfHdr,...cfRows]);
+  ws6["!cols"]=cfHdr.map((_,i)=>({wch:i===1?20:14}));
+  XLSX.utils.book_append_sheet(wb,ws6,"Equity Cash Flow");
+
+  // ── Sheet 7: Monthly Portfolio CF ──
+  const moHdr=["Month","Portfolio NOI","Debt Service","BW Fees","G&A","Net Op CF","LP Calls","GP Calls"];
+  const moRows=m.monthly.map(x=>[x.mo,x.noi,x.ds,x.bwF,x.ga,x.netOpCF,x.lpCall,x.gpCall]);
+  const ws7=XLSX.utils.aoa_to_sheet([moHdr,...moRows]);
+  ws7["!cols"]=moHdr.map(()=>({wch:14}));
+  XLSX.utils.book_append_sheet(wb,ws7,"Monthly Cash Flow");
+
+  // ── Sheet 8: Waterfall ──
+  const wf=[
+    ["LP/GP Waterfall"],
+    [],
+    ["Total Pool (Sale + OpCF)",m.pool],
+    [],
+    ["Tier 1: Return of Capital"],
+    ["LP ROC",m.lpROC],["GP ROC",m.gpROC],
+    [],
+    ["Tier 2: Preferred Return"],
+    ["Pref Rate",a.prefReturn],["Pref Type",a.compoundPref?"Compound":"Simple"],
+    ["LP Pref Due",a.compoundPref?m.lpActualCapital*(Math.pow(1+a.prefReturn,ft)-1):m.lpActualCapital*a.prefReturn*ft],
+    ["LP Pref Paid",m.lpPref],
+    [],
+    ["Tier 3: Promote"],
+    ["Carry %",a.carry],["Catch-Up",a.catchUp?"Yes":"No"],
+    ["GP Promote",m.gpPromote],["LP Residual",m.lpResid],
+    [],
+    ["Totals"],
+    ["LP Total Distributions",m.lpTotal],["LP Capital In",m.lpActualCapital],
+    ["LP MOIC",m.lpMOIC],["LP Net IRR",m.lpIRR],
+    [],
+    ["GP Total",m.gpFundTotal],["GP Net (7yr)",m.gpNetTotal],
+  ];
+  const ws8=XLSX.utils.aoa_to_sheet(wf);
+  ws8["!cols"]=[{wch:28},{wch:18}];
+  XLSX.utils.book_append_sheet(wb,ws8,"Waterfall");
+
+  // ── Sheet 9: CapEx Detail ──
+  const cxHdr=["Deal #","Name","Item","Amount","Year","Equity Portion","Debt Portion"];
+  const cxRows=[];
+  a.assets.forEach((d,i)=>{
+    (d.capexItems||[]).forEach(c=>{
+      cxRows.push([i+1,d.name,c.label,c.amount,c.year===0?"Day-1":`Year ${c.year}`,
+        c.amount*(1-a.debtPct),c.amount*a.debtPct]);
+    });
+  });
+  if(cxRows.length>0){
+    cxRows.push(["","TOTAL","",cxRows.reduce((s,r)=>s+r[3],0),"",
+      cxRows.reduce((s,r)=>s+r[5],0),cxRows.reduce((s,r)=>s+r[6],0)]);
+  }
+  const ws9=XLSX.utils.aoa_to_sheet([cxHdr,...cxRows]);
+  ws9["!cols"]=[{wch:6},{wch:20},{wch:40},{wch:14},{wch:10},{wch:14},{wch:14}];
+  XLSX.utils.book_append_sheet(wb,ws9,"CapEx Detail");
+
+  // Download
+  XLSX.writeFile(wb,`RDM_Base_Case_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
 // ── FORMATTERS ────────────────────────────────────────────────────────────────
@@ -1082,7 +1254,14 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
 
   return(
     <div>
-      <PHdr title="Deal Underwriting" sub={`${a.assets.length} deals · ${f.$(totCost)} total cost basis · ${f.$(totExitVal)} exit valuation (Y${a.fundTerm} NOI @ ${f.p(a.exitCapRate)} cap)`}/>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
+        <PHdr title="Deal Underwriting" sub={`${a.assets.length} deals · ${f.$(totCost)} total cost basis · ${f.$(totExitVal)} exit valuation (Y${a.fundTerm} NOI @ ${f.p(a.exitCapRate)} cap)`}/>
+        <button onClick={()=>exportToExcel(m,a)} style={{padding:"8px 18px",background:C.accent,color:"#FFF",
+          border:"none",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0,
+          display:"flex",alignItems:"center",gap:6}}>
+          📊 Export to Excel
+        </button>
+      </div>
 
       {/* Portfolio KPI Strip */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:8,marginBottom:22}}>
