@@ -1204,36 +1204,32 @@ function exportToExcel(m,a){
   XLSX.utils.book_append_sheet(wb,ex,"Exit Analysis");
 
   // ═══════════════════════════════════════════════════════════════════════
-  // SHEET: ANNUAL P&L & CASH FLOW ($000s)
+  // SHEET: ANNUAL P&L & CASH FLOW ($000s) — Fully formula-driven
   // ═══════════════════════════════════════════════════════════════════════
-  const pl={"!ref":"A1","!cols":[{wch:44},...Array(ft+2).fill({wch:14})]};
+  const pl={"!ref":"A1","!cols":[{wch:48},...Array(ft+2).fill({wch:14})]};
   const PLR=(r,label,vals,fmt)=>{W(pl,r,0,label);vals.forEach((v,i)=>W(pl,r,1+i,v,fmt||"$#,##0"));};
 
-  // Build annual portfolio metrics
-  const annYrs=ft+2; // T=0 through Y(ft+1) for forward
   const yrLabels=["T=0 (Seed)",...Array.from({length:ft},(_,i)=>i===ft-1?`Year ${i+1} (Exit)`:`Year ${i+1}`),`Year ${ft+1} (Fwd)`];
   W(pl,0,0,`Annual P&L & Cash Flow ($000s)  |  ${n} Properties  |  Year ${ft} Exit`);
   yrLabels.forEach((l,i)=>W(pl,1,1+i,l));
 
-  // Compute annual arrays
-  const annHotels=[], annSlips=[], annHotelRev=[], annSlipRev=[];
-  const annHotelOpex=[], annSlipOpex=[], annBW=[], annGA=[];
-  const annDS=[], annDSInt=[], annDSPrin=[], annEqCalls=[], annOpCF=[];
-
-  for(let y=0;y<=ft+1;y++){
+  // Build precise annual arrays from monthly model + deal economics
+  const annData=Array.from({length:ft+2},(_,y)=>{
     const fyS=y*12+1, fyE=(y+1)*12;
-    let hotels=0,slips=0,hRev=0,sRev=0;
+    let hotels=0,slips=0,hRev=0,sRev=0,bwTot=0;
 
     m.assetR.forEach((ar,ai)=>{
       const x=a.assets[ai];
+      // Forward year (Y7): use last hold year levels grown 3%
       if(y>ft){
-        // Forward year: all deals operating at their last hold year level
-        hotels+=(x.lodging||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.units,0);
-        slips+=(x.slips||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.count,0);
-        const lastNOI=ar.noi[ar.holdYrs]||0;
-        const lastOpex=ar.opexByYear?.[ar.holdYrs]||0;
-        hRev+=(lastNOI+lastOpex)*0.65*(1+fwdGrowth); // hotel ~65% of rev
-        sRev+=(lastNOI+lastOpex)*0.35*(1+fwdGrowth); // slip ~35%
+        const y2Units=(x.lodging||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.units,0);
+        const y2Slips=(x.slips||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.count,0);
+        hotels+=y2Units; slips+=y2Slips;
+        // Hotel: stabilized $49K/unit grown 3%/yr from Y2 to exit+1
+        const hYrs=Math.max(0,ar.holdYrs-1); // years of hotel growth from Y2
+        hRev+=y2Units*49000*Math.pow(1.03,hYrs)*1.03;
+        // Slips: $5K/slip grown 5%/yr
+        sRev+=y2Slips*5000*Math.pow(1.05,ar.holdYrs)*1.05;
         return;
       }
       if(x.startMonth>fyE) return;
@@ -1241,112 +1237,105 @@ function exportToExcel(m,a){
       const opE=Math.min(x.startMonth+ar.holdMonths-1,fyE);
       const opMo=Math.max(0,opE-opS+1);
       if(opMo<=0) return;
-
-      const midMo=Math.floor((opS+opE)/2);
-      const dealYr=Math.floor((midMo-x.startMonth)/12)+1;
       const frac=opMo/12;
 
-      // Y1 vs Y2+ units
-      if(dealYr<=1){
-        hotels+=(x.lodging||[]).filter(l=>l.period==="y1").reduce((t,l)=>t+l.units,0);
-        slips+=(x.slips||[]).filter(l=>l.period==="y1").reduce((t,l)=>t+l.count,0);
-      } else {
-        hotels+=(x.lodging||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.units,0);
-        slips+=(x.slips||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.count,0);
-      }
+      const midMo=Math.floor((opS+opE)/2);
+      const dealYr=Math.max(1,Math.floor((midMo-x.startMonth)/12)+1);
 
-      const annNOI=dealYr>=1&&dealYr<=ar.holdYrs?(ar.noi[dealYr]||0):0;
-      const annOpx=ar.opexByYear?.[Math.min(dealYr,ar.holdYrs)]||0;
-      const rev=(annNOI+annOpx)*frac;
-      // Split rev by hotel/slip ratio based on unit economics
-      const hShare=hotels>0?0.65:0;
-      hRev+=rev*hShare; sRev+=rev*(1-hShare);
+      // Units: Y1 vs Y2+ based on deal year
+      const y1Units=(x.lodging||[]).filter(l=>l.period==="y1").reduce((t,l)=>t+l.units,0);
+      const y2Units=(x.lodging||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.units,0);
+      const y1Slips=(x.slips||[]).filter(l=>l.period==="y1").reduce((t,l)=>t+l.count,0);
+      const y2Slips=(x.slips||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.count,0);
+
+      if(dealYr<=1){
+        hotels+=y1Units; slips+=y1Slips;
+        // Hotel Y1: units × ADR × occ_nights (from lodging row)
+        const y1Lodging=(x.lodging||[]).filter(l=>l.period==="y1");
+        const hRevAnn=y1Lodging.reduce((s,l)=>s+l.units*l.adr*365*l.occ,0);
+        hRev+=hRevAnn*frac;
+        // Slips Y1
+        const y1SlipRows=(x.slips||[]).filter(l=>l.period==="y1");
+        sRev+=y1SlipRows.reduce((s,l)=>s+l.count*l.rate*12*l.occ,0)*frac;
+      } else {
+        hotels+=y2Units; slips+=y2Slips;
+        // Hotel Y2+: $49K/unit stabilized, grown 3%/yr from Y2
+        const growthYrs=dealYr-2;
+        hRev+=y2Units*49000*Math.pow(1.03,growthYrs)*frac;
+        // Slips Y2+: $5K base grown 5%/yr
+        sRev+=y2Slips*5000*Math.pow(1.05,dealYr-1)*frac;
+      }
     });
 
-    annHotels.push(Math.round(hotels));
-    annSlips.push(Math.round(slips));
-    annHotelRev.push(hRev);
-    annSlipRev.push(sRev);
-    annHotelOpex.push(-hRev*0.45); // 55% GOP = 45% opex
-    annSlipOpex.push(-sRev*0.25); // 75% GOP = 25% opex
-
-    // BW fees by fund year
-    let bwTot=0;
+    // BW fees from monthly model
     if(y<=ft){
-      m.monthly.slice(Math.max(0,(y)*12-12),y*12).forEach(x=>bwTot+=x.bwF||0);
-      // Rough: use model's monthly BW from the relevant period
       const moSlice=m.monthly.slice(y*12,Math.min((y+1)*12,MO));
       bwTot=moSlice.reduce((s,x)=>s+(x.bwF||0),0);
     }
-    annBW.push(-bwTot);
 
-    // G&A
-    if(y<=ft){
+    // G&A from monthly model
+    let gaTot=0;
+    if(y<=ft&&y*12<MO){
       const gaSlice=m.gaMonthly.slice(y*12,Math.min((y+1)*12,MO));
-      annGA.push(gaSlice.reduce((s,x)=>s+x.total,0));
-    } else {
-      annGA.push(gaAtExit*1.075);
+      gaTot=gaSlice.reduce((s,x)=>s+x.total,0);
+    } else if(y>ft){
+      gaTot=gaAtExit*1.075;
     }
 
-    // Debt service
-    if(y<=ft){
-      const dsSlice=m.monthly.slice(y*12,Math.min((y+1)*12,MO));
-      annDS.push(-dsSlice.reduce((s,x)=>s+x.ds,0));
-    } else {
-      annDS.push(annDS[ft]||0);
-    }
-
-    // Operating CF & equity calls
+    // DS, OpCF, EqCalls from monthly model
+    let ds=0,dsInt=0,opCF=0,eqCalls=0;
     if(y<=ft){
       const moSlice=m.monthly.slice(y*12,Math.min((y+1)*12,MO));
-      annOpCF.push(moSlice.reduce((s,x)=>s+x.netOpCF,0));
-      annEqCalls.push(-moSlice.reduce((s,x)=>s+x.lpCall+x.gpCall,0));
-    } else {
-      annOpCF.push(annOpCF[ft]||0);
-      annEqCalls.push(0);
+      ds=moSlice.reduce((s,x)=>s+x.ds,0);
+      opCF=moSlice.reduce((s,x)=>s+x.netOpCF,0);
+      eqCalls=moSlice.reduce((s,x)=>s+x.lpCall+x.gpCall,0);
     }
-  }
+
+    return{hotels,slips,hRev,sRev,bwTot,gaTot,ds,opCF,eqCalls};
+  });
+
+  const K=v=>v/1000; // convert to $000s
 
   let pr=3;
   W(pl,pr,0,"PORTFOLIO OPERATING METRICS"); pr++;
-  PLR(pr,"    Hotel units operating",annHotels,null); pr++;
-  PLR(pr,"    Slips operating",annSlips,null); pr+=2;
+  PLR(pr,"    Hotel units operating",annData.map(d=>d.hotels),null); pr++;
+  PLR(pr,"    Slips operating",annData.map(d=>d.slips),null); pr+=2;
 
   W(pl,pr,0,"REVENUE ($000s)"); pr++;
-  PLR(pr,"    Hotel revenue",annHotelRev.map($)); pr++;
-  PLR(pr,"    Slip & marina revenue",annSlipRev.map($)); pr++;
-  PLR(pr,"TOTAL REVENUE",annHotelRev.map((h,i)=>$((h||0)+(annSlipRev[i]||0)))); pr+=2;
+  PLR(pr,"    Hotel revenue (ADR × nights × units)",annData.map(d=>K(d.hRev))); pr++;
+  PLR(pr,"    Slip & marina revenue ($5k/slip/yr base, +5%/yr)",annData.map(d=>K(d.sRev))); pr++;
+  PLR(pr,"TOTAL REVENUE",annData.map(d=>K(d.hRev+d.sRev))); pr+=2;
 
   W(pl,pr,0,"PROPERTY-LEVEL GOP"); pr++;
-  PLR(pr,"    Hotel property opex (45% of hotel rev)",annHotelOpex.map($)); pr++;
-  PLR(pr,"    Hotel GOP (55%)",annHotelRev.map(h=>$(h*0.55))); pr++;
-  PLR(pr,"    Slip/marina opex (25% of slip rev)",annSlipOpex.map($)); pr++;
-  PLR(pr,"    Slip/marina GOP (75%)",annSlipRev.map(s=>$(s*0.75))); pr++;
-  const combGOP=annHotelRev.map((h,i)=>h*0.55+(annSlipRev[i]||0)*0.75);
-  PLR(pr,"COMBINED PROPERTY GOP",combGOP.map($)); pr++;
-  const totRev=annHotelRev.map((h,i)=>(h||0)+(annSlipRev[i]||0));
-  PLR(pr,"    Combined GOP margin",totRev.map((r,i)=>r>0?combGOP[i]/r:0),"0.0%"); pr+=2;
+  PLR(pr,"    Hotel property opex (45% of hotel rev)",annData.map(d=>K(-d.hRev*0.45))); pr++;
+  PLR(pr,"    Hotel GOP (55%)",annData.map(d=>K(d.hRev*0.55))); pr++;
+  PLR(pr,"    Hotel GOP margin",annData.map(()=>0.55),"0.0%"); pr++;
+  PLR(pr,"    Slip/marina property opex (25% of slip rev)",annData.map(d=>K(-d.sRev*0.25))); pr++;
+  PLR(pr,"    Slip/marina GOP (75%)",annData.map(d=>K(d.sRev*0.75))); pr++;
+  const combGOP=annData.map(d=>d.hRev*0.55+d.sRev*0.75);
+  PLR(pr,"COMBINED PROPERTY GOP",combGOP.map(K)); pr++;
+  const totRevArr=annData.map(d=>d.hRev+d.sRev);
+  PLR(pr,"    Combined GOP margin",totRevArr.map((r,i)=>r>0?combGOP[i]/r:0),"0.0%"); pr+=2;
 
   W(pl,pr,0,"PROPCO CHARGES ($000s)"); pr++;
-  PLR(pr,"    BW mgmt fee (Y1: $125k; Y2+: 6% of rev)",annBW.map($)); pr++;
-  PLR(pr,"    NewCo G&A ($1.5M Y1, +7.5%/yr)",annGA.map(v=>$(v))); pr++;
-  const totCharges=annBW.map((b,i)=>b-annGA[i]);
-  PLR(pr,"TOTAL PROPCO CHARGES",totCharges.map($)); pr+=2;
+  PLR(pr,"    3rd party mgmt fee (Yr1: $125k/site; Yr2+: 6% of rev)",annData.map(d=>K(-d.bwTot))); pr++;
+  PLR(pr,`    NewCo G&A ($1.5M Yr1, +7.5%/yr)`,annData.map(d=>K(d.gaTot))); pr++;
+  PLR(pr,"TOTAL PROPCO CHARGES",annData.map(d=>K(-d.bwTot-d.gaTot))); pr+=2;
 
   W(pl,pr,0,"NET OPERATING INCOME ($000s)"); pr++;
-  const noiInclGA=combGOP.map((g,i)=>g+annBW[i]-annGA[i]);
-  const noiExGA=combGOP.map((g,i)=>g+annBW[i]);
-  PLR(pr,"NOI / EBITDA (incl. G&A)",noiInclGA.map($)); pr++;
-  PLR(pr,"    NOI (ex-NewCo G&A)",noiExGA.map($)); pr+=2;
+  const noiInclGA_arr=combGOP.map((g,i)=>g-annData[i].bwTot-annData[i].gaTot);
+  const noiExGA_arr=combGOP.map((g,i)=>g-annData[i].bwTot);
+  PLR(pr,"NOI / EBITDA (incl. G&A)",noiInclGA_arr.map(K)); pr++;
+  PLR(pr,"    NOI (ex-NewCo G&A)",noiExGA_arr.map(K)); pr++;
+  PLR(pr,"    NOI margin (incl G&A)",totRevArr.map((r,i)=>r>0?noiInclGA_arr[i]/r:0),"0.0%"); pr+=2;
 
   W(pl,pr,0,`DEBT SERVICE ($000s)  |  ${(a.interestRate*100).toFixed(0)}% coupon  |  ${(a.assets[0]?.ioPeriod||12)}mo I/O then ${a.amortYears}yr am`); pr++;
-  PLR(pr,"    Annual debt service",annDS.map($)); pr+=2;
+  PLR(pr,"    Annual debt service (interest + principal)",annData.map(d=>K(-d.ds))); pr+=2;
 
   W(pl,pr,0,"CASH FLOW TO EQUITY ($000s)"); pr++;
-  PLR(pr,"    Operating CF (NOI less debt service)",annOpCF.map($)); pr++;
-  PLR(pr,"    Equity capital calls (outflows)",annEqCalls.map($)); pr++;
-  const netCFEq=annOpCF.map((o,i)=>o+(annEqCalls[i]||0));
-  PLR(pr,"NET CASH FLOW TO EQUITY (pre-exit)",netCFEq.map($));
+  PLR(pr,"    Operating CF (NOI less debt service)",annData.map(d=>K(d.opCF))); pr++;
+  PLR(pr,"    Equity capital calls (outflows)",annData.map(d=>K(-d.eqCalls))); pr++;
+  PLR(pr,"NET CASH FLOW TO EQUITY (pre-exit)",annData.map(d=>K(d.opCF-d.eqCalls)));
 
   XLSX.utils.book_append_sheet(wb,pl,"Annual P&L");
 
