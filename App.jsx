@@ -492,16 +492,21 @@ function run(a){
   // Cumulative includes capital calls so chart correctly goes negative early then recovers
   const partnerCum=partnerMonthly.map(x=>{pCum+=x.draw+x.coInvest+x.promote;return{mo:x.mo,cum:pCum};});
 
-  // Portfolio NOI chart
-  // NOI chart — per fund year, only count deals that are active in that year
+  // Portfolio NOI chart — prorated for partial years, only active deals per fund year
   const noiChart=Array.from({length:fundTerm},(_,fy)=>{
-    const fundMonth=(fy+1)*12; // end of this fund year
+    const fyStart=fy*12+1, fyEnd=(fy+1)*12;
     let totalNOI=0;
     assetR.forEach((ar,ai)=>{
       const x=assets[ai];
-      if(x.startMonth>fundMonth) return; // not yet acquired
-      const dealYr=Math.floor((fundMonth-x.startMonth)/12)+1; // which deal-year is this?
-      if(dealYr>=1 && dealYr<=ar.holdYrs) totalNOI+=(ar.noi[dealYr]||0);
+      if(x.startMonth>fyEnd) return; // not yet acquired
+      const opStart=Math.max(x.startMonth, fyStart);
+      const opEnd=Math.min(x.startMonth+ar.holdMonths-1, fyEnd);
+      const opMonths=Math.max(0, opEnd-opStart+1);
+      if(opMonths<=0) return;
+      const midMo=Math.floor((opStart+opEnd)/2);
+      const dealYr=Math.floor((midMo-x.startMonth)/12)+1;
+      const annNOI=dealYr>=1&&dealYr<=ar.holdYrs?(ar.noi[dealYr]||0):0;
+      totalNOI+=annNOI*(opMonths/12);
     });
     return{year:`Yr ${fy+1}`,noi:totalNOI};
   });
@@ -788,43 +793,60 @@ function exportToExcel(m,a){
   // ═══════════════════════════════════════════════════════════════════════
   // SHEET 3: FUND YEAR NOI — maps each deal's NOI to fund calendar years
   // ═══════════════════════════════════════════════════════════════════════
-  const fy={"!ref":"A1","!cols":[{wch:4},{wch:18},{wch:6},...Array(ft).fill({wch:14}),{wch:14}]};
-  W(fy,0,0,"NOI BY FUND YEAR — each deal mapped to the fund calendar");
+  const fy={"!ref":"A1","!cols":[{wch:4},{wch:18},{wch:6},{wch:6},...Array(ft).fill({wch:14})]};
+
+  W(fy,0,0,"NOI BY FUND YEAR — prorated for partial operating years");
   const fyCols=Array.from({length:ft},(_,i)=>`Fund Yr ${i+1}`);
-  WR(fy,1,["#","Name","Close",...fyCols,"Active Yrs"]);
+  WR(fy,1,["#","Name","Close","Months",...fyCols]);
   m.assetR.forEach((ar,i)=>{
     const r=2+i;
-    W(fy,r,0,i+1); W(fy,r,1,ar.name); W(fy,r,2,ar.startMonth);
+    W(fy,r,0,i+1); W(fy,r,1,ar.name); W(fy,r,2,ar.startMonth); W(fy,r,3,ar.holdMonths);
     for(let y=0;y<ft;y++){
-      const fundMonth=(y+1)*12;
-      if(ar.startMonth>fundMonth){
-        // Not yet acquired in this fund year
-      } else {
-        const dealYr=Math.floor((fundMonth-ar.startMonth)/12)+1;
-        if(dealYr>=1&&dealYr<=ar.holdYrs){
-          W(fy,r,3+y,ar.noi[dealYr]||0,"$#,##0");
-        }
-      }
+      const fyStart=y*12+1, fyEnd=(y+1)*12;
+      if(ar.startMonth>fyEnd) continue; // not yet acquired
+      const opStart=Math.max(ar.startMonth, fyStart);
+      const opEnd=Math.min(ar.startMonth+ar.holdMonths-1, fyEnd);
+      const opMo=Math.max(0, opEnd-opStart+1);
+      if(opMo<=0) continue;
+      const midMo=Math.floor((opStart+opEnd)/2);
+      const dealYr=Math.floor((midMo-ar.startMonth)/12)+1;
+      const annNOI=dealYr>=1&&dealYr<=ar.holdYrs?(ar.noi[dealYr]||0):0;
+      W(fy,r,4+y,annNOI*(opMo/12),"$#,##0");
     }
-    W(fy,r,3+ft,ar.holdYrs);
   });
   // Totals row
   const fyTR=2+n;
-  W(fy,fyTR,0,""); W(fy,fyTR,1,"PORTFOLIO TOTAL"); W(fy,fyTR,2,"");
+  W(fy,fyTR,0,""); W(fy,fyTR,1,"PORTFOLIO TOTAL");
   for(let y=0;y<ft;y++){
-    W(fy,fyTR,3+y,`=SUM(${CL(3+y)}3:${CL(3+y)}${2+n})`,"$#,##0",m.noiChart[y]?.noi||0);
+    W(fy,fyTR,4+y,`=SUM(${CL(4+y)}3:${CL(4+y)}${2+n})`,"$#,##0",m.noiChart[y]?.noi||0);
   }
   // Active deals count per fund year
   const fyCountR=fyTR+1;
   W(fy,fyCountR,1,"ACTIVE DEALS");
   for(let y=0;y<ft;y++){
+    const fyS=y*12+1, fyE=(y+1)*12;
     const cnt=m.assetR.filter((ar,ai)=>{
-      const x=a.assets[ai]; const fm=(y+1)*12;
-      if(x.startMonth>fm)return false;
-      const dy=Math.floor((fm-x.startMonth)/12)+1;
-      return dy>=1&&dy<=ar.holdYrs;
+      const x=a.assets[ai];
+      if(x.startMonth>fyE)return false;
+      const opEnd=Math.min(x.startMonth+ar.holdMonths-1,fyE);
+      return opEnd>=fyS;
     }).length;
-    W(fy,fyCountR,3+y,cnt);
+    W(fy,fyCountR,4+y,cnt);
+  }
+  // Months operating row
+  const fyMoR=fyCountR+1;
+  W(fy,fyMoR,1,"MONTHS OPERATING");
+  for(let y=0;y<ft;y++){
+    const fyS=y*12+1, fyE=(y+1)*12;
+    let totMo=0;
+    m.assetR.forEach((ar,ai)=>{
+      const x=a.assets[ai];
+      if(x.startMonth>fyE)return;
+      const opS=Math.max(x.startMonth,fyS);
+      const opE=Math.min(x.startMonth+ar.holdMonths-1,fyE);
+      totMo+=Math.max(0,opE-opS+1);
+    });
+    W(fy,fyMoR,4+y,totMo);
   }
   XLSX.utils.book_append_sheet(wb,fy,"Fund Year NOI");
 
