@@ -247,40 +247,88 @@ function run(a){
       return ds;
     });
 
-    // Loan balance at exit — based on actual hold years
-    const acqAmYrs = Math.max(0, holdYrs - ioYrs);
-    let totalLB = acqAmYrs>0 ? Math.abs(fvLoan(interestRate,acqAmYrs,amAnnDS,debt)) : debt;
+    // Loan balance at exit — monthly precision
+    const ioMoCount = asset.ioPeriod||0;
+    const moAmPmt = Math.abs(pmt(interestRate/12, amortYears*12, debt));
+    const acqAmMo = Math.max(0, holdMonths - ioMoCount);
+    let totalLB = acqAmMo>0 ? Math.abs(fvLoan(interestRate/12, acqAmMo, moAmPmt, debt)) : debt;
     Object.entries(capexDebtByYear).forEach(([cy,cd])=>{
-      const capYr = Number(cy);
-      const capIO = Math.ceil((asset.ioPeriod||0)/12);
-      const yrsHeld = holdYrs - capYr;
-      if(yrsHeld<=0){ totalLB += cd; return; }
-      const capAmYrs = Math.max(0, yrsHeld - capIO);
-      totalLB += capAmYrs>0 ? Math.abs(fvLoan(interestRate,capAmYrs,pmt(interestRate,amortYears,cd),cd)) : cd;
+      const capMo = Number(cy)*12; // month of deployment (deal-relative)
+      const moHeld = holdMonths - capMo;
+      if(moHeld<=0){ totalLB += cd; return; }
+      const capAmMo = Math.max(0, moHeld - ioMoCount);
+      const capMoPmt = Math.abs(pmt(interestRate/12, amortYears*12, cd));
+      totalLB += capAmMo>0 ? Math.abs(fvLoan(interestRate/12, capAmMo, capMoPmt, cd)) : cd;
     });
 
-    // Equity cash flow — length = holdYrs + 1
-    const ecf = noi.map((n,y)=>{
-      const capEq = capexEqByYear[y]||0;
-      if(y===0) return -(eq + capEq + txCosts);
-      return n - dsByYear[y] - bwAnn[y] - capEq;
-    });
-
+    // Exit calculations (needed for monthly ECF)
     const exitNOI = noi[holdYrs];
     const exitVal = exitNOI / exitCapRate;
     const lb = totalLB;
     const saleNet = exitVal - lb - exitVal*saleCosts;
-    ecf[holdYrs] += saleNet;
-    const eqIRR = irr(ecf);
+
+    // ── MONTHLY EQUITY CASH FLOW aligned to fund calendar ──
+    // Each deal gets a (holdMonths+1) array: month 0 = closing, month N = exit
+    const ioMo = asset.ioPeriod||0;
+    const moRate = interestRate/12;
+    const moAmDS = Math.abs(pmt(interestRate/12, amortYears*12, debt)); // monthly amortizing
+    const moIODS = debt*interestRate/12; // monthly I/O
+
+    // Monthly capex debt service per tranche
+    const capexDebtTranches = Object.entries(capexDebtByYear).map(([cy,cd])=>({
+      deployMonth: Number(cy)*12, // deal-month when deployed
+      debt: cd,
+      moIO: cd*interestRate/12,
+      moAm: Math.abs(pmt(interestRate/12, amortYears*12, cd)),
+    }));
+
+    // Build monthly ECF: index 0 = deal close month, index holdMonths = exit month
+    const moECF = Array.from({length:holdMonths+1},(_,mi)=>{
+      if(mi===0){
+        // Closing: equity + day-1 capex equity + tx costs
+        return -(eq + (capexEqByYear[0]||0) + txCosts);
+      }
+      // Which deal-year is this month in? (mi=1 is first operating month = deal Y1)
+      const dealYr = Math.floor((mi-1)/12)+1;
+      // Monthly NOI from annual schedule
+      const annNOI = dealYr<=holdYrs ? (noi[dealYr]||0) : (noi[holdYrs]||0);
+      const moNOI = annNOI/12;
+      // Monthly acq debt service (I/O vs amortizing)
+      const acqDS = mi<=ioMo ? moIODS : moAmDS;
+      // Monthly capex debt service
+      let capDS = 0;
+      capexDebtTranches.forEach(t=>{
+        const moActive = mi - t.deployMonth;
+        if(moActive<=0) return;
+        capDS += moActive<=ioMo ? t.moIO : t.moAm;
+      });
+      // Monthly BW fees
+      const annBW = dealYr<=holdYrs ? (bwAnn[dealYr]||0) : (bwAnn[holdYrs]||0);
+      const moBW = annBW/12;
+      // Capex equity calls at deployment month
+      let capEq = 0;
+      Object.entries(capexEqByYear).forEach(([cy,ceq])=>{
+        if(Number(cy)===0) return; // day-1 already in mi=0
+        if(mi === Number(cy)*12) capEq = ceq; // deploy at start of deal-year
+      });
+      let cf = moNOI - acqDS - capDS - moBW - capEq;
+      // Exit month: add net sale proceeds
+      if(mi===holdMonths) cf += saleNet;
+      return cf;
+    });
+
+    // IRR from monthly CF, annualized
+    const moIRR = irr(moECF, 0.01); // monthly IRR with lower initial guess
+    const eqIRR = Math.pow(1+moIRR, 12)-1; // annualized
     const totalEquityIn = eq + Object.values(capexEqByYear).reduce((s,v)=>s+v,0) + txCosts;
     const totalDebt = debt + Object.values(capexDebtByYear).reduce((s,v)=>s+v,0);
-    const moic = ecf.slice(1).reduce((s,v)=>s+v,0) / totalEquityIn;
+    const moic = moECF.slice(1).reduce((s,v)=>s+v,0) / totalEquityIn;
     const totBWFee = bwAnn.reduce((s,v)=>s+v,0);
 
     return {...asset, eq, debt, totalDebt, annDS, ioAnnDS, amAnnDS, ioYrs, holdYrs, holdMonths, dsByYear, noi, bwFees, bwAnn, totBWFee,
       totalCapex, day1Capex, capexByYear, capexEqByYear, capexDebtByYear, txCosts,
       buRev, buRevY1, buRevY2, grossRev, grossRevY2, baseNOIY2, y1Opex, opexByYear,
-      saleNet, exitVal, lb, irr:eqIRR, moic, baseNOI, totalEquityIn};
+      saleNet, exitVal, lb, irr:eqIRR, moic, baseNOI, totalEquityIn, moECF};
   });
 
   // Monthly portfolio — total equity includes acq equity + capex equity + tx costs
