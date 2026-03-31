@@ -1371,7 +1371,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                       {l:`MOIC ${f.x(r.moic)}`,bg:C.accentDim,c:C.accent},
                       {l:`Equity ${f.$(r.eq)}`,bg:C.blueL,c:C.blue},
                       {l:`Base NOI ${f.$(r.baseNOI)}`,bg:"rgba(8,145,178,0.08)",c:C.cyan},
-                      {l:`BW Fees ${f.$(r.totBWFee)}/7yr`,bg:"rgba(217,119,6,0.08)",c:C.gold},
+                      {l:`BW Fees ${f.$(r.totBWFee)}/${r.holdYrs}yr`,bg:"rgba(217,119,6,0.08)",c:C.gold},
                     ].map(({l,bg,c})=>(
                       <span key={l} style={{background:bg,color:c,padding:"4px 12px",borderRadius:20,fontSize:10,fontWeight:700}}>{l}</span>
                     ))}
@@ -1392,7 +1392,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                 {label:"Net Proceeds",     value:f.$(r.saleNet), accent:C.cyan},
                 {label:"Annual Debt Svc",  value:f.$(r.annDS),   accent:C.orange},
                 {label:"Loan Balance",     value:f.$(r.lb),      accent:C.purple},
-                {label:"7yr BW Fees",      value:f.$(r.totBWFee),accent:C.gold},
+                {label:`${r.holdYrs}yr BW Fees`,value:f.$(r.totBWFee),accent:C.gold},
                 {label:"Tx Costs",          value:f.$(r.txCosts), accent:C.red},
               ].map(({label,value,accent})=>(
                 <div key={label} style={{background:C.surface,border:`1px solid ${C.border}`,
@@ -1687,10 +1687,10 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                       Y1 Rev Mgmt: <span style={{color:C.gold,fontWeight:700}}>{f.$(r.baseNOI*(asset.bwRevMgmt||0))}</span>
                     </div>
                     <div style={{marginTop:16,padding:"12px 14px",background:C.surfaceAlt,borderRadius:8}}>
-                      <div style={{fontSize:10,fontWeight:700,color:C.text,marginBottom:6}}>7-Year BW Fee Total</div>
+                      <div style={{fontSize:10,fontWeight:700,color:C.text,marginBottom:6}}>{r.holdYrs}-Year BW Fee Total</div>
                       <div style={{fontSize:20,fontWeight:700,color:C.cyan}}>{f.$(r.totBWFee)}</div>
                       <div style={{fontSize:9,color:C.textFaint,marginTop:4}}>
-                        Fixed: {f.$((((asset.bwMarketing||0)+(asset.bwAccounting||0)+(asset.bwIT||0))*a.fundTerm))} + Rev Mgmt: {f.$(r.totBWFee-((asset.bwMarketing||0)+(asset.bwAccounting||0)+(asset.bwIT||0))*a.fundTerm)}
+                        Fixed: {f.$((((asset.bwMarketing||0)+(asset.bwAccounting||0)+(asset.bwIT||0))*r.holdYrs))} + Rev Mgmt: {f.$(r.totBWFee-((asset.bwMarketing||0)+(asset.bwAccounting||0)+(asset.bwIT||0))*r.holdYrs)}
                       </div>
                     </div>
                   </div>
@@ -1721,7 +1721,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                 )}
 
                 {(asset.opex||[]).map((o,oi)=>{
-                  const y7 = o.amount*Math.pow(1+(o.growth||0),a.fundTerm-1);
+                  const yEnd = o.amount*Math.pow(1+(o.growth||0),(r.holdYrs||a.fundTerm)-1);
                   return(
                     <div key={oi} style={{display:"grid",gridTemplateColumns:"2.5fr 1fr 1fr 1fr auto",gap:8,alignItems:"center",
                       padding:"6px 0",borderBottom:`1px solid ${C.border}`}}>
@@ -1735,7 +1735,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                           style={{width:48,background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"4px 4px",fontSize:11,color:C.orange,fontWeight:700,textAlign:"right",outline:"none"}}/>
                         <span style={{fontSize:9,color:C.textFaint}}>%</span>
                       </div>
-                      <span style={{fontSize:11,color:C.textDim,textAlign:"right"}}>{f.$(y7)}</span>
+                      <span style={{fontSize:11,color:C.textDim,textAlign:"right"}}>{f.$(yEnd)}</span>
                       <button onClick={()=>{const arr=(asset.opex||[]).filter((_,j)=>j!==oi);setAsset(sel,"opex",arr);}}
                         style={{background:C.redL,border:"none",color:C.red,borderRadius:4,padding:"2px 6px",fontSize:9,cursor:"pointer"}}>✕</button>
                     </div>
@@ -1748,7 +1748,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                     <span style={{fontSize:11,fontWeight:700,color:C.text}}>Total OpEx</span>
                     <span style={{fontSize:11,fontWeight:700,color:C.red,textAlign:"right"}}>{f.$((asset.opex||[]).reduce((s,o)=>s+o.amount,0))}</span>
                     <span/>
-                    <span style={{fontSize:11,fontWeight:700,color:C.red,textAlign:"right"}}>{f.$((asset.opex||[]).reduce((s,o)=>s+o.amount*Math.pow(1+(o.growth||0),a.fundTerm-1),0))}</span>
+                    <span style={{fontSize:11,fontWeight:700,color:C.red,textAlign:"right"}}>{f.$((asset.opex||[]).reduce((s,o)=>s+o.amount*Math.pow(1+(o.growth||0),(r.holdYrs||a.fundTerm)-1),0))}</span>
                     <span/>
                   </div>
                 )}
@@ -1840,7 +1840,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
 
                 {/* Full NOI Schedule */}
                 <div style={{padding:"14px 16px",background:C.surfaceAlt,borderRadius:8,border:`1px solid ${C.border}`}}>
-                  <div style={{fontSize:10,fontWeight:700,color:C.text,marginBottom:10}}>NOI Schedule — {a.fundTerm} Year Hold</div>
+                  <div style={{fontSize:10,fontWeight:700,color:C.text,marginBottom:10}}>NOI Schedule — {r.holdYrs||a.fundTerm} Year Hold (Close M{asset.startMonth})</div>
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
                     <thead>
                       <tr style={{borderBottom:`1px solid ${C.borderDark}`}}>
@@ -1907,7 +1907,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                         <select value={c.year} onChange={e=>{const arr=[...(asset.capexItems||[])];arr[ci]={...arr[ci],year:Number(e.target.value)};setAsset(sel,"capexItems",arr);}}
                           style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"4px 6px",fontSize:11,color:C.text,cursor:"pointer",outline:"none"}}>
                           <option value={0}>Day-1</option>
-                          {Array.from({length:a.fundTerm},(_,i)=><option key={i+1} value={i+1}>Year {i+1}</option>)}
+                          {Array.from({length:r.holdYrs||a.fundTerm},(_,i)=><option key={i+1} value={i+1}>Year {i+1}</option>)}
                         </select>
                       </div>
                       <button onClick={()=>{const arr=(asset.capexItems||[]).filter((_,j)=>j!==ci);setAsset(sel,"capexItems",arr);}}
@@ -1926,15 +1926,15 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                 {(asset.capexItems||[]).length>0&&(
                   <div style={{padding:"12px 14px",background:C.surfaceAlt,borderRadius:8,border:`1px solid ${C.border}`}}>
                     <div style={{fontSize:10,fontWeight:700,color:C.text,marginBottom:8}}>CapEx by Year</div>
-                    <div style={{display:"grid",gridTemplateColumns:`auto repeat(${a.fundTerm},1fr)`,gap:6}}>
+                    <div style={{display:"grid",gridTemplateColumns:`auto repeat(${r.holdYrs||a.fundTerm},1fr)`,gap:6}}>
                       <div style={{fontSize:9,color:C.textFaint,padding:"4px 8px"}}>Day-1</div>
-                      {Array.from({length:a.fundTerm},(_,y)=>(
+                      {Array.from({length:r.holdYrs||a.fundTerm},(_,y)=>(
                         <div key={y} style={{fontSize:9,color:C.textFaint,padding:"4px",textAlign:"center"}}>Y{y+1}</div>
                       ))}
                       <div style={{fontSize:11,fontWeight:700,color:r.capexByYear?.[0]?C.red:C.textFaint,padding:"0 8px"}}>
                         {r.capexByYear?.[0]?f.$(r.capexByYear[0]):"—"}
                       </div>
-                      {Array.from({length:a.fundTerm},(_,y)=>(
+                      {Array.from({length:r.holdYrs||a.fundTerm},(_,y)=>(
                         <div key={y} style={{fontSize:11,fontWeight:700,color:r.capexByYear?.[y+1]?C.red:C.textFaint,textAlign:"center"}}>
                           {r.capexByYear?.[y+1]?f.$(r.capexByYear[y+1]):"—"}
                         </div>
