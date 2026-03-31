@@ -158,13 +158,13 @@ function run(a){
   }
 
   // ── BW management fee helper (per deal, per year) ──
-  // Year 1: fixed fee only ($125K). Year 2+: revMgmt % of NOI (no fixed).
-  function calcBWFees(a, noiAmt, dealYr){
+  // Year 1: fixed fee only ($125K). Year 2+: revMgmt % of REVENUE (no fixed).
+  function calcBWFees(a, revAmt, dealYr){
     if(dealYr<=1){
       const fixed=(a.bwMarketing||0)+(a.bwAccounting||0)+(a.bwIT||0);
       return{fixed,revMgmt:0,total:fixed};
     }
-    const revMgmt=noiAmt*(a.bwRevMgmt||0);
+    const revMgmt=revAmt*(a.bwRevMgmt||0);
     return{fixed:0,revMgmt,total:revMgmt};
   }
 
@@ -222,8 +222,12 @@ function run(a){
       return v;
     });
 
-    // BW fees — Y1 fixed, Y2+ as % of NOI
-    const bwFees = noi.map((n,y)=> y===0 ? {fixed:0,revMgmt:0,total:0} : calcBWFees(asset, n, y));
+    // BW fees — Y1 = $125K fixed, Y2+ = 6% of REVENUE (NOI + OpEx = gross revenue)
+    const bwFees = noi.map((n,y)=>{
+      if(y===0) return{fixed:0,revMgmt:0,total:0};
+      const rev = n + (opexByYear[y]||0); // gross revenue = NOI + operating expenses
+      return calcBWFees(asset, rev, y);
+    });
     const bwAnn = bwFees.map(f=>f.total);
 
     // CapEx 50/50 debt/equity
