@@ -76,9 +76,9 @@ const DEF_PARTNER_SALARIES = [];
 
 const DEFAULT = {
   fundTerm:6, debtPct:.50, interestRate:.07, amortYears:25,
-  exitCapRate:.08, saleCosts:.02, carry:.20, prefReturn:.08,
+  exitCapRate:.08, saleCosts:.02, carry:.25, prefReturn:.08,
   gpPct:0, amFee:0, pmFee:0, benefitsRate:.22, salaryGrowth:.03,
-  partners:3, compoundPref:false, catchUp:false,
+  partners:3, compoundPref:true, catchUp:false,
   assets:DEF_ASSETS, hires:DEF_HIRES, overhead:DEF_OVERHEAD, oneTime:DEF_ONE_TIME, partnerSalaries:DEF_PARTNER_SALARIES,
 };
 
@@ -990,6 +990,365 @@ function exportToExcel(m,a){
   W(ga,gTot,0,"TOTAL");
   [1,2,3,4].forEach(c=>W(ga,gTot,c,`=SUM(${CL(c)}2:${CL(c)}${gTot})`,"$#,##0"));
   XLSX.utils.book_append_sheet(wb,ga,"G&A");
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // SHEET: EXIT ANALYSIS & GP/LP RETURNS
+  // Year 6 Exit | 8 Cap | TTM & Forward | With & Without G&A
+  // ═══════════════════════════════════════════════════════════════════════
+  const ex={"!ref":"A1","!cols":[{wch:36},{wch:16},{wch:16},{wch:16},{wch:16},{wch:5},{wch:14},{wch:14},{wch:14},{wch:14},{wch:14},{wch:14},{wch:14}]};
+
+  // Compute portfolio metrics at exit
+  const exitYr=ft;
+  const fwdYr=ft+1;
+  const fwdGrowth=0.03; // 3% forward growth for Y7 projection
+
+  // Portfolio units at exit
+  const totHotelUnits=a.assets.reduce((s,d)=>(d.lodging||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.units,0)+s,0);
+  const totSlips=a.assets.reduce((s,d)=>(d.slips||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.count,0)+s,0);
+
+  // Portfolio NOI by summing each deal's NOI at its deal-year for fund exit
+  let portNOI_TTM=0, portRev_TTM=0;
+  m.assetR.forEach((ar,ai)=>{
+    const x=a.assets[ai];
+    const fyE=ft*12;
+    if(x.startMonth>fyE) return;
+    const dealYr=Math.min(ar.holdYrs, Math.floor((fyE-x.startMonth)/12)+1);
+    portNOI_TTM+=(ar.noi[dealYr]||0);
+    portRev_TTM+=(ar.noi[dealYr]||0)+(ar.opexByYear?.[dealYr]||0);
+  });
+
+  // Hotel/slip revenue breakdown (using stabilized rates grown to exit)
+  const hotelRevExit=totHotelUnits*49000*Math.pow(1.03,exitYr-2); // $49K/unit stabilized, grown from Y2
+  const slipRevExit=totSlips*5000*Math.pow(1.05,exitYr-1); // $5K/slip Y1, grown
+  const totRevExit=hotelRevExit+slipRevExit;
+
+  // G&A at exit year
+  const gaAtExit=1500000*Math.pow(1.075,exitYr-1);
+  const gaFwd=gaAtExit*1.075;
+
+  // NOI scenarios
+  const noiInclGA_TTM=portNOI_TTM-gaAtExit;
+  const noiInclGA_Fwd=portNOI_TTM*(1+fwdGrowth)-gaFwd;
+  const noiExGA_TTM=portNOI_TTM;
+  const noiExGA_Fwd=portNOI_TTM*(1+fwdGrowth);
+
+  // Total debt at exit
+  const debtAtExit=m.assetR.reduce((s,x)=>s+(x.lb||0),0);
+
+  // Portfolio value at exit cap
+  const ec=a.exitCapRate;
+  const pvInclTTM=noiInclGA_TTM/ec, pvInclFwd=noiInclGA_Fwd/ec;
+  const pvExTTM=noiExGA_TTM/ec, pvExFwd=noiExGA_Fwd/ec;
+
+  // Net equity proceeds
+  const neInclTTM=pvInclTTM-debtAtExit, neInclFwd=pvInclFwd-debtAtExit;
+  const neExTTM=pvExTTM-debtAtExit, neExFwd=pvExFwd-debtAtExit;
+
+  // Gross returns
+  const totEqInvested=m.totEqDep;
+  const cumOpCF=m.totOpCF;
+
+  // Fund-level annual cash flows (for IRR)
+  const annCF=Array.from({length:ft+1},(_,y)=>{
+    if(y===0) return 0;
+    const s=((y-1)*12), e=y*12;
+    return m.monthly.slice(s,e).reduce((t,x)=>t+x.netOpCF-x.lpCall-x.gpCall,0);
+  });
+  // Add exit proceeds to final year for each scenario
+  const mkIrrCF=(netEqProc)=>{
+    const cf=[...annCF];
+    cf[ft]+=netEqProc;
+    return cf;
+  };
+
+  // XIRR helper — mid-year equity calls (Jul 1), operating CF at Dec 31
+  function xirr(cfs,dates,guess=0.1){
+    let r=guess;
+    const d0=dates[0].getTime();
+    for(let i=0;i<300;i++){
+      let fv=0,dfv=0;
+      cfs.forEach((c,j)=>{
+        const t=(dates[j].getTime()-d0)/31557600000; // years from first date
+        fv+=c/Math.pow(1+r,t);
+        dfv-=t*c/Math.pow(1+r,t+1);
+      });
+      if(Math.abs(dfv)<1e-12)break;
+      const nr=r-fv/dfv;
+      if(Math.abs(nr-r)<1e-9)return nr;
+      r=nr;
+    }
+    return r;
+  }
+
+  // Build XIRR arrays: equity calls at Jul 1, operating CF + exit at Dec 31
+  const baseYear=2025;
+  const xirrDates=[], xirrCFsInclTTM=[], xirrCFsInclFwd=[], xirrCFsExTTM=[], xirrCFsExFwd=[];
+
+  for(let y=0;y<=ft;y++){
+    // Jul 1 equity call
+    const eqCall=m.monthly.slice(y===0?0:y*12-6, y===0?6:(y*12+6)).reduce((s,x)=>s+x.lpCall+x.gpCall,0);
+    if(eqCall>0){
+      xirrDates.push(new Date(baseYear+y,6,1)); // Jul 1
+      xirrCFsInclTTM.push(-eqCall);
+      xirrCFsInclFwd.push(-eqCall);
+      xirrCFsExTTM.push(-eqCall);
+      xirrCFsExFwd.push(-eqCall);
+    }
+    // Dec 31 operating CF (Y0-Y5) or exit (Y6)
+    const opCFyr=m.monthly.slice(y*12,Math.min((y+1)*12,MO)).reduce((s,x)=>s+x.netOpCF,0);
+    xirrDates.push(new Date(baseYear+y,11,31)); // Dec 31
+    if(y<ft){
+      xirrCFsInclTTM.push(opCFyr);
+      xirrCFsInclFwd.push(opCFyr);
+      xirrCFsExTTM.push(opCFyr);
+      xirrCFsExFwd.push(opCFyr);
+    } else {
+      xirrCFsInclTTM.push(opCFyr+neInclTTM);
+      xirrCFsInclFwd.push(opCFyr+neInclFwd);
+      xirrCFsExTTM.push(opCFyr+neExTTM);
+      xirrCFsExFwd.push(opCFyr+neExFwd);
+    }
+  }
+
+  const xirrInclTTM=xirr(xirrCFsInclTTM,xirrDates,0.2);
+  const xirrInclFwd=xirr(xirrCFsInclFwd,xirrDates,0.2);
+  const xirrExTTM=xirr(xirrCFsExTTM,xirrDates,0.2);
+  const xirrExFwd=xirr(xirrCFsExFwd,xirrDates,0.2);
+
+  // Gross MOIC scenarios
+  const gmoicInclTTM=(neInclTTM+cumOpCF)/totEqInvested;
+  const gmoicInclFwd=(neInclFwd+cumOpCF)/totEqInvested;
+  const gmoicExTTM=(neExTTM+cumOpCF)/totEqInvested;
+  const gmoicExFwd=(neExFwd+cumOpCF)/totEqInvested;
+
+  // Waterfall (for each scenario)
+  function runWaterfall(netEqProc){
+    const pool=netEqProc+cumOpCF;
+    let rem=pool;
+    const lpCap=totEqInvested;
+    const lpROC=Math.min(lpCap,rem);rem-=lpROC;
+    const lpPrefDue=lpCap*(Math.pow(1+a.prefReturn,ft)-1); // compounded
+    const lpPref=Math.min(lpPrefDue,rem);rem-=lpPref;
+    const gpCarry=Math.max(0,rem*a.carry);
+    const lpResid=Math.max(0,rem*(1-a.carry));
+    const lpTotal=lpROC+lpPref+lpResid;
+    return{pool,lpROC,lpPref:lpPrefDue,lpPrefPaid:lpPref,gpCarry,lpResid,lpTotal,lpMOIC:lpTotal/lpCap};
+  }
+  const wfInclTTM=runWaterfall(neInclTTM);
+  const wfInclFwd=runWaterfall(neInclFwd);
+  const wfExTTM=runWaterfall(neExTTM);
+  const wfExFwd=runWaterfall(neExFwd);
+
+  // ── Write the sheet ──
+  let R=0;
+  const $=v=>v/1000; // show in $000s
+  W(ex,R,0,`Exit Analysis & GP/LP Returns  |  Year ${ft} Exit  |  ${(ec*100).toFixed(0)} Cap  |  TTM & Forward  |  With & Without G&A`);
+  R+=1;
+  W(ex,R,1,"Incl. G&A (TTM)"); W(ex,R,2,"Incl. G&A (Fwd)"); W(ex,R,3,"Ex-G&A (TTM)"); W(ex,R,4,"Ex-G&A (Fwd)");
+  R+=2;
+  W(ex,R,0,"PORTFOLIO AT EXIT — OPERATING METRICS");
+  R++;W(ex,R,0,`    Hotel units — Y${ft}`);W(ex,R,1,totHotelUnits);W(ex,R,2,totHotelUnits);W(ex,R,3,totHotelUnits);W(ex,R,4,`Target: ${totHotelUnits}`);
+  R++;W(ex,R,0,`    Slips — Y${ft}`);W(ex,R,1,totSlips);W(ex,R,2,totSlips);W(ex,R,3,totSlips);W(ex,R,4,`Target: ${totSlips}`);
+  R++;W(ex,R,0,"    Hotel revenue ($000s)");W(ex,R,1,$(hotelRevExit),"$#,##0");W(ex,R,2,$(hotelRevExit*1.03),"$#,##0");W(ex,R,3,$(hotelRevExit),"$#,##0");
+  R++;W(ex,R,0,"    Slip revenue ($000s)");W(ex,R,1,$(slipRevExit),"$#,##0");W(ex,R,2,$(slipRevExit*1.05),"$#,##0");W(ex,R,3,$(slipRevExit),"$#,##0");
+  R++;W(ex,R,0,"TOTAL REVENUE ($000s)");W(ex,R,1,$(totRevExit),"$#,##0");W(ex,R,2,$(totRevExit*1.03),"$#,##0");W(ex,R,3,$(totRevExit),"$#,##0");
+  R+=2;
+  W(ex,R,0,`NOI AT EXIT — ${(ec*100).toFixed(0)} CAP ON EBITDA`);
+  R++;W(ex,R,0,"    NewCo G&A ($000s)");W(ex,R,1,$(gaAtExit),"$#,##0");W(ex,R,2,$(gaFwd),"$#,##0");W(ex,R,3,"—");W(ex,R,4,"Excluded in Ex-G&A");
+  R++;W(ex,R,0,"NOI / EBITDA ($000s)");W(ex,R,1,$(noiInclGA_TTM),"$#,##0");W(ex,R,2,$(noiInclGA_Fwd),"$#,##0");W(ex,R,3,$(noiExGA_TTM),"$#,##0");W(ex,R,4,$(noiExGA_Fwd),"$#,##0");
+  R++;W(ex,R,0,`    Gross portfolio value at ${(ec*100).toFixed(0)} cap ($000s)`);W(ex,R,1,$(pvInclTTM),"$#,##0");W(ex,R,2,$(pvInclFwd),"$#,##0");W(ex,R,3,$(pvExTTM),"$#,##0");W(ex,R,4,$(pvExFwd),"$#,##0");
+  R++;W(ex,R,0,"    Less: debt at exit ($000s)");W(ex,R,1,$(-debtAtExit),"$#,##0");W(ex,R,2,$(-debtAtExit),"$#,##0");W(ex,R,3,$(-debtAtExit),"$#,##0");W(ex,R,4,$(-debtAtExit),"$#,##0");
+  R++;W(ex,R,0,"NET EQUITY PROCEEDS ($000s)");W(ex,R,1,$(neInclTTM),"$#,##0");W(ex,R,2,$(neInclFwd),"$#,##0");W(ex,R,3,$(neExTTM),"$#,##0");W(ex,R,4,$(neExFwd),"$#,##0");
+  R+=2;
+  W(ex,R,0,"GROSS FUND RETURNS");
+  R++;W(ex,R,0,"    Total equity invested ($000s)");W(ex,R,1,$(totEqInvested),"$#,##0");W(ex,R,2,$(totEqInvested),"$#,##0");W(ex,R,3,$(totEqInvested),"$#,##0");W(ex,R,4,"100% LP — zero GP co-invest");
+  R++;W(ex,R,0,`    Cumulative operating CF Y1-Y${ft-1} ($000s)`);W(ex,R,1,$(cumOpCF),"$#,##0");W(ex,R,2,$(cumOpCF),"$#,##0");W(ex,R,3,$(cumOpCF),"$#,##0");W(ex,R,4,"NOI less debt service");
+  R++;W(ex,R,0,"Gross MOIC");W(ex,R,1,gmoicInclTTM,"0.00x");W(ex,R,2,gmoicInclFwd,"0.00x");W(ex,R,3,gmoicExTTM,"0.00x");W(ex,R,4,gmoicExFwd,"0.00x");
+  R++;W(ex,R,0,"XIRR (mid-year convention)");W(ex,R,1,xirrInclTTM,"0.0%");W(ex,R,2,xirrInclFwd,"0.0%");W(ex,R,3,xirrExTTM,"0.0%");W(ex,R,4,xirrExFwd,"0.0%");
+  R+=2;
+  W(ex,R,0,`GP / LP WATERFALL  |  ${(a.prefReturn*100).toFixed(0)}% Compounded Pref → ${(a.carry*100).toFixed(0)}% GP / ${((1-a.carry)*100).toFixed(0)}% LP  |  Zero Co-Invest  |  No Catch-Up`);
+  R++;W(ex,R,1,"Incl. G&A (TTM)"); W(ex,R,2,"Incl. G&A (Fwd)"); W(ex,R,3,"Ex-G&A (TTM)"); W(ex,R,4,"Ex-G&A (Fwd)");
+  R++;W(ex,R,0,"    Total proceeds pool ($000s)");W(ex,R,1,$(wfInclTTM.pool),"$#,##0");W(ex,R,2,$(wfInclFwd.pool),"$#,##0");W(ex,R,3,$(wfExTTM.pool),"$#,##0");W(ex,R,4,$(wfExFwd.pool),"$#,##0");
+  R++;W(ex,R,0,"    TIER 1 — Return of LP capital ($000s)");W(ex,R,1,$(wfInclTTM.lpROC),"$#,##0");W(ex,R,2,$(wfInclFwd.lpROC),"$#,##0");W(ex,R,3,$(wfExTTM.lpROC),"$#,##0");W(ex,R,4,"100% to LP first");
+  R++;W(ex,R,0,`    TIER 2 — ${(a.prefReturn*100).toFixed(0)}% compounded preferred ($000s)`);W(ex,R,1,$(wfInclTTM.lpPref),"$#,##0");W(ex,R,2,$(wfInclFwd.lpPref),"$#,##0");W(ex,R,3,$(wfExTTM.lpPref),"$#,##0");W(ex,R,4,`LP × ((1+${(a.prefReturn*100).toFixed(0)}%)^${ft}−1)`);
+  R++;W(ex,R,0,`    TIER 3 — GP carry (${(a.carry*100).toFixed(0)}% of profits above pref)`);W(ex,R,1,$(wfInclTTM.gpCarry),"$#,##0");W(ex,R,2,$(wfInclFwd.gpCarry),"$#,##0");W(ex,R,3,$(wfExTTM.gpCarry),"$#,##0");W(ex,R,4,"No catch-up; zero co-invest");
+  R++;W(ex,R,0,`    TIER 3 — LP profit share (${((1-a.carry)*100).toFixed(0)}% of profits above pref)`);W(ex,R,1,$(wfInclTTM.lpResid),"$#,##0");W(ex,R,2,$(wfInclFwd.lpResid),"$#,##0");W(ex,R,3,$(wfExTTM.lpResid),"$#,##0");
+  R++;W(ex,R,0,"TOTAL LP DISTRIBUTION ($000s)");W(ex,R,1,$(wfInclTTM.lpTotal),"$#,##0");W(ex,R,2,$(wfInclFwd.lpTotal),"$#,##0");W(ex,R,3,$(wfExTTM.lpTotal),"$#,##0");W(ex,R,4,"Capital + pref + profits");
+  R++;W(ex,R,0,"TOTAL GP CARRY ($000s)");W(ex,R,1,$(wfInclTTM.gpCarry),"$#,##0");W(ex,R,2,$(wfInclFwd.gpCarry),"$#,##0");W(ex,R,3,$(wfExTTM.gpCarry),"$#,##0");W(ex,R,4,`${(a.carry*100).toFixed(0)}% of profits above hurdle`);
+  R++;W(ex,R,0,"LP net MOIC");W(ex,R,1,wfInclTTM.lpMOIC,"0.00x");W(ex,R,2,wfInclFwd.lpMOIC,"0.00x");W(ex,R,3,wfExTTM.lpMOIC,"0.00x");W(ex,R,4,wfExFwd.lpMOIC,"0.00x");
+  R++;W(ex,R,0,"LP XIRR (mid-year equity calls)");W(ex,R,1,xirrInclTTM,"0.0%");W(ex,R,2,xirrInclFwd,"0.0%");W(ex,R,3,xirrExTTM,"0.0%");W(ex,R,4,xirrExFwd,"0.0%");
+
+  // Cap rate sensitivity
+  R+=3;
+  W(ex,R,0,`CAP RATE SENSITIVITY — TTM EXIT  |  Incl. G&A  |  XIRR and Gross MOIC vs. Exit Cap Rate`);
+  R++;W(ex,R,1,"Exit Cap");W(ex,R,2,"Portfolio Val ($K)");W(ex,R,3,"Net Equity ($K)");W(ex,R,4,"Gross MOIC");W(ex,R,5,"");W(ex,R,6,"XIRR");
+  const capRates=[0.07,0.075,0.08,0.085,0.09,0.095,0.10,0.105,0.11];
+  capRates.forEach(cr=>{
+    R++;
+    const pv=noiInclGA_TTM/cr;
+    const ne=pv-debtAtExit;
+    const gm=(ne+cumOpCF)/totEqInvested;
+    // Quick XIRR for this cap rate
+    const cfCopy=[...xirrCFsInclTTM];
+    cfCopy[cfCopy.length-1]=cfCopy[cfCopy.length-1]-neInclTTM+ne;
+    const xi=xirr(cfCopy,xirrDates,0.15);
+    const isBase=Math.abs(cr-ec)<0.001;
+    W(ex,R,0,isBase?"◄ Base":"");
+    W(ex,R,1,cr,"0.0%");
+    W(ex,R,2,$(pv),"$#,##0");
+    W(ex,R,3,$(ne),"$#,##0");
+    W(ex,R,4,gm,"0.00x");
+    W(ex,R,6,xi,"0.0%");
+  });
+
+  XLSX.utils.book_append_sheet(wb,ex,"Exit Analysis");
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // SHEET: ANNUAL P&L & CASH FLOW ($000s)
+  // ═══════════════════════════════════════════════════════════════════════
+  const pl={"!ref":"A1","!cols":[{wch:44},...Array(ft+2).fill({wch:14})]};
+  const PLR=(r,label,vals,fmt)=>{W(pl,r,0,label);vals.forEach((v,i)=>W(pl,r,1+i,v,fmt||"$#,##0"));};
+
+  // Build annual portfolio metrics
+  const annYrs=ft+2; // T=0 through Y(ft+1) for forward
+  const yrLabels=["T=0 (Seed)",...Array.from({length:ft},(_,i)=>i===ft-1?`Year ${i+1} (Exit)`:`Year ${i+1}`),`Year ${ft+1} (Fwd)`];
+  W(pl,0,0,`Annual P&L & Cash Flow ($000s)  |  ${n} Properties  |  Year ${ft} Exit`);
+  yrLabels.forEach((l,i)=>W(pl,1,1+i,l));
+
+  // Compute annual arrays
+  const annHotels=[], annSlips=[], annHotelRev=[], annSlipRev=[];
+  const annHotelOpex=[], annSlipOpex=[], annBW=[], annGA=[];
+  const annDS=[], annDSInt=[], annDSPrin=[], annEqCalls=[], annOpCF=[];
+
+  for(let y=0;y<=ft+1;y++){
+    const fyS=y*12+1, fyE=(y+1)*12;
+    let hotels=0,slips=0,hRev=0,sRev=0;
+
+    m.assetR.forEach((ar,ai)=>{
+      const x=a.assets[ai];
+      if(y>ft){
+        // Forward year: all deals operating at their last hold year level
+        hotels+=(x.lodging||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.units,0);
+        slips+=(x.slips||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.count,0);
+        const lastNOI=ar.noi[ar.holdYrs]||0;
+        const lastOpex=ar.opexByYear?.[ar.holdYrs]||0;
+        hRev+=(lastNOI+lastOpex)*0.65*(1+fwdGrowth); // hotel ~65% of rev
+        sRev+=(lastNOI+lastOpex)*0.35*(1+fwdGrowth); // slip ~35%
+        return;
+      }
+      if(x.startMonth>fyE) return;
+      const opS=Math.max(x.startMonth,fyS);
+      const opE=Math.min(x.startMonth+ar.holdMonths-1,fyE);
+      const opMo=Math.max(0,opE-opS+1);
+      if(opMo<=0) return;
+
+      const midMo=Math.floor((opS+opE)/2);
+      const dealYr=Math.floor((midMo-x.startMonth)/12)+1;
+      const frac=opMo/12;
+
+      // Y1 vs Y2+ units
+      if(dealYr<=1){
+        hotels+=(x.lodging||[]).filter(l=>l.period==="y1").reduce((t,l)=>t+l.units,0);
+        slips+=(x.slips||[]).filter(l=>l.period==="y1").reduce((t,l)=>t+l.count,0);
+      } else {
+        hotels+=(x.lodging||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.units,0);
+        slips+=(x.slips||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.count,0);
+      }
+
+      const annNOI=dealYr>=1&&dealYr<=ar.holdYrs?(ar.noi[dealYr]||0):0;
+      const annOpx=ar.opexByYear?.[Math.min(dealYr,ar.holdYrs)]||0;
+      const rev=(annNOI+annOpx)*frac;
+      // Split rev by hotel/slip ratio based on unit economics
+      const hShare=hotels>0?0.65:0;
+      hRev+=rev*hShare; sRev+=rev*(1-hShare);
+    });
+
+    annHotels.push(Math.round(hotels));
+    annSlips.push(Math.round(slips));
+    annHotelRev.push(hRev);
+    annSlipRev.push(sRev);
+    annHotelOpex.push(-hRev*0.45); // 55% GOP = 45% opex
+    annSlipOpex.push(-sRev*0.25); // 75% GOP = 25% opex
+
+    // BW fees by fund year
+    let bwTot=0;
+    if(y<=ft){
+      m.monthly.slice(Math.max(0,(y)*12-12),y*12).forEach(x=>bwTot+=x.bwF||0);
+      // Rough: use model's monthly BW from the relevant period
+      const moSlice=m.monthly.slice(y*12,Math.min((y+1)*12,MO));
+      bwTot=moSlice.reduce((s,x)=>s+(x.bwF||0),0);
+    }
+    annBW.push(-bwTot);
+
+    // G&A
+    if(y<=ft){
+      const gaSlice=m.gaMonthly.slice(y*12,Math.min((y+1)*12,MO));
+      annGA.push(gaSlice.reduce((s,x)=>s+x.total,0));
+    } else {
+      annGA.push(gaAtExit*1.075);
+    }
+
+    // Debt service
+    if(y<=ft){
+      const dsSlice=m.monthly.slice(y*12,Math.min((y+1)*12,MO));
+      annDS.push(-dsSlice.reduce((s,x)=>s+x.ds,0));
+    } else {
+      annDS.push(annDS[ft]||0);
+    }
+
+    // Operating CF & equity calls
+    if(y<=ft){
+      const moSlice=m.monthly.slice(y*12,Math.min((y+1)*12,MO));
+      annOpCF.push(moSlice.reduce((s,x)=>s+x.netOpCF,0));
+      annEqCalls.push(-moSlice.reduce((s,x)=>s+x.lpCall+x.gpCall,0));
+    } else {
+      annOpCF.push(annOpCF[ft]||0);
+      annEqCalls.push(0);
+    }
+  }
+
+  let pr=3;
+  W(pl,pr,0,"PORTFOLIO OPERATING METRICS"); pr++;
+  PLR(pr,"    Hotel units operating",annHotels,null); pr++;
+  PLR(pr,"    Slips operating",annSlips,null); pr+=2;
+
+  W(pl,pr,0,"REVENUE ($000s)"); pr++;
+  PLR(pr,"    Hotel revenue",annHotelRev.map($)); pr++;
+  PLR(pr,"    Slip & marina revenue",annSlipRev.map($)); pr++;
+  PLR(pr,"TOTAL REVENUE",annHotelRev.map((h,i)=>$((h||0)+(annSlipRev[i]||0)))); pr+=2;
+
+  W(pl,pr,0,"PROPERTY-LEVEL GOP"); pr++;
+  PLR(pr,"    Hotel property opex (45% of hotel rev)",annHotelOpex.map($)); pr++;
+  PLR(pr,"    Hotel GOP (55%)",annHotelRev.map(h=>$(h*0.55))); pr++;
+  PLR(pr,"    Slip/marina opex (25% of slip rev)",annSlipOpex.map($)); pr++;
+  PLR(pr,"    Slip/marina GOP (75%)",annSlipRev.map(s=>$(s*0.75))); pr++;
+  const combGOP=annHotelRev.map((h,i)=>h*0.55+(annSlipRev[i]||0)*0.75);
+  PLR(pr,"COMBINED PROPERTY GOP",combGOP.map($)); pr++;
+  const totRev=annHotelRev.map((h,i)=>(h||0)+(annSlipRev[i]||0));
+  PLR(pr,"    Combined GOP margin",totRev.map((r,i)=>r>0?combGOP[i]/r:0),"0.0%"); pr+=2;
+
+  W(pl,pr,0,"PROPCO CHARGES ($000s)"); pr++;
+  PLR(pr,"    BW mgmt fee (Y1: $125k; Y2+: 6% of rev)",annBW.map($)); pr++;
+  PLR(pr,"    NewCo G&A ($1.5M Y1, +7.5%/yr)",annGA.map(v=>$(v))); pr++;
+  const totCharges=annBW.map((b,i)=>b-annGA[i]);
+  PLR(pr,"TOTAL PROPCO CHARGES",totCharges.map($)); pr+=2;
+
+  W(pl,pr,0,"NET OPERATING INCOME ($000s)"); pr++;
+  const noiInclGA=combGOP.map((g,i)=>g+annBW[i]-annGA[i]);
+  const noiExGA=combGOP.map((g,i)=>g+annBW[i]);
+  PLR(pr,"NOI / EBITDA (incl. G&A)",noiInclGA.map($)); pr++;
+  PLR(pr,"    NOI (ex-NewCo G&A)",noiExGA.map($)); pr+=2;
+
+  W(pl,pr,0,`DEBT SERVICE ($000s)  |  ${(a.interestRate*100).toFixed(0)}% coupon  |  ${(a.assets[0]?.ioPeriod||12)}mo I/O then ${a.amortYears}yr am`); pr++;
+  PLR(pr,"    Annual debt service",annDS.map($)); pr+=2;
+
+  W(pl,pr,0,"CASH FLOW TO EQUITY ($000s)"); pr++;
+  PLR(pr,"    Operating CF (NOI less debt service)",annOpCF.map($)); pr++;
+  PLR(pr,"    Equity capital calls (outflows)",annEqCalls.map($)); pr++;
+  const netCFEq=annOpCF.map((o,i)=>o+(annEqCalls[i]||0));
+  PLR(pr,"NET CASH FLOW TO EQUITY (pre-exit)",netCFEq.map($));
+
+  XLSX.utils.book_append_sheet(wb,pl,"Annual P&L");
 
   // Force Excel to recalculate on open
   wb.Workbook={CalcPr:{fullCalcOnLoad:true}};
