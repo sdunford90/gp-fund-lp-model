@@ -511,19 +511,21 @@ function exportToExcel(m,a){
   // Column letter helper (0=A, 25=Z, 26=AA)
   const CL=c=>{let s="";c++;while(c>0){c--;s=String.fromCharCode(65+c%26)+s;c=Math.floor(c/26);}return s;};
 
-  // Write a cell: ws, row (0-indexed), col (0-indexed), value or formula
-  function W(ws,r,c,v,fmt){
+  // Write a cell with formula AND cached value so Excel shows data immediately
+  function W(ws,r,c,v,fmt,cv){
     const ref=CL(c)+(r+1);
     if(v===null||v===undefined||v===""){ws[ref]={t:"z"};return;}
     if(typeof v==="string"&&v.startsWith("=")){
-      ws[ref]={t:"n",f:v.slice(1)};
+      // Formula cell — include cached value if provided
+      const cell={t:"n",f:v.slice(1)};
+      if(cv!==undefined&&cv!==null&&typeof cv==="number"&&isFinite(cv)) cell.v=cv;
+      ws[ref]=cell;
     } else if(typeof v==="number"){
       ws[ref]={t:"n",v};
     } else {
       ws[ref]={t:"s",v:String(v)};
     }
     if(fmt) ws[ref].z=fmt;
-    // Expand range
     const range=XLSX.utils.decode_range(ws["!ref"]||"A1");
     if(r>range.e.r)range.e.r=r; if(c>range.e.c)range.e.c=c;
     ws["!ref"]=XLSX.utils.encode_range(range);
@@ -617,66 +619,74 @@ function exportToExcel(m,a){
     const $=(c)=>`${CL(c)}${R}`; // this row cell ref
     const di=(c)=>DI(i,c); // inputs cell ref
 
-    // A-P: fixed columns
+    // A-P: fixed columns — formula + cached value from model
     W(dc,r,0,i+1);
     W(dc,r,1,ar.name);
-    W(dc,r,2,`=${di(2)}`,"$#,##0");                         // C: price
-    W(dc,r,3,`=${I.ltv}`,"0.0%");                            // D: LTV
-    W(dc,r,4,`=${$(2)}*(1-${$(3)})`,"$#,##0");               // E: equity
-    W(dc,r,5,`=${$(2)}*${$(3)}`,"$#,##0");                   // F: acq debt
-    W(dc,r,6,`=${di(4)}`,null);                               // G: close month
-    W(dc,r,7,`=${I.hold}*12-${$(6)}+1`,null);                // H: hold months
-    W(dc,r,8,`=CEILING(${$(7)}/12,1)`,null);                 // I: hold years
-    W(dc,r,9,`=CEILING(${di(5)}/12,1)`,null);                // J: I/O years
-    W(dc,r,10,`=${di(14)}+${di(15)}+${di(16)}+${di(17)}`,"$#,##0"); // K: capex total
-    W(dc,r,11,`=${$(10)}*(1-${I.ltv})`,"$#,##0");            // L: capex equity
-    W(dc,r,12,`=${$(10)}*${I.ltv}`,"$#,##0");                // M: capex debt
-    W(dc,r,13,`=${di(6)}`,"$#,##0");                          // N: tx costs
-    W(dc,r,14,`=${$(4)}+${$(11)}+${$(13)}`,"$#,##0");        // O: total equity in
-    W(dc,r,15,`=${$(5)}+${$(12)}`,"$#,##0");                  // P: total debt
+    W(dc,r,2,`=${di(2)}`,"$#,##0",ar.price);
+    W(dc,r,3,`=${I.ltv}`,"0.0%",a.debtPct);
+    W(dc,r,4,`=${$(2)}*(1-${$(3)})`,"$#,##0",ar.eq);
+    W(dc,r,5,`=${$(2)}*${$(3)}`,"$#,##0",ar.debt);
+    W(dc,r,6,`=${di(4)}`,null,ar.startMonth);
+    W(dc,r,7,`=${I.hold}*12-${$(6)}+1`,null,ar.holdMonths);
+    W(dc,r,8,`=CEILING(${$(7)}/12,1)`,null,ar.holdYrs);
+    W(dc,r,9,`=CEILING(${di(5)}/12,1)`,null,ar.ioYrs);
+    W(dc,r,10,`=${di(14)}+${di(15)}+${di(16)}+${di(17)}`,"$#,##0",ar.totalCapex);
+    W(dc,r,11,`=${$(10)}*(1-${I.ltv})`,"$#,##0",ar.totalCapex*(1-a.debtPct));
+    W(dc,r,12,`=${$(10)}*${I.ltv}`,"$#,##0",ar.totalCapex*a.debtPct);
+    W(dc,r,13,`=${di(6)}`,"$#,##0",ar.txCosts);
+    W(dc,r,14,`=${$(4)}+${$(11)}+${$(13)}`,"$#,##0",ar.totalEquityIn);
+    W(dc,r,15,`=${$(5)}+${$(12)}`,"$#,##0",ar.totalDebt);
 
     // Q: base NOI
-    W(dc,r,BASE_NOI,`=IF(${di(7)}>0,${di(7)},${$(2)}*${di(3)})`,"$#,##0");
+    W(dc,r,BASE_NOI,`=IF(${di(7)}>0,${di(7)},${$(2)}*${di(3)})`,"$#,##0",ar.baseNOI);
 
     // NOI schedule
     for(let y=0;y<maxH;y++){
       const c=BASE_NOI+1+y;
+      const cv=y<ar.holdYrs?(ar.noi[y+1]||0):null;
       if(y===0)
-        W(dc,r,c,`=IF(${y+1}<=${$(8)},${$(BASE_NOI)},"")`,"$#,##0");
+        W(dc,r,c,`=IF(${y+1}<=${$(8)},${$(BASE_NOI)},"")`,"$#,##0",cv);
       else if(y===1)
-        W(dc,r,c,`=IF(${y+1}<=${$(8)},${$(BASE_NOI)}*(1+${di(8)}),"")`,"$#,##0");
+        W(dc,r,c,`=IF(${y+1}<=${$(8)},${$(BASE_NOI)}*(1+${di(8)}),"")`,"$#,##0",cv);
       else
-        W(dc,r,c,`=IF(${y+1}<=${$(8)},${$(c-1)}*(1+${di(9)}),"")`,"$#,##0");
+        W(dc,r,c,`=IF(${y+1}<=${$(8)},${$(c-1)}*(1+${di(9)}),"")`,"$#,##0",cv);
     }
 
     // Exit NOI & Value
-    W(dc,r,EXIT_NOI,`=INDEX(${$(BASE_NOI+1)}:${$(BASE_NOI+maxH)},1,${$(8)})`,"$#,##0");
-    W(dc,r,EXIT_VAL,`=${$(EXIT_NOI)}/${I.exitCap}`,"$#,##0");
+    W(dc,r,EXIT_NOI,`=INDEX(${$(BASE_NOI+1)}:${$(BASE_NOI+maxH)},1,${$(8)})`,"$#,##0",ar.noi[ar.holdYrs]);
+    W(dc,r,EXIT_VAL,`=${$(EXIT_NOI)}/${I.exitCap}`,"$#,##0",ar.exitVal);
 
     // Debt service
-    W(dc,r,IO_DS,`=${$(5)}*${I.rate}`,"$#,##0");             // I/O annual
-    W(dc,r,AM_DS,`=-PMT(${I.rate},${I.amort},${$(5)})`,"$#,##0"); // amortizing (positive)
+    W(dc,r,IO_DS,`=${$(5)}*${I.rate}`,"$#,##0",ar.ioAnnDS);
+    W(dc,r,AM_DS,`=-PMT(${I.rate},${I.amort},${$(5)})`,"$#,##0",ar.amAnnDS);
 
     for(let y=0;y<maxH;y++){
       const c=DS_START+y;
       if(y<ar.holdYrs){
-        // Acq DS (I/O or Am) + capex tranche DS (as value delta)
         const capexDelta=ar.dsByYear[y+1] - (y+1<=ar.ioYrs ? ar.ioAnnDS : ar.amAnnDS);
         const capexAdd=Math.abs(capexDelta)>1?`+${Math.round(capexDelta)}`:"";
-        W(dc,r,c,`=IF(${y+1}<=${$(9)},${$(IO_DS)},${$(AM_DS)})${capexAdd}`,"$#,##0");
+        W(dc,r,c,`=IF(${y+1}<=${$(9)},${$(IO_DS)},${$(AM_DS)})${capexAdd}`,"$#,##0",ar.dsByYear[y+1]);
       }
     }
 
-    // Loan balance (value — multi-tranche FV too complex for single formula)
+    // Loan balance
     W(dc,r,LB,ar.lb,"$#,##0");
 
     // Net sale proceeds
-    W(dc,r,NS,`=${$(EXIT_VAL)}-${$(LB)}-${$(EXIT_VAL)}*${I.saleCost}`,"$#,##0");
+    W(dc,r,NS,`=${$(EXIT_VAL)}-${$(LB)}-${$(EXIT_VAL)}*${I.saleCost}`,"$#,##0",ar.saleNet);
 
     // ECF Y0
-    W(dc,r,ECF_START,`=-(${$(4)}+${di(14)}*(1-${I.ltv})+${$(13)})`,"$#,##0");
+    const ecfY0=-(ar.eq+(ar.capexEqByYear?.[0]||0)+(ar.txCosts||0));
+    W(dc,r,ECF_START,`=-(${$(4)}+${di(14)}*(1-${I.ltv})+${$(13)})`,"$#,##0",ecfY0);
 
-    // ECF Y1..Yn
+    // ECF Y1..Yn — build actual ECF from model for cached values
+    const ecfActual=ar.noi.map((nn,yy)=>{
+      if(yy===0)return ecfY0;
+      const capEq=ar.capexEqByYear?.[yy]||0;
+      return nn-(ar.dsByYear?.[yy]||0)-(ar.bwAnn?.[yy]||0)-capEq;
+    });
+    if(ar.holdYrs<=ecfActual.length) ecfActual[ar.holdYrs]+=ar.saleNet;
+
     for(let y=0;y<maxH;y++){
       const c=ECF_START+1+y;
       if(y<ar.holdYrs){
@@ -685,13 +695,13 @@ function exportToExcel(m,a){
         const bwF=`(${di(10)}+${di(11)}+${di(12)}+${noiRef}*${di(13)})`;
         const isExit=y===ar.holdYrs-1;
         const sale=isExit?`+${$(NS)}`:"";
-        W(dc,r,c,`=${noiRef}-${dsRef}-${bwF}${sale}`,"$#,##0");
+        W(dc,r,c,`=${noiRef}-${dsRef}-${bwF}${sale}`,"$#,##0",ecfActual[y+1]);
       }
     }
 
-    // IRR & MOIC
-    W(dc,r,IRR_COL,`=IFERROR(IRR(${$(ECF_START)}:${$(ECF_START+ar.holdYrs)}),"")`,"0.0%");
-    W(dc,r,MOIC_COL,`=IFERROR(SUM(${$(ECF_START+1)}:${$(ECF_START+ar.holdYrs)})/ABS(${$(ECF_START)}),"")`,"0.00x");
+    // IRR & MOIC — cached from model
+    W(dc,r,IRR_COL,`=IFERROR(IRR(${$(ECF_START)}:${$(ECF_START+ar.holdYrs)}),"")`,"0.0%",ar.irr);
+    W(dc,r,MOIC_COL,`=IFERROR(SUM(${$(ECF_START+1)}:${$(ECF_START+ar.holdYrs)})/ABS(${$(ECF_START)}),"")`,"0.00x",ar.moic);
   });
 
   // Totals row
@@ -733,25 +743,25 @@ function exportToExcel(m,a){
   W(wf,0,0,"LP / GP WATERFALL");
   W(wf,2,0,"Total Sale Proceeds"); W(wf,2,1,m.totSaleProc,"$#,##0"); W(wf,2,2,"Sum of deal net sale proceeds");
   W(wf,3,0,"Total Operating CF");  W(wf,3,1,m.totOpCF,"$#,##0");     W(wf,3,2,"Portfolio net op CF");
-  W(wf,5,0,"TOTAL POOL");          W(wf,5,1,"=B3+B4","$#,##0");
+  W(wf,5,0,"TOTAL POOL");          W(wf,5,1,"=B3+B4","$#,##0",m.pool);
   W(wf,7,0,"LP Capital Deployed"); W(wf,7,1,m.lpActualCapital,"$#,##0");
   W(wf,8,0,"GP Capital Deployed"); W(wf,8,1,m.gpActualCapital,"$#,##0");
   W(wf,10,0,"TIER 1: ROC");
-  W(wf,11,0,"LP ROC");             W(wf,11,1,"=MIN(B8,B6)","$#,##0");
-  W(wf,12,0,"GP ROC");             W(wf,12,1,"=MIN(B9,B6-B12)","$#,##0");
-  W(wf,13,0,"Remaining");          W(wf,13,1,"=B6-B12-B13","$#,##0");
+  W(wf,11,0,"LP ROC");             W(wf,11,1,"=MIN(B8,B6)","$#,##0",m.lpROC);
+  W(wf,12,0,"GP ROC");             W(wf,12,1,"=MIN(B9,B6-B12)","$#,##0",m.gpROC);
+  W(wf,13,0,"Remaining");          W(wf,13,1,"=B6-B12-B13","$#,##0",m.pool-m.lpROC-m.gpROC);
   W(wf,15,0,"TIER 2: PREFERRED");
-  W(wf,16,0,"Pref Rate");          W(wf,16,1,`=${I.pref}`,"0.0%");
-  W(wf,17,0,"LP Pref Due");        W(wf,17,1,`=B8*B17*${I.hold}`,"$#,##0");
-  W(wf,18,0,"LP Pref Paid");       W(wf,18,1,"=MIN(B18,B14)","$#,##0");
-  W(wf,19,0,"Remaining");          W(wf,19,1,"=B14-B19","$#,##0");
+  W(wf,16,0,"Pref Rate");          W(wf,16,1,`=${I.pref}`,"0.0%",a.prefReturn);
+  W(wf,17,0,"LP Pref Due");        W(wf,17,1,`=B8*B17*${I.hold}`,"$#,##0",m.lpActualCapital*a.prefReturn*ft);
+  W(wf,18,0,"LP Pref Paid");       W(wf,18,1,"=MIN(B18,B14)","$#,##0",m.lpPref);
+  W(wf,19,0,"Remaining");          W(wf,19,1,"=B14-B19","$#,##0",m.pool-m.lpROC-m.gpROC-m.lpPref);
   W(wf,21,0,"TIER 3: PROMOTE");
-  W(wf,22,0,"Carry %");            W(wf,22,1,`=${I.carry}`,"0.0%");
-  W(wf,23,0,"GP Promote");         W(wf,23,1,"=B20*B23","$#,##0");
-  W(wf,24,0,"LP Residual");        W(wf,24,1,"=B20*(1-B23)","$#,##0");
+  W(wf,22,0,"Carry %");            W(wf,22,1,`=${I.carry}`,"0.0%",a.carry);
+  W(wf,23,0,"GP Promote");         W(wf,23,1,"=B20*B23","$#,##0",m.gpPromote);
+  W(wf,24,0,"LP Residual");        W(wf,24,1,"=B20*(1-B23)","$#,##0",m.lpResid);
   W(wf,26,0,"TOTALS");
-  W(wf,27,0,"LP Total");           W(wf,27,1,"=B12+B19+B25","$#,##0");
-  W(wf,28,0,"LP MOIC");            W(wf,28,1,"=B28/B8","0.00x");
+  W(wf,27,0,"LP Total");           W(wf,27,1,"=B12+B19+B25","$#,##0",m.lpTotal);
+  W(wf,28,0,"LP MOIC");            W(wf,28,1,"=B28/B8","0.00x",m.lpMOIC);
   W(wf,29,0,"LP Net IRR");         W(wf,29,1,m.lpIRR,"0.0%"); W(wf,29,2,"Annual approx");
   W(wf,31,0,"GP Total");           W(wf,31,1,"=B13+B24","$#,##0");
   W(wf,32,0,"GP per Partner");     W(wf,32,1,`=B24/${a.partners}`,"$#,##0");
