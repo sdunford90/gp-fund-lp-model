@@ -505,171 +505,307 @@ function run(a){
 function exportToExcel(m,a){
   const wb=XLSX.utils.book_new();
   const ft=a.fundTerm;
-  const yrs=Array.from({length:ft},(_,i)=>`Year ${i+1}`);
+  const n=a.assets.length;
+  const maxH=Math.max(...m.assetR.map(x=>x.holdYrs));
 
-  // ── Sheet 1: Portfolio Summary ──
-  const sum=[
-    ["RDM Base Case — Portfolio Summary"],
-    [],
-    ["Fund Structure"],
+  // Helper: column letter from index (0=A, 1=B, 26=AA)
+  const col=c=>{let s="";c++;while(c>0){c--;s=String.fromCharCode(65+c%26)+s;c=Math.floor(c/26);}return s;};
+  // Helper: create formula cell
+  const F=f=>({t:"n",f});
+  // Helper: create number cell
+  const N=v=>({t:"n",v:v||0});
+  // Helper: create string cell
+  const S=v=>({t:"s",v:String(v||"")});
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // SHEET 1: INPUTS — all assumptions that drive the model
+  // ═══════════════════════════════════════════════════════════════════════
+  const inp=XLSX.utils.aoa_to_sheet([["RDM BASE CASE — MODEL INPUTS"],[]]);
+  // Fund structure in B4:B14
+  const fundRows=[
+    ["FUND STRUCTURE","Value"],
     ["Hold Period (years)",ft],["LTV (Debt %)",a.debtPct],["Interest Rate",a.interestRate],
-    ["Amort Period (years)",a.amortYears],["Exit Cap Rate",a.exitCapRate],["Sale Costs",a.saleCosts],
-    ["Preferred Return",a.prefReturn],["Carry",a.carry],["GP Commitment",a.gpPct],
-    [],
-    ["Portfolio Totals"],
-    ["Total Deals",a.assets.length],
-    ["Total Acquisition Cost",a.assets.reduce((s,x)=>s+x.price,0)],
-    ["Total CapEx",m.assetR.reduce((s,x)=>s+(x.totalCapex||0),0)],
-    ["Total Cost Basis",m.assetR.reduce((s,x)=>s+x.price+(x.totalCapex||0)+(x.txCosts||0),0)],
-    ["Total Equity Required",m.assetR.reduce((s,x)=>s+(x.totalEquityIn||0),0)],
-    ["Total Debt",m.assetR.reduce((s,x)=>s+(x.totalDebt||0),0)],
-    ["Total Exit Valuation",m.assetR.reduce((s,x)=>s+(x.exitVal||0),0)],
-    [],
-    ["LP Returns"],
-    ["LP Net IRR",m.lpIRR],["LP MOIC",m.lpMOIC],["LP Capital Deployed",m.lpActualCapital],
-    ["LP Total Distributions",m.lpTotal],["LP ROC",m.lpROC],["LP Pref",m.lpPref],["LP Residual",m.lpResid],
-    [],
-    ["GP Returns"],
-    ["GP Promote",m.gpPromote],["GP ROC",m.gpROC],["GP Net Total",m.gpNetTotal],
-    ["Per Partner Promote",m.promPP],
-    [],
-    ["G&A"],
-    ["Total G&A ("+ft+"yr)",m.totGA],
-    ["Waterfall Pool (Sale + OpCF)",m.pool],
-    ["Total Sale Proceeds",m.totSaleProc],["Total Operating CF",m.totOpCF],
+    ["Amort Period (years)",a.amortYears],["Exit Cap Rate",a.exitCapRate],
+    ["Sale Costs %",a.saleCosts],["Pref Return",a.prefReturn],["Carry %",a.carry],
+    ["GP Commitment %",a.gpPct],["Compound Pref",a.compoundPref?"TRUE":"FALSE"],
   ];
-  const ws1=XLSX.utils.aoa_to_sheet(sum);
-  ws1["!cols"]=[{wch:30},{wch:18}];
-  XLSX.utils.book_append_sheet(wb,ws1,"Portfolio Summary");
+  XLSX.utils.sheet_add_aoa(inp,fundRows,{origin:"A3"});
+  // Named references: Inputs!B4=holdPeriod, B5=LTV, B6=rate, B7=amort, B8=exitCap, B9=saleCosts, B10=pref, B11=carry, B12=gpPct
 
-  // ── Sheet 2: Deal Assumptions ──
-  const dealHdr=["Deal #","Name","Acq Price","Cap Rate","Close Month","I/O Period (mo)",
-    "Tx Costs","Total CapEx","CapEx Items","NOI Plug","Y1 Growth","Y2+ Growth",
-    "BW Marketing","BW Accounting","BW IT","BW Rev Mgmt %",
-    "Slips (Y1)","Slips (Y2+)","Hotel Units (Y1)","Hotel Units (Y2+)","OpEx Items"];
-  const dealRows=a.assets.map((d,i)=>{
-    const slY1=(d.slips||[]).filter(r=>r.period==="y1").reduce((s,r)=>s+r.count,0);
-    const slY2=(d.slips||[]).filter(r=>r.period!=="y1").reduce((s,r)=>s+r.count,0);
-    const ldY1=(d.lodging||[]).filter(r=>r.period==="y1").reduce((s,r)=>s+r.units,0);
-    const ldY2=(d.lodging||[]).filter(r=>r.period!=="y1").reduce((s,r)=>s+r.units,0);
-    const capexStr=(d.capexItems||[]).map(c=>`${c.label}: $${c.amount.toLocaleString()} (Y${c.year})`).join("; ");
-    const opexStr=(d.opex||[]).map(o=>`${o.label}: $${o.amount.toLocaleString()} (${(o.growth*100).toFixed(1)}%/yr)`).join("; ");
-    return[i+1,d.name,d.price,d.cap,d.startMonth,d.ioPeriod||12,
-      d.txCosts||0,(d.capexItems||[]).reduce((s,c)=>s+c.amount,0),capexStr,
+  // Per-deal inputs starting at row 16
+  const dHdr=["Deal #","Name","Acq Price","Cap Rate","Close Mo","I/O (mo)","Tx Costs",
+    "NOI Plug","Y1 Growth","Y2+ Growth","BW Mktg $","BW Acct $","BW IT $","BW Rev%",
+    "CapEx Day1","CapEx Yr1","CapEx Yr2","CapEx Yr3"];
+  XLSX.utils.sheet_add_aoa(inp,[[""],["PER-DEAL ASSUMPTIONS"],dHdr],{origin:"A15"});
+  a.assets.forEach((d,i)=>{
+    const cx=d.capexItems||[];
+    const cxByYr=[0,0,0,0]; cx.forEach(c=>{if(c.year<=3)cxByYr[c.year]+=c.amount;});
+    const row=[i+1,d.name,d.price,d.cap,d.startMonth,d.ioPeriod||12,d.txCosts||0,
       d.noiPlug||"",d.noiY1Growth,d.noiY2Growth,
       d.bwMarketing||0,d.bwAccounting||0,d.bwIT||0,d.bwRevMgmt||0,
-      slY1,slY2,ldY1,ldY2,opexStr];
+      cxByYr[0],cxByYr[1],cxByYr[2],cxByYr[3]];
+    XLSX.utils.sheet_add_aoa(inp,[row],{origin:`A${18+i}`});
   });
-  const ws2=XLSX.utils.aoa_to_sheet([dealHdr,...dealRows]);
-  ws2["!cols"]=dealHdr.map((_,i)=>({wch:i===0?6:i===1?20:i===8||i===20?50:14}));
-  XLSX.utils.book_append_sheet(wb,ws2,"Deal Assumptions");
+  inp["!cols"]=[{wch:7},{wch:18},...Array(16).fill({wch:14})];
+  XLSX.utils.book_append_sheet(wb,inp,"Inputs");
 
-  // ── Sheet 3: NOI Schedule (all deals × years) ──
-  const maxHold=Math.max(...m.assetR.map(ar=>ar.holdYrs));
-  const holdCols=Array.from({length:maxHold},(_,i)=>`Deal Yr ${i+1}`);
-  const noiHdr=["Deal #","Name","Close Mo","Hold Yrs","Base NOI",...holdCols,"Exit NOI","Exit Value","Net Sale","IRR","MOIC"];
-  const noiRows=m.assetR.map((ar,i)=>{
-    const padded=holdCols.map((_,y)=>y<ar.holdYrs?(ar.noi[y+1]||0):"");
-    return[i+1,ar.name,ar.startMonth,ar.holdYrs,ar.baseNOI,...padded,
-      ar.noi[ar.holdYrs],ar.exitVal,ar.saleNet,ar.irr,ar.moic];
+  // Row offsets for formula references (0-indexed internally, 1-indexed in Excel)
+  const IR=18; // first deal row in Inputs (Excel row 18, 0-indexed=17)
+  // Inputs cell references (Excel notation)
+  const I={hold:"Inputs!$B$4",ltv:"Inputs!$B$5",rate:"Inputs!$B$6",amort:"Inputs!$B$7",
+    exitCap:"Inputs!$B$8",saleCost:"Inputs!$B$9",pref:"Inputs!$B$10",carry:"Inputs!$B$11",
+    gpPct:"Inputs!$B$12"};
+  // Per-deal column mapping in Inputs: C=price,D=cap,E=closeMo,F=ioPeriod,G=txCosts,H=noiPlug,I=y1g,J=y2g,K=bwM,L=bwA,M=bwIT,N=bwRev%,O=cx0,P=cx1,Q=cx2,R=cx3
+  const di=(dealIdx,c)=>`Inputs!$${col(c)}$${IR+dealIdx}`; // reference a deal input cell
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // SHEET 2: DEAL CALCS — per-deal formulas
+  // ═══════════════════════════════════════════════════════════════════════
+  const dc=XLSX.utils.aoa_to_sheet([["DEAL CALCULATIONS — All formulas reference Inputs sheet"],[]]);
+  // Header row
+  const calcHdr=["#","Name","Acq Price","LTV","Equity","Acq Debt","Close Mo","Hold Months","Hold Yrs","I/O Yrs",
+    "CapEx Total","CapEx Equity","CapEx Debt","Tx Costs","Total Equity In","Total Debt",
+    "Base NOI",...Array.from({length:maxH},(_,y)=>`NOI Yr${y+1}`),"Exit NOI","Exit Value",
+    "Acq Ann DS (I/O)","Acq Ann DS (Am)",...Array.from({length:maxH},(_,y)=>`DS Yr${y+1}`),
+    "Loan Bal at Exit","Net Sale Proceeds",
+    ...Array.from({length:maxH+1},(_,y)=>y===0?"ECF Y0":`ECF Yr${y}`),"IRR","MOIC"];
+  XLSX.utils.sheet_add_aoa(dc,[calcHdr],{origin:"A3"});
+
+  m.assetR.forEach((ar,i)=>{
+    const r=4+i; // Excel row (1-indexed)
+    const dref=(c)=>di(i,c); // shorthand for this deal's input cell
+    const RC=(c)=>`$${col(c)}$${r}`; // reference a cell in THIS row of THIS sheet
+
+    // Columns: A=#, B=name, C=price, D=ltv, E=equity, F=debt, G=closeMo, H=holdMo, I=holdYrs, J=ioYrs
+    // K=capexTot, L=capexEq, M=capexDebt, N=txCosts, O=totalEqIn, P=totalDebt
+    // Q=baseNOI, R..R+maxH-1=NOI schedule, R+maxH=exitNOI, R+maxH+1=exitVal
+    // Then DS columns, then LB, netSale, ECF, IRR, MOIC
+
+    const cells=[];
+    cells.push(i+1); // A: deal #
+    cells.push(ar.name); // B: name
+    cells.push(F(`=${dref(2)}`)); // C: price from inputs
+    cells.push(F(`=${I.ltv}`)); // D: LTV
+    cells.push(F(`=${RC(2)}*(1-${RC(3)})`)); // E: equity = price*(1-ltv)
+    cells.push(F(`=${RC(2)}*${RC(3)}`)); // F: debt = price*ltv
+    cells.push(F(`=${dref(4)}`)); // G: close month
+    cells.push(F(`=${I.hold}*12-${RC(6)}+1`)); // H: hold months
+    cells.push(F(`=CEILING(${RC(7)}/12,1)`)); // I: hold years
+    cells.push(F(`=CEILING(${dref(5)}/12,1)`)); // J: I/O years
+
+    // K: capex total = sum of capex columns from inputs (O,P,Q,R = cols 14,15,16,17)
+    cells.push(F(`=${dref(14)}+${dref(15)}+${dref(16)}+${dref(17)}`));
+    // L: capex equity = capex*(1-ltv)
+    cells.push(F(`=${RC(10)}*(1-${I.ltv})`));
+    // M: capex debt = capex*ltv
+    cells.push(F(`=${RC(10)}*${I.ltv}`));
+    // N: tx costs
+    cells.push(F(`=${dref(6)}`));
+    // O: total equity in = equity + capex equity + tx costs
+    cells.push(F(`=${RC(4)}+${RC(11)}+${RC(13)}`));
+    // P: total debt = acq debt + capex debt
+    cells.push(F(`=${RC(5)}+${RC(12)}`));
+
+    // Q: base NOI (from plug or price*cap)
+    const qCol=16;
+    cells.push(F(`=IF(${dref(7)}<>"",${dref(7)},${RC(2)}*${dref(3)})`));
+
+    // NOI schedule: cols qCol+1 through qCol+maxH
+    for(let y=0;y<maxH;y++){
+      const noiCol=qCol+1+y;
+      if(y===0){
+        // Y1 = baseNOI
+        cells.push(F(`=IF(${y+1}<=${RC(8)},${RC(qCol)},"")`));
+      } else if(y===1){
+        // Y2 = baseNOI*(1+g1)
+        cells.push(F(`=IF(${y+1}<=${RC(8)},${RC(qCol)}*(1+${dref(8)}),"")`));
+      } else {
+        // Y3+ = prevYear*(1+g2)
+        cells.push(F(`=IF(${y+1}<=${RC(8)},${RC(noiCol-1)}*(1+${dref(9)}),"")`));
+      }
+    }
+
+    // Exit NOI = last operating year's NOI
+    const exitNoiCol=qCol+1+maxH;
+    cells.push(F(`=INDEX(${RC(qCol+1)}:${RC(qCol+maxH)},1,${RC(8)})`));
+    // Exit Value = exitNOI / exitCap
+    const exitValCol=exitNoiCol+1;
+    cells.push(F(`=${RC(exitNoiCol)}/${I.exitCap}`));
+
+    // Debt service: I/O annual
+    const dsStartCol=exitValCol+1;
+    cells.push(F(`=${RC(5)}*${I.rate}`)); // acq I/O DS
+    cells.push(F(`=PMT(${I.rate},${I.amort},${RC(5)})`)); // acq amortizing DS (negative in Excel)
+
+    // DS per year (acq only for simplicity, capex DS added as values)
+    for(let y=0;y<maxH;y++){
+      const dsCol=dsStartCol+2+y;
+      if(y<ar.holdYrs){
+        // If within I/O period use I/O rate, else amortizing (use ABS since PMT returns negative)
+        cells.push(F(`=IF(${y+1}<=${RC(9)},${RC(dsStartCol)},ABS(${RC(dsStartCol+1)}))+${ar.dsByYear[y+1]-(y+1<=ar.ioYrs?ar.ioAnnDS:ar.amAnnDS)}`));
+      } else {
+        cells.push("");
+      }
+    }
+
+    // Loan balance at exit (value — FV formula is complex with multiple tranches)
+    const lbCol=dsStartCol+2+maxH;
+    cells.push(N(ar.lb));
+
+    // Net sale proceeds = exitVal - LB - exitVal*saleCosts
+    const nsCol=lbCol+1;
+    cells.push(F(`=${RC(exitValCol)}-${RC(lbCol)}-${RC(exitValCol)}*${I.saleCost}`));
+
+    // ECF: Y0 through Yn
+    const ecfStartCol=nsCol+1;
+    // Y0 = -(equity + day1 capex equity + tx costs)
+    cells.push(F(`=-(${RC(4)}+${dref(14)}*(1-${I.ltv})+${RC(13)})`));
+    // Y1..Yn
+    for(let y=0;y<maxH;y++){
+      const noiRef=RC(qCol+1+y);
+      const dsRef=RC(dsStartCol+2+y);
+      const bwFixed=`(${dref(10)}+${dref(11)}+${dref(12)})`;
+      const bwRev=`${noiRef}*${dref(13)}`;
+      const capEqYr=y<(ar.capexEqByYear?.[y+1]?1:0)?`${dref(14+y+1)}*(1-${I.ltv})`:"0";
+      if(y<ar.holdYrs){
+        const isExit=y===ar.holdYrs-1;
+        const base=`=${noiRef}-${dsRef}-(${bwFixed}+${bwRev})`;
+        if(isExit){
+          cells.push(F(`${base}+${RC(nsCol)}`));
+        } else {
+          cells.push(F(base));
+        }
+      } else {
+        cells.push("");
+      }
+    }
+
+    // IRR = IRR(ECF range)
+    const irrCol=ecfStartCol+maxH+1;
+    const ecfRange=`${RC(ecfStartCol)}:${RC(ecfStartCol+maxH)}`;
+    cells.push(F(`=IFERROR(IRR(${ecfRange}),"")`));
+    // MOIC = sum(ECF Y1..Yn) / abs(ECF Y0)
+    const moicCol=irrCol+1;
+    cells.push(F(`=IFERROR(SUM(${RC(ecfStartCol+1)}:${RC(ecfStartCol+maxH)})/ABS(${RC(ecfStartCol)}),"")`));
+
+    XLSX.utils.sheet_add_aoa(dc,[cells],{origin:`A${r}`});
   });
-  noiRows.push(["","PORTFOLIO TOTAL","","","",
-    ...holdCols.map(()=>""),"",
-    m.assetR.reduce((s,x)=>s+(x.exitVal||0),0),m.totSaleProc,"",""]);
-  const ws3=XLSX.utils.aoa_to_sheet([noiHdr,...noiRows]);
-  ws3["!cols"]=noiHdr.map((_,i)=>({wch:i===1?20:14}));
-  XLSX.utils.book_append_sheet(wb,ws3,"NOI Schedule");
 
-  // ── Sheet 4: Debt Service Schedule ──
-  const dsHdr=["Deal #","Name","Close Mo","Hold Yrs","Acq Debt","CapEx Debt","Total Debt","I/O Yrs",...holdCols.map(c=>c+" DS"),"LB at Exit"];
-  const dsRows=m.assetR.map((ar,i)=>{
-    const padDS=holdCols.map((_,y)=>y<ar.holdYrs?(ar.dsByYear[y+1]||0):"");
-    return[i+1,ar.name,ar.startMonth,ar.holdYrs,ar.debt,ar.totalDebt-ar.debt,ar.totalDebt,ar.ioYrs,...padDS,ar.lb];
-  });
-  const ws4=XLSX.utils.aoa_to_sheet([dsHdr,...dsRows]);
-  ws4["!cols"]=dsHdr.map((_,i)=>({wch:i===1?20:14}));
-  XLSX.utils.book_append_sheet(wb,ws4,"Debt Schedule");
+  // Totals row
+  const totR=4+n;
+  const totCells=["","PORTFOLIO TOTAL"];
+  // Sum columns C through P
+  for(let c=2;c<=15;c++){
+    totCells.push(F(`=SUM(${col(c)}4:${col(c)}${3+n})`));
+  }
+  // Skip individual NOI/DS/ECF columns for totals, add at key positions
+  XLSX.utils.sheet_add_aoa(dc,[totCells],{origin:`A${totR}`});
 
-  // ── Sheet 5: BW Fees ──
-  const bwHdr=["Deal #","Name","Hold Yrs","BW Mktg","BW Acct","BW IT","BW Rev %",...holdCols.map(c=>c+" BW"),"Total"];
-  const bwRows=m.assetR.map((ar,i)=>{
-    const padBW=holdCols.map((_,y)=>y<ar.holdYrs?(ar.bwAnn[y+1]||0):"");
-    return[i+1,ar.name,ar.holdYrs,ar.bwMarketing||0,ar.bwAccounting||0,ar.bwIT||0,ar.bwRevMgmt||0,...padBW,ar.totBWFee];
-  });
-  const ws5=XLSX.utils.aoa_to_sheet([bwHdr,...bwRows]);
-  ws5["!cols"]=bwHdr.map((_,i)=>({wch:i===1?20:14}));
-  XLSX.utils.book_append_sheet(wb,ws5,"BW Fees");
+  dc["!cols"]=calcHdr.map((_,i)=>({wch:i===1?18:i===0?4:13}));
+  XLSX.utils.book_append_sheet(wb,dc,"Deal Calcs");
 
-  // ── Sheet 6: Equity Cash Flow ──
-  const cfHdr=["Deal #","Name","Hold Yrs","Y0 (Equity In)",...holdCols,"Total Eq In","MOIC","IRR"];
-  const cfRows=m.assetR.map((ar,i)=>{
-    const ecf=ar.noi.map((n,y)=>{
-      if(y===0) return -(ar.eq+(ar.capexEqByYear?.[0]||0)+(ar.txCosts||0));
-      const capEq=ar.capexEqByYear?.[y]||0;
-      return n-(ar.dsByYear?.[y]||0)-(ar.bwAnn?.[y]||0)-capEq;
-    });
-    ecf[ar.holdYrs]+=ar.saleNet;
-    const padCF=holdCols.map((_,y)=>y<ar.holdYrs?ecf[y+1]:"");
-    return[i+1,ar.name,ar.holdYrs,ecf[0],...padCF,ar.totalEquityIn,ar.moic,ar.irr];
-  });
-  const ws6=XLSX.utils.aoa_to_sheet([cfHdr,...cfRows]);
-  ws6["!cols"]=cfHdr.map((_,i)=>({wch:i===1?20:14}));
-  XLSX.utils.book_append_sheet(wb,ws6,"Equity Cash Flow");
+  // ═══════════════════════════════════════════════════════════════════════
+  // SHEET 3: WATERFALL — formula-driven
+  // ═══════════════════════════════════════════════════════════════════════
+  const wf=XLSX.utils.aoa_to_sheet([["LP / GP WATERFALL"],[]]);
+  // References to Deal Calcs totals
+  const totEqRef=`'Deal Calcs'!O${totR}`;
+  const totDebtRef=`'Deal Calcs'!P${totR}`;
 
-  // ── Sheet 7: Monthly Portfolio CF ──
-  const moHdr=["Month","Portfolio NOI","Debt Service","BW Fees","G&A","Net Op CF","LP Calls","GP Calls"];
-  const moRows=m.monthly.map(x=>[x.mo,x.noi,x.ds,x.bwF,x.ga,x.netOpCF,x.lpCall,x.gpCall]);
-  const ws7=XLSX.utils.aoa_to_sheet([moHdr,...moRows]);
-  ws7["!cols"]=moHdr.map(()=>({wch:14}));
-  XLSX.utils.book_append_sheet(wb,ws7,"Monthly Cash Flow");
-
-  // ── Sheet 8: Waterfall ──
-  const wf=[
-    ["LP/GP Waterfall"],
+  const wfRows=[
+    ["","Value","Formula"],
+    ["Total Sale Proceeds",N(m.totSaleProc),"Sum of all deal net sale proceeds"],
+    ["Total Operating CF",N(m.totOpCF),"Portfolio net op CF over fund life"],
     [],
-    ["Total Pool (Sale + OpCF)",m.pool],
+    [S("TOTAL POOL"),F(`=B4+B5`),"Sale + OpCF"],
     [],
-    ["Tier 1: Return of Capital"],
-    ["LP ROC",m.lpROC],["GP ROC",m.gpROC],
+    [S("LP Capital Deployed"),N(m.lpActualCapital),"Total LP equity calls"],
+    [S("GP Capital Deployed"),N(m.gpActualCapital),"Total GP equity calls"],
     [],
-    ["Tier 2: Preferred Return"],
-    ["Pref Rate",a.prefReturn],["Pref Type",a.compoundPref?"Compound":"Simple"],
-    ["LP Pref Due",a.compoundPref?m.lpActualCapital*(Math.pow(1+a.prefReturn,ft)-1):m.lpActualCapital*a.prefReturn*ft],
-    ["LP Pref Paid",m.lpPref],
+    [S("TIER 1: RETURN OF CAPITAL")],
+    [S("LP ROC"),F(`=MIN(B10,B8)`),"LP gets capital back first"],
+    [S("GP ROC"),F(`=MIN(B11,B8-B14)`),"GP gets capital back"],
+    [S("Remaining after ROC"),F(`=B8-B14-B15`)],
     [],
-    ["Tier 3: Promote"],
-    ["Carry %",a.carry],["Catch-Up",a.catchUp?"Yes":"No"],
-    ["GP Promote",m.gpPromote],["LP Residual",m.lpResid],
+    [S("TIER 2: PREFERRED RETURN")],
+    [S("Pref Rate"),F(`=${I.pref}`)],
+    [S("LP Pref Due"),F(`=B10*B19*${I.hold}`),"Simple: capital × rate × years"],
+    [S("LP Pref Paid"),F(`=MIN(B20,B16)`)],
+    [S("Remaining after Pref"),F(`=B16-B21`)],
     [],
-    ["Totals"],
-    ["LP Total Distributions",m.lpTotal],["LP Capital In",m.lpActualCapital],
-    ["LP MOIC",m.lpMOIC],["LP Net IRR",m.lpIRR],
+    [S("TIER 3: PROMOTE")],
+    [S("Carry %"),F(`=${I.carry}`)],
+    [S("GP Promote"),F(`=B22*B25`),"Carry % of remaining"],
+    [S("LP Residual"),F(`=B22*(1-B25)`)],
     [],
-    ["GP Total",m.gpFundTotal],["GP Net (7yr)",m.gpNetTotal],
+    [S("TOTALS")],
+    [S("LP Total Distributions"),F(`=B14+B21+B27`),"ROC + Pref + Residual"],
+    [S("LP MOIC"),F(`=B30/B10`),"Distributions / Capital"],
+    [S("LP Net IRR"),N(m.lpIRR),"Computed (annual approx)"],
+    [],
+    [S("GP Total"),F(`=B15+B26`),"ROC + Promote"],
+    [S("GP Promote per Partner"),F(`=B26/${a.partners}`)],
   ];
-  const ws8=XLSX.utils.aoa_to_sheet(wf);
-  ws8["!cols"]=[{wch:28},{wch:18}];
-  XLSX.utils.book_append_sheet(wb,ws8,"Waterfall");
+  XLSX.utils.sheet_add_aoa(wf,wfRows,{origin:"A3"});
+  wf["!cols"]=[{wch:28},{wch:18},{wch:40}];
+  XLSX.utils.book_append_sheet(wb,wf,"Waterfall");
 
-  // ── Sheet 9: CapEx Detail ──
+  // ═══════════════════════════════════════════════════════════════════════
+  // SHEET 4: MONTHLY CASH FLOW — values (72+ rows, formulas impractical)
+  // ═══════════════════════════════════════════════════════════════════════
+  const moHdr=["Month","Portfolio NOI","Debt Service","BW Fees","G&A","Net Op CF","LP Calls","GP Calls",
+    "Cumul LP Called","Cumul Net CF"];
+  const moData=[moHdr];
+  m.monthly.forEach((x,i)=>{
+    const r=i+2; // Excel row
+    moData.push([x.mo,x.noi,x.ds,x.bwF,x.ga,
+      F(`=B${r}-C${r}-D${r}-E${r}`), // Net Op CF formula
+      x.lpCall,x.gpCall,
+      F(i===0?`=G${r}`:`=I${r-1}+G${r}`), // Cumul LP
+      F(i===0?`=F${r}`:`=J${r-1}+F${r}`), // Cumul Net CF
+    ]);
+  });
+  const ws4=XLSX.utils.aoa_to_sheet(moData);
+  ws4["!cols"]=moHdr.map(()=>({wch:15}));
+  XLSX.utils.book_append_sheet(wb,ws4,"Monthly Cash Flow");
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // SHEET 5: CAPEX DETAIL — formulas for equity/debt split
+  // ═══════════════════════════════════════════════════════════════════════
   const cxHdr=["Deal #","Name","Item","Amount","Year","Equity Portion","Debt Portion"];
-  const cxRows=[];
+  const cxData=[cxHdr];
+  let cxRow=2;
   a.assets.forEach((d,i)=>{
     (d.capexItems||[]).forEach(c=>{
-      cxRows.push([i+1,d.name,c.label,c.amount,c.year===0?"Day-1":`Year ${c.year}`,
-        c.amount*(1-a.debtPct),c.amount*a.debtPct]);
+      cxData.push([i+1,d.name,c.label,c.amount,c.year===0?"Day-1":`Year ${c.year}`,
+        F(`=D${cxRow}*(1-${I.ltv})`),F(`=D${cxRow}*${I.ltv}`)]);
+      cxRow++;
     });
   });
-  if(cxRows.length>0){
-    cxRows.push(["","TOTAL","",cxRows.reduce((s,r)=>s+r[3],0),"",
-      cxRows.reduce((s,r)=>s+r[5],0),cxRows.reduce((s,r)=>s+r[6],0)]);
+  if(cxData.length>1){
+    cxData.push(["","TOTAL","",F(`=SUM(D2:D${cxRow-1})`),"",
+      F(`=SUM(F2:F${cxRow-1})`),F(`=SUM(G2:G${cxRow-1})`)]);
   }
-  const ws9=XLSX.utils.aoa_to_sheet([cxHdr,...cxRows]);
-  ws9["!cols"]=[{wch:6},{wch:20},{wch:40},{wch:14},{wch:10},{wch:14},{wch:14}];
-  XLSX.utils.book_append_sheet(wb,ws9,"CapEx Detail");
+  const ws5=XLSX.utils.aoa_to_sheet(cxData);
+  ws5["!cols"]=[{wch:6},{wch:18},{wch:40},{wch:14},{wch:10},{wch:16},{wch:16}];
+  XLSX.utils.book_append_sheet(wb,ws5,"CapEx Detail");
 
-  // Download
-  XLSX.writeFile(wb,`RDM_Base_Case_${new Date().toISOString().slice(0,10)}.xlsx`);
+  // ═══════════════════════════════════════════════════════════════════════
+  // SHEET 6: G&A SCHEDULE — monthly with formulas
+  // ═══════════════════════════════════════════════════════════════════════
+  const gaHdr=["Month","Personnel","Overhead","One-Time","Total G&A"];
+  const gaData=[gaHdr];
+  m.gaMonthly.forEach((x,i)=>{
+    const r=i+2;
+    gaData.push([x.mo,x.personnel,x.fix,x.oneTimeHit,F(`=B${r}+C${r}+D${r}`)]);
+  });
+  gaData.push(["TOTAL",F(`=SUM(B2:B${ft*12+1})`),F(`=SUM(C2:C${ft*12+1})`),
+    F(`=SUM(D2:D${ft*12+1})`),F(`=SUM(E2:E${ft*12+1})`)]);
+  const ws6=XLSX.utils.aoa_to_sheet(gaData);
+  ws6["!cols"]=gaHdr.map(()=>({wch:15}));
+  XLSX.utils.book_append_sheet(wb,ws6,"G&A Schedule");
+
+  XLSX.writeFile(wb,`RDM_Model_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
 // ── FORMATTERS ────────────────────────────────────────────────────────────────
