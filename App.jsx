@@ -165,53 +165,53 @@ function run(a){
       marketing:a.bwMarketing||0, accounting:a.bwAccounting||0, it:a.bwIT||0, revMgmtPct:a.bwRevMgmt||0};
   }
 
-  // ── Asset calcs ──
+  // ── Asset calcs — each deal has its own hold period based on closing month ──
   const assetR=assets.map(asset=>{
-    const ioYrs = Math.ceil((asset.ioPeriod||0)/12); // per-deal I/O period in whole years
-    const eq=asset.price*(1-debtPct), debt=asset.price*debtPct;
-    const ioAnnDS = debt*interestRate; // interest-only annual payment
-    const amAnnDS = pmt(interestRate,amortYears,debt); // fully amortizing annual payment
-    const annDS = amAnnDS; // legacy reference (amortizing rate)
+    // Hold period = fund exit - closing month (in whole years, minimum 1)
+    const holdMonths = Math.max(1, MO - asset.startMonth + 1);
+    const holdYrs = Math.max(1, Math.ceil(holdMonths / 12));
 
-    // CapEx: sum items by year
-    const capexItems = asset.capexItems||[];
+    const ioYrs = Math.ceil((asset.ioPeriod||0)/12);
+    const eq=asset.price*(1-debtPct), debt=asset.price*debtPct;
+    const ioAnnDS = debt*interestRate;
+    const amAnnDS = pmt(interestRate,amortYears,debt);
+    const annDS = amAnnDS;
+
+    // CapEx: only include items that deploy within the hold period
+    const capexItems = (asset.capexItems||[]).filter(c=>c.year<=holdYrs);
     const capexByYear = {};
     capexItems.forEach(c=>{ capexByYear[c.year]=(capexByYear[c.year]||0)+c.amount; });
     const totalCapex = capexItems.reduce((s,c)=>s+c.amount,0);
     const day1Capex = capexByYear[0]||0;
 
-    // OpEx: recurring annual expenses (each can have its own growth rate)
+    // OpEx
     const opexItems = asset.opex||[];
     const y1Opex = opexItems.reduce((s,o)=>s+o.amount, 0);
-    const opexByYear = Array.from({length:fundTerm+1},(_,y)=>{
+    const opexByYear = Array.from({length:holdYrs+1},(_,y)=>{
       if(y===0) return 0;
       return opexItems.reduce((s,o)=>s + o.amount*Math.pow(1+(o.growth||0), y-1), 0);
     });
 
-    // Compute gross revenue and base NOI (Y1 and Y2 separately)
+    // Revenue & NOI
     const buRevY1 = calcBottomUpRevenue(asset, "y1");
     const buRevY2 = calcBottomUpRevenue(asset, "y2");
-    const buRev = buRevY1; // default display = Y1
+    const buRev = buRevY1;
     let grossRev, baseNOI, grossRevY2, baseNOIY2;
     if(asset.noiPlug!=null && asset.noiPlug>0){
-      baseNOI = asset.noiPlug;
-      grossRev = baseNOI + y1Opex;
+      baseNOI = asset.noiPlug; grossRev = baseNOI + y1Opex;
       grossRevY2 = grossRev; baseNOIY2 = baseNOI;
     } else if(asset.revenueMode==="bottomup" && buRevY1.total>0){
-      grossRev = buRevY1.total;
-      baseNOI = grossRev - y1Opex;
-      grossRevY2 = buRevY2.total;
-      baseNOIY2 = grossRevY2 - y1Opex; // Y2 opex uses same base (growth handled separately)
+      grossRev = buRevY1.total; baseNOI = grossRev - y1Opex;
+      grossRevY2 = buRevY2.total; baseNOIY2 = grossRevY2 - y1Opex;
     } else {
-      baseNOI = asset.price*asset.cap;
-      grossRev = baseNOI + y1Opex;
+      baseNOI = asset.price*asset.cap; grossRev = baseNOI + y1Opex;
       grossRevY2 = grossRev; baseNOIY2 = baseNOI;
     }
 
-    // NOI schedule: Y1 uses noiY1Growth, Y2+ uses noiY2Growth
+    // NOI schedule — length matches THIS deal's hold period
     const g1 = asset.noiY1Growth!=null ? asset.noiY1Growth : (asset.growth||.05);
     const g2 = asset.noiY2Growth!=null ? asset.noiY2Growth : (asset.growth||.05);
-    const noi=Array.from({length:fundTerm+1},(_,y)=>{
+    const noi=Array.from({length:holdYrs+1},(_,y)=>{
       if(y===0) return 0;
       if(y===1) return baseNOI;
       let v = baseNOI * (1+g1);
@@ -219,69 +219,65 @@ function run(a){
       return v;
     });
 
-    // BW fees per year
+    // BW fees — per year of this deal's hold
     const bwFees = noi.map((n,y)=> y===0 ? {fixed:0,revMgmt:0,total:0} : calcBWFees(asset, n));
     const bwAnn = bwFees.map(f=>f.total);
 
-    // CapEx funded 50/50 debt/equity — each tranche creates additional debt
+    // CapEx 50/50 debt/equity
     const txCosts = asset.txCosts||0;
-    const capexEqByYear = {};  // equity portion of capex per year
-    const capexDebtByYear = {}; // debt portion of capex per year
+    const capexEqByYear = {};
+    const capexDebtByYear = {};
     Object.entries(capexByYear).forEach(([yr,amt])=>{
       capexEqByYear[yr] = amt * (1 - debtPct);
       capexDebtByYear[yr] = amt * debtPct;
     });
 
-    // Build annual debt service schedule including capex debt tranches
-    // Each capex debt tranche gets its own I/O period then amortizes
-    const dsByYear = Array.from({length:fundTerm+1},(_,y)=>{
+    // Debt service schedule — length matches hold period
+    const dsByYear = Array.from({length:holdYrs+1},(_,y)=>{
       if(y===0) return 0;
-      // Acquisition debt
       let ds = y<=ioYrs ? ioAnnDS : amAnnDS;
-      // CapEx debt tranches — each starts I/O from its deployment year
       Object.entries(capexDebtByYear).forEach(([cy,cd])=>{
         const capYr = Number(cy);
         const yrsActive = y - capYr;
-        if(yrsActive<=0) return; // not yet deployed
+        if(yrsActive<=0) return;
         const capIO = Math.ceil((asset.ioPeriod||0)/12);
-        if(yrsActive<=capIO) ds += cd*interestRate; // I/O
-        else ds += pmt(interestRate,amortYears,cd); // amortizing
+        if(yrsActive<=capIO) ds += cd*interestRate;
+        else ds += pmt(interestRate,amortYears,cd);
       });
       return ds;
     });
 
-    // Total loan balance at exit (acquisition + all capex tranches)
-    const acqAmYrs = Math.max(0, fundTerm - ioYrs);
+    // Loan balance at exit — based on actual hold years
+    const acqAmYrs = Math.max(0, holdYrs - ioYrs);
     let totalLB = acqAmYrs>0 ? Math.abs(fvLoan(interestRate,acqAmYrs,amAnnDS,debt)) : debt;
     Object.entries(capexDebtByYear).forEach(([cy,cd])=>{
       const capYr = Number(cy);
       const capIO = Math.ceil((asset.ioPeriod||0)/12);
-      const yrsHeld = fundTerm - capYr;
+      const yrsHeld = holdYrs - capYr;
       if(yrsHeld<=0){ totalLB += cd; return; }
       const capAmYrs = Math.max(0, yrsHeld - capIO);
       totalLB += capAmYrs>0 ? Math.abs(fvLoan(interestRate,capAmYrs,pmt(interestRate,amortYears,cd),cd)) : cd;
     });
 
-    // Equity cash flow
+    // Equity cash flow — length = holdYrs + 1
     const ecf = noi.map((n,y)=>{
-      const capEq = capexEqByYear[y]||0; // equity portion of capex
+      const capEq = capexEqByYear[y]||0;
       if(y===0) return -(eq + capEq + txCosts);
-      return n - dsByYear[y] - bwAnn[y] - capEq; // deduct capex equity + all debt service
+      return n - dsByYear[y] - bwAnn[y] - capEq;
     });
 
-    const exitNOI = noi[fundTerm];
+    const exitNOI = noi[holdYrs];
     const exitVal = exitNOI / exitCapRate;
     const lb = totalLB;
     const saleNet = exitVal - lb - exitVal*saleCosts;
-    ecf[fundTerm] += saleNet;
+    ecf[holdYrs] += saleNet;
     const eqIRR = irr(ecf);
     const totalEquityIn = eq + Object.values(capexEqByYear).reduce((s,v)=>s+v,0) + txCosts;
     const totalDebt = debt + Object.values(capexDebtByYear).reduce((s,v)=>s+v,0);
-    // MOIC = total distributions / equity invested
     const moic = ecf.slice(1).reduce((s,v)=>s+v,0) / totalEquityIn;
     const totBWFee = bwAnn.reduce((s,v)=>s+v,0);
 
-    return {...asset, eq, debt, totalDebt, annDS, ioAnnDS, amAnnDS, ioYrs, dsByYear, noi, bwFees, bwAnn, totBWFee,
+    return {...asset, eq, debt, totalDebt, annDS, ioAnnDS, amAnnDS, ioYrs, holdYrs, holdMonths, dsByYear, noi, bwFees, bwAnn, totBWFee,
       totalCapex, day1Capex, capexByYear, capexEqByYear, capexDebtByYear, txCosts,
       buRev, buRevY1, buRevY2, grossRev, grossRevY2, baseNOIY2, y1Opex, opexByYear,
       saleNet, exitVal, lb, irr:eqIRR, moic, baseNOI, totalEquityIn};
@@ -297,17 +293,19 @@ function run(a){
     assetR.forEach((ar,ai)=>{
       const x=assets[ai];
       if(mo<x.startMonth)return;
+      if(mo>x.startMonth+ar.holdMonths-1) return; // deal already exited
       const yr=Math.floor((mo-x.startMonth)/12)+1;
-      const moNOI=(yr<=fundTerm?ar.noi[yr]:ar.noi[fundTerm])/12;
+      const hY=ar.holdYrs;
+      const moNOI=(yr<=hY?ar.noi[yr]:(ar.noi[hY]||0))/12;
       noi+=moNOI;
-      const bwYear = yr<=fundTerm ? ar.bwAnn[yr] : ar.bwAnn[fundTerm];
+      const bwYear = yr<=hY ? (ar.bwAnn[yr]||0) : (ar.bwAnn[hY]||0);
       bwF+=bwYear/12;
       // CapEx equity — tracked as a separate capital call, NOT deducted from operating CF
       const yrCapexEq = ar.capexEqByYear?.[yr]||0;
       if(yrCapexEq>0) capxF+=yrCapexEq/12;
       invEq+=x.price*(1-debtPct);
-      // Total debt service (acq + capex tranches) from precomputed annual schedule
-      const yrDS = yr<=fundTerm ? (ar.dsByYear?.[yr]||0) : (ar.dsByYear?.[fundTerm]||0);
+      // Total debt service from precomputed annual schedule
+      const yrDS = yr<=hY ? (ar.dsByYear?.[yr]||0) : (ar.dsByYear?.[hY]||0);
       ds+=yrDS/12;
     });
     const ga=gaMonthly[i].total;
@@ -447,10 +445,18 @@ function run(a){
   const partnerCum=partnerMonthly.map(x=>{pCum+=x.draw+x.coInvest+x.promote;return{mo:x.mo,cum:pCum};});
 
   // Portfolio NOI chart
-  const noiChart=Array.from({length:fundTerm},(_,y)=>({
-    year:`Yr ${y+1}`,
-    noi:assetR.reduce((s,ar)=>s+(ar.noi[y+1]||0),0),
-  }));
+  // NOI chart — per fund year, only count deals that are active in that year
+  const noiChart=Array.from({length:fundTerm},(_,fy)=>{
+    const fundMonth=(fy+1)*12; // end of this fund year
+    let totalNOI=0;
+    assetR.forEach((ar,ai)=>{
+      const x=assets[ai];
+      if(x.startMonth>fundMonth) return; // not yet acquired
+      const dealYr=Math.floor((fundMonth-x.startMonth)/12)+1; // which deal-year is this?
+      if(dealYr>=1 && dealYr<=ar.holdYrs) totalNOI+=(ar.noi[dealYr]||0);
+    });
+    return{year:`Yr ${fy+1}`,noi:totalNOI};
+  });
 
   // Fund CF by year — lpCalls includes acq + capex; capexCalls shown separately for charting
   const fundCFAnnual=Array.from({length:fundTerm},(_,y)=>{
@@ -559,17 +565,17 @@ function exportToExcel(m,a){
   XLSX.utils.book_append_sheet(wb,ws2,"Deal Assumptions");
 
   // ── Sheet 3: NOI Schedule (all deals × years) ──
-  const noiHdr=["Deal #","Name","Base NOI",...yrs,"Exit NOI","Exit Value","Net Sale Proceeds","IRR","MOIC"];
-  const noiRows=m.assetR.map((ar,i)=>[
-    i+1,ar.name,ar.baseNOI,...ar.noi.slice(1),
-    ar.noi[ft],ar.exitVal,ar.saleNet,ar.irr,ar.moic
-  ]);
-  // Portfolio total row
-  noiRows.push(["","PORTFOLIO TOTAL",m.assetR.reduce((s,x)=>s+x.baseNOI,0),
-    ...yrs.map((_,y)=>m.assetR.reduce((s,x)=>s+(x.noi[y+1]||0),0)),
-    m.assetR.reduce((s,x)=>s+(x.noi[ft]||0),0),
-    m.assetR.reduce((s,x)=>s+(x.exitVal||0),0),
-    m.totSaleProc,"",""]);
+  const maxHold=Math.max(...m.assetR.map(ar=>ar.holdYrs));
+  const holdCols=Array.from({length:maxHold},(_,i)=>`Deal Yr ${i+1}`);
+  const noiHdr=["Deal #","Name","Close Mo","Hold Yrs","Base NOI",...holdCols,"Exit NOI","Exit Value","Net Sale","IRR","MOIC"];
+  const noiRows=m.assetR.map((ar,i)=>{
+    const padded=holdCols.map((_,y)=>y<ar.holdYrs?(ar.noi[y+1]||0):"");
+    return[i+1,ar.name,ar.startMonth,ar.holdYrs,ar.baseNOI,...padded,
+      ar.noi[ar.holdYrs],ar.exitVal,ar.saleNet,ar.irr,ar.moic];
+  });
+  noiRows.push(["","PORTFOLIO TOTAL","","","",
+    ...holdCols.map(()=>""),"",
+    m.assetR.reduce((s,x)=>s+(x.exitVal||0),0),m.totSaleProc,"",""]);
   const ws3=XLSX.utils.aoa_to_sheet([noiHdr,...noiRows]);
   ws3["!cols"]=noiHdr.map((_,i)=>({wch:i===1?20:14}));
   XLSX.utils.book_append_sheet(wb,ws3,"NOI Schedule");
