@@ -551,7 +551,7 @@ function exportToExcel(m,a){
     "NOI Plug","Y1 Growth","Y2+ Growth","BW Mktg $","BW Acct $","BW IT $","BW Rev%",
     "CapEx D1","CapEx Y1","CapEx Y2","CapEx Y3"];
   dCols.forEach((h,c)=>W(inp,14,c,h));
-  const dFmts=[null,null,"$#,##0","0.0%",null,null,"$#,##0","$#,##0","0.0%","0.0%",
+  const dFmts=[null,null,"$#,##0","0.0%","#,##0","#,##0","$#,##0","$#,##0","0.0%","0.0%",
     "$#,##0","$#,##0","$#,##0","0.0%","$#,##0","$#,##0","$#,##0","$#,##0"];
   a.assets.forEach((d,i)=>{
     const cx=d.capexItems||[];
@@ -624,10 +624,10 @@ function exportToExcel(m,a){
     W(dc,r,3,`=${I.ltv}`,"0.0%");                            // D: LTV
     W(dc,r,4,`=${$(2)}*(1-${$(3)})`,"$#,##0");               // E: equity
     W(dc,r,5,`=${$(2)}*${$(3)}`,"$#,##0");                   // F: acq debt
-    W(dc,r,6,`=${di(4)}`);                                    // G: close month
-    W(dc,r,7,`=${I.hold}*12-${$(6)}+1`);                     // H: hold months
-    W(dc,r,8,`=CEILING(${$(7)}/12,1)`);                      // I: hold years
-    W(dc,r,9,`=CEILING(${di(5)}/12,1)`);                     // J: I/O years
+    W(dc,r,6,`=${di(4)}`,null);                               // G: close month
+    W(dc,r,7,`=${I.hold}*12-${$(6)}+1`,null);                // H: hold months
+    W(dc,r,8,`=CEILING(${$(7)}/12,1)`,null);                 // I: hold years
+    W(dc,r,9,`=CEILING(${di(5)}/12,1)`,null);                // J: I/O years
     W(dc,r,10,`=${di(14)}+${di(15)}+${di(16)}+${di(17)}`,"$#,##0"); // K: capex total
     W(dc,r,11,`=${$(10)}*(1-${I.ltv})`,"$#,##0");            // L: capex equity
     W(dc,r,12,`=${$(10)}*${I.ltv}`,"$#,##0");                // M: capex debt
@@ -697,11 +697,31 @@ function exportToExcel(m,a){
   // Totals row
   const tR=2+n;
   W(dc,tR,0,""); W(dc,tR,1,"PORTFOLIO TOTAL");
-  [2,3,4,5,10,11,12,13,14,15].forEach(c=>{
+  // Dollar columns get SUM formulas
+  [2,4,5,10,11,12,13,14,15].forEach(c=>{
     W(dc,tR,c,`=SUM(${CL(c)}3:${CL(c)}${2+n})`,"$#,##0");
   });
+  // LTV avg (skip — not meaningful as sum)
+  W(dc,tR,3,a.debtPct,"0.0%");
+  // Exit value, Net sale, Loan balance totals
   W(dc,tR,EXIT_VAL,`=SUM(${CL(EXIT_VAL)}3:${CL(EXIT_VAL)}${2+n})`,"$#,##0");
+  W(dc,tR,LB,`=SUM(${CL(LB)}3:${CL(LB)}${2+n})`,"$#,##0");
   W(dc,tR,NS,`=SUM(${CL(NS)}3:${CL(NS)}${2+n})`,"$#,##0");
+  // ECF Y0 total
+  W(dc,tR,ECF_START,`=SUM(${CL(ECF_START)}3:${CL(ECF_START)}${2+n})`,"$#,##0");
+  // NOI year totals
+  for(let y=0;y<maxH;y++){
+    W(dc,tR,BASE_NOI+1+y,`=SUM(${CL(BASE_NOI+1+y)}3:${CL(BASE_NOI+1+y)}${2+n})`,"$#,##0");
+    W(dc,tR,DS_START+y,`=SUM(${CL(DS_START+y)}3:${CL(DS_START+y)}${2+n})`,"$#,##0");
+    W(dc,tR,ECF_START+1+y,`=SUM(${CL(ECF_START+1+y)}3:${CL(ECF_START+1+y)}${2+n})`,"$#,##0");
+  }
+  // Base NOI total
+  W(dc,tR,BASE_NOI,`=SUM(${CL(BASE_NOI)}3:${CL(BASE_NOI)}${2+n})`,"$#,##0");
+  // Exit NOI total
+  W(dc,tR,EXIT_NOI,`=SUM(${CL(EXIT_NOI)}3:${CL(EXIT_NOI)}${2+n})`,"$#,##0");
+  // IO DS and AM DS totals
+  W(dc,tR,IO_DS,`=SUM(${CL(IO_DS)}3:${CL(IO_DS)}${2+n})`,"$#,##0");
+  W(dc,tR,AM_DS,`=SUM(${CL(AM_DS)}3:${CL(AM_DS)}${2+n})`,"$#,##0");
 
   dc["!cols"]=hdrs.map((_,i)=>({wch:i===1?18:i===0?4:12}));
   XLSX.utils.book_append_sheet(wb,dc,"Deal Calcs");
