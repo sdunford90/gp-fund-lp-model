@@ -581,35 +581,36 @@ function exportToExcel(m,a){
   XLSX.utils.book_append_sheet(wb,ws3,"NOI Schedule");
 
   // ── Sheet 4: Debt Service Schedule ──
-  const dsHdr=["Deal #","Name","Acq Debt","CapEx Debt","Total Debt","I/O Years",...yrs.map(y=>y+" DS"),"Loan Balance at Exit"];
-  const dsRows=m.assetR.map((ar,i)=>[
-    i+1,ar.name,ar.debt,ar.totalDebt-ar.debt,ar.totalDebt,ar.ioYrs,
-    ...ar.dsByYear.slice(1),ar.lb
-  ]);
+  const dsHdr=["Deal #","Name","Close Mo","Hold Yrs","Acq Debt","CapEx Debt","Total Debt","I/O Yrs",...holdCols.map(c=>c+" DS"),"LB at Exit"];
+  const dsRows=m.assetR.map((ar,i)=>{
+    const padDS=holdCols.map((_,y)=>y<ar.holdYrs?(ar.dsByYear[y+1]||0):"");
+    return[i+1,ar.name,ar.startMonth,ar.holdYrs,ar.debt,ar.totalDebt-ar.debt,ar.totalDebt,ar.ioYrs,...padDS,ar.lb];
+  });
   const ws4=XLSX.utils.aoa_to_sheet([dsHdr,...dsRows]);
   ws4["!cols"]=dsHdr.map((_,i)=>({wch:i===1?20:14}));
   XLSX.utils.book_append_sheet(wb,ws4,"Debt Schedule");
 
   // ── Sheet 5: BW Fees ──
-  const bwHdr=["Deal #","Name","BW Mktg","BW Acct","BW IT","BW Rev %",...yrs.map(y=>y+" BW Fee"),"7yr Total"];
-  const bwRows=m.assetR.map((ar,i)=>[
-    i+1,ar.name,ar.bwMarketing||0,ar.bwAccounting||0,ar.bwIT||0,ar.bwRevMgmt||0,
-    ...ar.bwAnn.slice(1),ar.totBWFee
-  ]);
+  const bwHdr=["Deal #","Name","Hold Yrs","BW Mktg","BW Acct","BW IT","BW Rev %",...holdCols.map(c=>c+" BW"),"Total"];
+  const bwRows=m.assetR.map((ar,i)=>{
+    const padBW=holdCols.map((_,y)=>y<ar.holdYrs?(ar.bwAnn[y+1]||0):"");
+    return[i+1,ar.name,ar.holdYrs,ar.bwMarketing||0,ar.bwAccounting||0,ar.bwIT||0,ar.bwRevMgmt||0,...padBW,ar.totBWFee];
+  });
   const ws5=XLSX.utils.aoa_to_sheet([bwHdr,...bwRows]);
   ws5["!cols"]=bwHdr.map((_,i)=>({wch:i===1?20:14}));
   XLSX.utils.book_append_sheet(wb,ws5,"BW Fees");
 
   // ── Sheet 6: Equity Cash Flow ──
-  const cfHdr=["Deal #","Name","Y0 (Equity In)",...yrs,"Total Equity In","MOIC","IRR"];
+  const cfHdr=["Deal #","Name","Hold Yrs","Y0 (Equity In)",...holdCols,"Total Eq In","MOIC","IRR"];
   const cfRows=m.assetR.map((ar,i)=>{
     const ecf=ar.noi.map((n,y)=>{
       if(y===0) return -(ar.eq+(ar.capexEqByYear?.[0]||0)+(ar.txCosts||0));
       const capEq=ar.capexEqByYear?.[y]||0;
       return n-(ar.dsByYear?.[y]||0)-(ar.bwAnn?.[y]||0)-capEq;
     });
-    ecf[ft]+=ar.saleNet;
-    return[i+1,ar.name,...ecf,ar.totalEquityIn,ar.moic,ar.irr];
+    ecf[ar.holdYrs]+=ar.saleNet;
+    const padCF=holdCols.map((_,y)=>y<ar.holdYrs?ecf[y+1]:"");
+    return[i+1,ar.name,ar.holdYrs,ecf[0],...padCF,ar.totalEquityIn,ar.moic,ar.irr];
   });
   const ws6=XLSX.utils.aoa_to_sheet([cfHdr,...cfRows]);
   ws6["!cols"]=cfHdr.map((_,i)=>({wch:i===1?20:14}));
