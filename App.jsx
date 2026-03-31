@@ -33,7 +33,7 @@ const DEF_ASSET_BASE = {
   noiPlug:463125,   // Y1 NOI: hotel(15×$325×90×50%margin) + slips(65×$5K×75%margin)
   txCosts:0,
   ioPeriod:12,    // months of interest-only before amortizing (per deal)
-  bwMarketing:50000, bwAccounting:40000, bwIT:35000, bwRevMgmt:0,
+  bwMarketing:50000, bwAccounting:40000, bwIT:35000, bwRevMgmt:.06,
   startMonth:1,
 };
 
@@ -158,11 +158,14 @@ function run(a){
   }
 
   // ── BW management fee helper (per deal, per year) ──
-  function calcBWFees(a, noiAmt){
-    const fixed = (a.bwMarketing||0)+(a.bwAccounting||0)+(a.bwIT||0);
-    const revMgmt = noiAmt*(a.bwRevMgmt||0);
-    return {fixed, revMgmt, total:fixed+revMgmt,
-      marketing:a.bwMarketing||0, accounting:a.bwAccounting||0, it:a.bwIT||0, revMgmtPct:a.bwRevMgmt||0};
+  // Year 1: fixed fee only ($125K). Year 2+: revMgmt % of NOI (no fixed).
+  function calcBWFees(a, noiAmt, dealYr){
+    if(dealYr<=1){
+      const fixed=(a.bwMarketing||0)+(a.bwAccounting||0)+(a.bwIT||0);
+      return{fixed,revMgmt:0,total:fixed};
+    }
+    const revMgmt=noiAmt*(a.bwRevMgmt||0);
+    return{fixed:0,revMgmt,total:revMgmt};
   }
 
   // ── Asset calcs — each deal has its own hold period based on closing month ──
@@ -219,8 +222,8 @@ function run(a){
       return v;
     });
 
-    // BW fees — per year of this deal's hold
-    const bwFees = noi.map((n,y)=> y===0 ? {fixed:0,revMgmt:0,total:0} : calcBWFees(asset, n));
+    // BW fees — Y1 fixed, Y2+ as % of NOI
+    const bwFees = noi.map((n,y)=> y===0 ? {fixed:0,revMgmt:0,total:0} : calcBWFees(asset, n, y));
     const bwAnn = bwFees.map(f=>f.total);
 
     // CapEx 50/50 debt/equity
