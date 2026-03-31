@@ -565,6 +565,7 @@ function run(a){
 function exportToExcel(m,a){
   const wb=XLSX.utils.book_new();
   const ft=a.fundTerm;
+  const MO=ft*12;
   const n=a.assets.length;
   const maxH=Math.max(...m.assetR.map(x=>x.holdYrs));
 
@@ -992,7 +993,15 @@ function exportToExcel(m,a){
 
   // Force Excel to recalculate on open
   wb.Workbook={CalcPr:{fullCalcOnLoad:true}};
-  XLSX.writeFile(wb,`RDM_Model_${new Date().toISOString().slice(0,10)}.xlsx`);
+  const wbout=XLSX.write(wb,{bookType:"xlsx",type:"array"});
+  const blob=new Blob([wbout],{type:"application/octet-stream"});
+  const url=URL.createObjectURL(blob);
+  const a2=document.createElement("a");
+  a2.href=url;
+  a2.download=`RDM_Model_${new Date().toISOString().slice(0,10)}.xlsx`;
+  document.body.appendChild(a2);
+  a2.click();
+  setTimeout(()=>{document.body.removeChild(a2);URL.revokeObjectURL(url);},100);
 }
 
 // ── FORMATTERS ────────────────────────────────────────────────────────────────
