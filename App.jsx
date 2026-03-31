@@ -747,9 +747,10 @@ function exportToExcel(m,a){
       }
     }
 
-    // IRR & MOIC — cached from model
-    W(dc,r,IRR_COL,`=IFERROR(IRR(${$(ECF_START)}:${$(ECF_START+ar.holdYrs)}),"")`,"0.0%",ar.irr);
-    W(dc,r,MOIC_COL,`=IFERROR(SUM(${$(ECF_START+1)}:${$(ECF_START+ar.holdYrs)})/ABS(${$(ECF_START)}),"")`,"0.00x",ar.moic);
+    // IRR (monthly-computed, annualized) & MOIC — values from model
+    // Note: annual ECF IRR formula is approximate; the cached value is the accurate monthly IRR
+    W(dc,r,IRR_COL,ar.irr,"0.0%");
+    W(dc,r,MOIC_COL,ar.moic,"0.00x");
   });
 
   // Totals row
@@ -828,7 +829,54 @@ function exportToExcel(m,a){
   XLSX.utils.book_append_sheet(wb,fy,"Fund Year NOI");
 
   // ═══════════════════════════════════════════════════════════════════════
-  // SHEET 3: WATERFALL
+  // SHEET: MONTHLY DEAL CF — each deal's monthly ECF on the fund timeline
+  // ═══════════════════════════════════════════════════════════════════════
+  const mdc={"!ref":"A1","!cols":[{wch:4},{wch:16},{wch:5},{wch:5},{wch:8},...Array(MO).fill({wch:11}),{wch:10},{wch:10}]};
+  W(mdc,0,0,"MONTHLY EQUITY CASH FLOW — each deal on fund calendar");
+  // Headers
+  W(mdc,1,0,"#"); W(mdc,1,1,"Name"); W(mdc,1,2,"Close"); W(mdc,1,3,"Hold"); W(mdc,1,4,"IRR");
+  for(let mi=1;mi<=MO;mi++) W(mdc,1,4+mi,`M${mi}`);
+  W(mdc,1,5+MO,"MOIC"); W(mdc,1,6+MO,"Eq In");
+
+  // Per deal: map moECF (deal-relative) onto fund months
+  m.assetR.forEach((ar,i)=>{
+    const r=2+i;
+    W(mdc,r,0,i+1);
+    W(mdc,r,1,ar.name);
+    W(mdc,r,2,ar.startMonth);
+    W(mdc,r,3,ar.holdMonths);
+    W(mdc,r,4,ar.irr,"0.0%");
+    // Map deal months to fund months
+    if(ar.moECF){
+      ar.moECF.forEach((cf,mi)=>{
+        const fundMo = (mi===0) ? ar.startMonth : ar.startMonth + mi;
+        if(fundMo>=1 && fundMo<=MO){
+          W(mdc,r,4+fundMo,cf,"$#,##0");
+        }
+      });
+    }
+    W(mdc,r,5+MO,ar.moic,"0.00x");
+    W(mdc,r,6+MO,ar.totalEquityIn,"$#,##0");
+  });
+
+  // Portfolio total row — sum each fund month across all deals
+  const mdcTR=2+n;
+  W(mdc,mdcTR,0,""); W(mdc,mdcTR,1,"PORTFOLIO TOTAL");
+  for(let mi=1;mi<=MO;mi++){
+    W(mdc,mdcTR,4+mi,`=SUM(${CL(4+mi)}3:${CL(4+mi)}${2+n})`,"$#,##0");
+  }
+  // Cumulative row
+  const mdcCR=mdcTR+1;
+  W(mdc,mdcCR,1,"CUMULATIVE");
+  for(let mi=1;mi<=MO;mi++){
+    const c=4+mi;
+    if(mi===1) W(mdc,mdcCR,c,`=${CL(c)}${mdcTR+1}`,"$#,##0");
+    else W(mdc,mdcCR,c,`=${CL(c-1)}${mdcCR+1}+${CL(c)}${mdcTR+1}`,"$#,##0");
+  }
+  XLSX.utils.book_append_sheet(wb,mdc,"Monthly Deal CF");
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // SHEET: WATERFALL
   // ═══════════════════════════════════════════════════════════════════════
   const wf={"!ref":"A1","!cols":[{wch:28},{wch:18},{wch:40}]};
   W(wf,0,0,"LP / GP WATERFALL");
