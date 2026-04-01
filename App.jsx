@@ -445,6 +445,9 @@ function run(a){
   const totOpCF=monthly.reduce((s,x)=>s+x.netOpCF,0);  // net of G&A already
   const totGA=gaMonthly.reduce((s,x)=>s+x.total,0);
   const totPartnerSal=gaMonthly.reduce((s,x)=>s+(x.partnerSalCost||0),0);
+  const totExitVal=assetR.reduce((s,x)=>s+(x.exitVal||0),0);
+  const debtAtExit=assetR.reduce((s,x)=>s+(x.lb||0),0);
+  const totSaleCosts=totExitVal-debtAtExit-totSaleProc; // implied sale costs across all exits
 
   // No fees — G&A is deducted directly from operating cash flow
   const totFees=0;
@@ -598,7 +601,7 @@ function run(a){
     gpROC,gpPromote,gpFundTotal,
     totEqDep,totLPIn,totLPCalled,totGPCalled,totGPIn,
     totGAShortfall,lpActualCapital,gpActualCapital,
-    totSaleProc,totOpCF,pool,totFees,totGA,
+    totSaleProc,totOpCF,pool,totFees,totGA,totExitVal,debtAtExit,totSaleCosts,
     gpEntity,gpCumData,gpNetTotal,gpBreakeven,
     promPP,drawsPP,rocPP,coInvPP,totalPP,netPP,
     partnerMonthly,partnerCum,
@@ -3056,7 +3059,35 @@ function TabWaterfall({m,a}){
     <div>
       <PHdr title="Distribution Waterfall" sub={`3-tier · ${f.$(m.pool)} total pool · ${f.$(m.totSaleProc)} sale proceeds + ${f.$(m.totOpCF)} op CF`}/>
 
-            {/* LP shortfall explainer */}
+      {/* NOI → Exit → Pool bridge */}
+      <div style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:6,padding:"12px 16px",marginBottom:14}}>
+        <div style={{fontSize:9,color:C.gold,textTransform:"uppercase",letterSpacing:".1em",fontFamily:"'JetBrains Mono',monospace",marginBottom:10}}>
+          Y{a.fundTerm} Exit NOI → Gross Exit → Distributable Pool
+        </div>
+        <div style={{display:"flex",alignItems:"center",flexWrap:"wrap"}}>
+          {[
+            {label:"Gross Exit Value",  val:m.totExitVal,    color:C.green,   note:`${f.p(a.exitCapRate)} cap on exit NOI`},
+            {label:"− Sale Costs",      val:-m.totSaleCosts, color:C.red,     note:`${f.p(a.saleCosts)} of gross`},
+            {label:"− Debt at Exit",    val:-m.debtAtExit,   color:C.red,     note:"remaining loan balances"},
+            {label:"= Net Sale Proc.",  val:m.totSaleProc,   color:"#0284C7", note:"exits net of debt & costs"},
+            {label:"+ Operating CF",   val:m.totOpCF,        color:C.gold,    note:`${a.fundTerm}-yr net op CF`},
+            {label:"= Total Pool",      val:m.pool,          color:C.green,   note:"available for distribution", bold:true},
+          ].map((item,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center"}}>
+              <div style={{padding:"6px 12px",textAlign:"center"}}>
+                <div style={{fontSize:9,color:C.textDim,marginBottom:2}}>{item.label}</div>
+                <div style={{fontSize:item.bold?15:13,fontWeight:700,color:item.val<0?C.red:item.color,fontFamily:item.bold?"'DM Serif Display',serif":"'JetBrains Mono',monospace"}}>
+                  {item.val<0?`(${f.$(Math.abs(item.val))})`:f.$(item.val)}
+                </div>
+                <div style={{fontSize:8,color:C.textDim}}>{item.note}</div>
+              </div>
+              {i<5&&<div style={{fontSize:14,color:C.textDim,padding:"0 4px"}}>→</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* LP shortfall explainer */}
       <div style={{background:"rgba(201,168,76,.06)",border:`1px solid rgba(201,168,76,.25)`,
         borderRadius:5,padding:"11px 15px",marginBottom:16,fontSize:11,color:C.whDim}}>
         <span style={{color:C.gold,fontWeight:700}}>How the G&A shortfall works: </span>
@@ -3154,11 +3185,33 @@ function TabFundCF({m,a}){
   return(
     <div>
       <PHdr title="Fund Cash Flow" sub="LP capital calls, operating CF, and monthly distribution detail"/>
-      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:18}}>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
         <KPI label="Total LP Called"   value={f.$(m.totLPCalled)} sub="Investment period"/>
         <KPI label="Total Op CF"       value={f.$(m.totOpCF)}     sub="Net of DS + G&A"/>
         <KPI label="Sale Proceeds"     value={f.$(m.totSaleProc)} sub="All exits" gold/>
         <KPI label="Total Pool"        value={f.$(m.pool)}        sub="Available for distribution"/>
+      </div>
+      {/* Exit → Pool bridge */}
+      <div style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:6,padding:"10px 14px",marginBottom:18,display:"flex",alignItems:"center",gap:0,flexWrap:"wrap"}}>
+        <div style={{fontSize:9,color:C.textDim,fontFamily:"'JetBrains Mono',monospace",marginRight:8,whiteSpace:"nowrap"}}>EXIT BRIDGE:</div>
+        {[
+          {label:"Gross Exit",     val:m.totExitVal,    color:C.green},
+          {label:"− Sale Costs",   val:-m.totSaleCosts, color:C.red},
+          {label:"− Debt Payoff",  val:-m.debtAtExit,   color:C.red},
+          {label:"= Net Exits",    val:m.totSaleProc,   color:"#0284C7"},
+          {label:"+ Op CF",        val:m.totOpCF,       color:C.gold},
+          {label:"= Total Pool",   val:m.pool,          color:C.green, bold:true},
+        ].map((item,i)=>(
+          <div key={i} style={{display:"flex",alignItems:"center"}}>
+            <div style={{padding:"2px 8px",textAlign:"center"}}>
+              <div style={{fontSize:8,color:C.textDim,marginBottom:1}}>{item.label}</div>
+              <div style={{fontSize:item.bold?13:12,fontWeight:item.bold?800:700,color:item.val<0?C.red:item.color,fontFamily:"'JetBrains Mono',monospace"}}>
+                {item.val<0?`(${f.$(Math.abs(item.val))})`:f.$(item.val)}
+              </div>
+            </div>
+            {i<5&&<div style={{fontSize:12,color:C.textDim}}>→</div>}
+          </div>
+        ))}
       </div>
 
       <div style={{display:"flex",gap:4,marginBottom:14}}>
