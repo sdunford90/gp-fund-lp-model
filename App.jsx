@@ -382,7 +382,11 @@ function run(a){
     const eqIRR = Math.pow(1+moIRR, 12)-1; // annualized
     const totalEquityIn = eq + Object.values(capexEqByYear).reduce((s,v)=>s+v,0) + txCosts;
     const totalDebt = debt + Object.values(capexDebtByYear).reduce((s,v)=>s+v,0);
-    const moic = moECF.slice(1).reduce((s,v)=>s+v,0) / totalEquityIn;
+    // MOIC = (total cash returned to equity) / (total equity invested)
+    // = (ops CF over hold + saleNet) / totalEquityIn
+    // sum(moECF) + totalEquityIn = ops CF + saleNet (since moECF[0] = -day0Eq and
+    // subsequent capex calls are embedded but already counted in totalEquityIn)
+    const moic = (moECF.reduce((s,v)=>s+v,0) + totalEquityIn) / totalEquityIn;
     const totBWFee = bwAnn.reduce((s,v)=>s+v,0);
 
     return {...asset, eq, debt, totalDebt, annDS, ioAnnDS, amAnnDS, ioYrs, holdYrs, holdMonths, dsByYear, noi, bwFees, bwAnn, totBWFee,
