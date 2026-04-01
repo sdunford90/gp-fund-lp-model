@@ -29,8 +29,8 @@ const DEF_ASSET_BASE = {
   price:4500000, cap:.075, growth:.034,
   slips:[],lodging:[],fuelGallons:0,fuelMargin:0,upland:[],otherIncome:0,
   opex:[],capexItems:[],
-  noiY1Growth:1.012, noiY2Growth:.03,
-  noiPlug:463125,   // Y1 NOI: hotel(15×$325×90×50%margin) + slips(65×$5K×75%margin)
+  noiY2Growth:.03,
+  noiPlug:0,        // Y1 NOI override — leave 0 to use price×cap as base
   txCosts:0,
   ioPeriod:12,    // months of interest-only before amortizing (per deal)
   bwMarketing:50000, bwAccounting:40000, bwIT:35000, bwRevMgmt:.06,
@@ -67,9 +67,9 @@ COHORT_DEFS.forEach(cohort=>{
         {label:"Marina Operating Costs (25% margin)",amount:81250,growth:.05},
       ],
       capexItems:[
-        {label:"Deferred Maintenance & R&M",amount:700000,year:0},
-        {label:"Hotel Conversion Phase 1 (15 units @ $175K)",amount:2600000,year:0},
-        {label:"Hotel Conversion Phase 2 (15 units @ $175K)",amount:2600000,year:1},
+        {label:"Deferred Maintenance & R&M",amount:700000,year:0,roiPct:0},
+        {label:"Hotel Conversion Phase 1 (15 units @ $175K)",amount:2600000,year:0,roiPct:0.0844},
+        {label:"Hotel Conversion Phase 2 (15 units @ $175K)",amount:2600000,year:1,roiPct:0.0844},
       ],
     });
   }
@@ -211,27 +211,37 @@ function run(a){
     const buRevY2 = calcBottomUpRevenue(asset, "y2");
     const buRev = buRevY1;
     let grossRev, baseNOI, grossRevY2, baseNOIY2;
-    if(asset.noiPlug!=null && asset.noiPlug>0){
-      baseNOI = asset.noiPlug; grossRev = baseNOI + y1Opex;
-      grossRevY2 = grossRev; baseNOIY2 = baseNOI;
-    } else if(asset.revenueMode==="bottomup" && buRevY1.total>0){
+    if(asset.revenueMode==="bottomup" && buRevY1.total>0){
       grossRev = buRevY1.total; baseNOI = grossRev - y1Opex;
       grossRevY2 = buRevY2.total; baseNOIY2 = grossRevY2 - y1Opex;
     } else {
-      baseNOI = asset.price*asset.cap; grossRev = baseNOI + y1Opex;
+      // Base: price × cap rate (as-is operations at acquisition)
+      // noiPlug overrides only if explicitly set > 0
+      baseNOI = (asset.noiPlug!=null && asset.noiPlug>0) ? asset.noiPlug : asset.price*asset.cap;
+      grossRev = baseNOI + y1Opex;
       grossRevY2 = grossRev; baseNOIY2 = baseNOI;
     }
 
-    // NOI schedule — length matches THIS deal's hold period
-    const g1 = asset.noiY1Growth!=null ? asset.noiY1Growth : (asset.growth||.05);
-    const g2 = asset.noiY2Growth!=null ? asset.noiY2Growth : (asset.growth||.05);
-    const noi=Array.from({length:holdYrs+1},(_,y)=>{
-      if(y===0) return 0;
-      if(y===1) return baseNOI;
-      let v = baseNOI * (1+g1);
-      for(let yr=3; yr<=y; yr++) v *= (1+g2);
-      return v;
+    // CapEx ROI — each capex item with roiPct adds annual income starting year after completion
+    // Day-0 (year:0) → income from Year 1; Year N capex → income from Year N+1
+    const capexROIByYear = {};
+    capexItems.forEach(c=>{
+      if(!c.roiPct || c.roiPct<=0) return;
+      const startYr = c.year+1;
+      for(let y=startYr; y<=holdYrs; y++){
+        capexROIByYear[y] = (capexROIByYear[y]||0) + c.amount*c.roiPct;
+      }
     });
+    // NOI schedule — iterative: Year 1 = base + day-0 capex ROI
+    // Each subsequent year: prior year × (1+g) + any new capex ROI completions
+    const g2 = asset.noiY2Growth!=null ? asset.noiY2Growth : (asset.growth||.03);
+    const noi=[0];
+    let runNOI = baseNOI + (capexROIByYear[1]||0);
+    noi.push(runNOI);
+    for(let y=2; y<=holdYrs; y++){
+      runNOI = runNOI*(1+g2) + (capexROIByYear[y]||0);
+      noi.push(runNOI);
+    }
 
     // BW fees — Y1 = $125K fixed, Y2+ = 6% of REVENUE (NOI + OpEx = gross revenue)
     const bwFees = noi.map((n,y)=>{
@@ -344,7 +354,7 @@ function run(a){
     const totBWFee = bwAnn.reduce((s,v)=>s+v,0);
 
     return {...asset, eq, debt, totalDebt, annDS, ioAnnDS, amAnnDS, ioYrs, holdYrs, holdMonths, dsByYear, noi, bwFees, bwAnn, totBWFee,
-      totalCapex, day1Capex, capexByYear, capexEqByYear, capexDebtByYear, txCosts,
+      totalCapex, day1Capex, capexByYear, capexEqByYear, capexDebtByYear, capexROIByYear, txCosts,
       buRev, buRevY1, buRevY2, grossRev, grossRevY2, baseNOIY2, y1Opex, opexByYear,
       saleNet, exitVal, lb, irr:eqIRR, moic, baseNOI, totalEquityIn, moECF};
   });
@@ -622,16 +632,17 @@ function exportToExcel(m,a){
   const DR=15; // first deal data row (0-indexed)
   W(inp,13,0,"PER-DEAL ASSUMPTIONS");
   const dCols=["#","Name","Acq Price","Cap Rate","Close Mo","I/O (mo)","Tx Costs",
-    "NOI Plug","Y1 Growth","Y2+ Growth","BW Mktg $","BW Acct $","BW IT $","BW Rev%",
+    "NOI Plug","CapEx ROI (Y1)","Y2+ Growth","BW Mktg $","BW Acct $","BW IT $","BW Rev%",
     "CapEx D1","CapEx Y1","CapEx Y2","CapEx Y3"];
   dCols.forEach((h,c)=>W(inp,14,c,h));
-  const dFmts=[null,null,"$#,##0","0.0%","#,##0","#,##0","$#,##0","$#,##0","0.0%","0.0%",
+  const dFmts=[null,null,"$#,##0","0.0%","#,##0","#,##0","$#,##0","$#,##0","$#,##0","0.0%",
     "$#,##0","$#,##0","$#,##0","0.0%","$#,##0","$#,##0","$#,##0","$#,##0"];
   a.assets.forEach((d,i)=>{
     const cx=d.capexItems||[];
     const cxByYr=[0,0,0,0]; cx.forEach(c=>{if(c.year<=3)cxByYr[c.year]+=c.amount;});
+    const capexROIY1=cx.filter(c=>c.year===0).reduce((s,c)=>s+(c.amount*(c.roiPct||0)),0);
     const vals=[i+1,d.name,d.price,d.cap,d.startMonth,d.ioPeriod||12,d.txCosts||0,
-      d.noiPlug||0,d.noiY1Growth,d.noiY2Growth,
+      d.noiPlug||0,capexROIY1,d.noiY2Growth,
       d.bwMarketing||0,d.bwAccounting||0,d.bwIT||0,d.bwRevMgmt||0,
       cxByYr[0],cxByYr[1],cxByYr[2],cxByYr[3]];
     vals.forEach((v,c)=>W(inp,DR+i,c,v,dFmts[c]));
@@ -1728,7 +1739,7 @@ export default function Portal(){
     ...DEF_ASSET_BASE, name:"New Site "+(p.assets.length+1), cohort:"Custom",
     slips:[{type:"Marina Slips",count:50,rate:417,occ:1.0,period:"y2"}],
     lodging:[{type:"Hotel Units",units:15,adr:325,occ:.247,period:"y1"},{type:"Hotel Units",units:30,adr:325,occ:.411,period:"y2"}],
-    upland:[], capexItems:[{label:"Deferred Maintenance",amount:700000,year:0},{label:"Hotel Ph1",amount:2600000,year:0},{label:"Hotel Ph2",amount:2600000,year:1}],
+    upland:[], capexItems:[{label:"Deferred Maintenance",amount:700000,year:0,roiPct:0},{label:"Hotel Ph1",amount:2600000,year:0,roiPct:0.0844},{label:"Hotel Ph2",amount:2600000,year:1,roiPct:0.0844}],
     opex:[{label:"Hotel OpEx",amount:219375,growth:.03},{label:"Marina OpEx",amount:81250,growth:.05}],
     startMonth:Math.min(72,(p.assets.length+1)*2+1)}]})),[]);
   const removeAsset=useCallback((i)=>setA(p=>({...p,assets:p.assets.filter((_,j)=>j!==i)})),[]);
@@ -2695,8 +2706,19 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                           padding:"5px 10px",fontSize:9,cursor:"pointer"}}>Clear</button>}
                     </div>
                   </div>
-                  <DealSlider label="Y1→Y2 Growth" k="noiY1Growth" min={-.10} max={.20} step={.005}
-                    disp={v=>`${(v*100).toFixed(1)}%`} color={C.orange}/>
+                  <div>
+                    <div style={{fontSize:10,color:C.textDim,fontWeight:600,marginBottom:6}}>CapEx ROI Income</div>
+                    <div style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px"}}>
+                      {(asset.capexItems||[]).filter(c=>c.roiPct>0).length===0?(
+                        <span style={{fontSize:11,color:C.textFaint}}>No yield-bearing CapEx</span>
+                      ):(asset.capexItems||[]).filter(c=>c.roiPct>0).map((c,i)=>(
+                        <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:2}}>
+                          <span style={{color:C.textDim,fontSize:10}}>{c.label.split(" ")[0]} Ph{i+1} (Yr{c.year===0?"1":c.year+1}+)</span>
+                          <span style={{color:C.green,fontWeight:700}}>+{f.$(c.amount*c.roiPct)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                   <DealSlider label="Y2+ Annual Growth" k="noiY2Growth" min={.01} max={.12} step={.005}
                     disp={v=>`${(v*100).toFixed(1)}%`} color={C.green}/>
                 </div>
@@ -2749,14 +2771,14 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,
                     paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>
                     <span style={{fontSize:10,fontWeight:700,color:C.red,textTransform:"uppercase",letterSpacing:".06em"}}>Capital Expenditures</span>
-                    <button onClick={()=>{const c=[...(asset.capexItems||[]),{label:"New CapEx",amount:100000,year:0}];setAsset(sel,"capexItems",c);}}
+                    <button onClick={()=>{const c=[...(asset.capexItems||[]),{label:"New CapEx",amount:100000,year:0,roiPct:0}];setAsset(sel,"capexItems",c);}}
                       style={{background:C.redL,color:C.red,border:"none",borderRadius:5,padding:"3px 10px",fontSize:9,fontWeight:700,cursor:"pointer"}}>+ Add CapEx</button>
                   </div>
                   {(asset.capexItems||[]).length===0&&(
                     <div style={{fontSize:10,color:C.textFaint,padding:"8px 0"}}>No CapEx items. Click "+ Add CapEx" to add renovation or capital costs.</div>
                   )}
                   {(asset.capexItems||[]).map((c,ci)=>(
-                    <div key={ci} style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr auto",gap:8,alignItems:"center",
+                    <div key={ci} style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr auto",gap:8,alignItems:"center",
                       padding:"6px 0",borderBottom:`1px solid ${C.border}`}}>
                       <input value={c.label} onChange={e=>{const arr=[...(asset.capexItems||[])];arr[ci]={...arr[ci],label:e.target.value};setAsset(sel,"capexItems",arr);}}
                         style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:5,padding:"5px 8px",fontSize:11,color:C.text,outline:"none",fontWeight:600}}/>
@@ -2772,6 +2794,16 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                           <option value={0}>Day-1</option>
                           {Array.from({length:r.holdYrs||a.fundTerm},(_,i)=><option key={i+1} value={i+1}>Year {i+1}</option>)}
                         </select>
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                        <div style={{display:"flex",alignItems:"center",gap:3}}>
+                          <input type="number" value={c.roiPct!=null?+(c.roiPct*100).toFixed(2):0}
+                            onChange={e=>{const arr=[...(asset.capexItems||[])];arr[ci]={...arr[ci],roiPct:Number(e.target.value)/100};setAsset(sel,"capexItems",arr);}}
+                            style={{width:52,background:c.roiPct>0?C.greenL||"#d1fae5":C.surfaceAlt,border:`1px solid ${c.roiPct>0?C.green:C.border}`,borderRadius:5,
+                              padding:"4px 5px",fontSize:11,color:c.roiPct>0?C.green:C.textFaint,fontWeight:700,textAlign:"right",outline:"none"}}/>
+                          <span style={{fontSize:9,color:C.textFaint}}>%</span>
+                        </div>
+                        {c.roiPct>0&&<span style={{fontSize:8,color:C.green,textAlign:"right"}}>{f.$(c.amount*c.roiPct)}/yr</span>}
                       </div>
                       <button onClick={()=>{const arr=(asset.capexItems||[]).filter((_,j)=>j!==ci);setAsset(sel,"capexItems",arr);}}
                         style={{background:C.redL,border:"none",color:C.red,borderRadius:4,padding:"2px 6px",fontSize:9,cursor:"pointer"}}>✕</button>
