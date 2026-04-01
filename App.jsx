@@ -69,8 +69,8 @@ COHORT_DEFS.forEach(cohort=>{
       ],
       capexItems:[
         {label:"Deferred Maintenance & R&M",amount:700000,year:0,roiPct:0},
-        {label:"Hotel Conversion Phase 1 (15 units @ $175K)",amount:2600000,year:0,roiPct:0.0844},
-        {label:"Hotel Conversion Phase 2 (15 units @ $175K)",amount:2600000,year:1,roiPct:0.0844},
+        {label:"Hotel Conversion Phase 1 (15 units @ $175K)",amount:2600000,year:0,roiPct:0.131},
+        {label:"Hotel Conversion Phase 2 (15 units @ $175K)",amount:2600000,year:1,roiPct:0.131},
       ],
     });
   }
@@ -85,6 +85,32 @@ const DEF_OVERHEAD = [
 const DEF_ONE_TIME = [];
 
 const DEF_PARTNER_SALARIES = [];
+
+// ── NOI MODEL MIGRATION ───────────────────────────────────────────────────────
+// Converts old-style deals (noiPlug + noiY1Growth) → new additive CapEx ROI model.
+// Detects old-style if noiPlug > 0 and no capexItem has roiPct set.
+// Hotel CapEx items get roiPct = 0.131 (13.1% yield on cost = 15 units × $325 ADR
+// × 140 nights/yr stabilized × ~47% margin ÷ $2.6M per phase).
+function migrateAsset(asset){
+  if(!asset) return asset;
+  const items = asset.capexItems||[];
+  const alreadyMigrated = items.some(c=>c.roiPct!=null && c.roiPct>0);
+  const hasOldPlug = asset.noiPlug!=null && asset.noiPlug>0;
+  if(!hasOldPlug && alreadyMigrated) return asset; // already on new model
+  if(!hasOldPlug && !alreadyMigrated && items.length===0) return asset; // clean new deal
+  return {
+    ...asset,
+    noiPlug: 0,
+    slipGrowth: asset.slipGrowth ?? .05,
+    noiY2Growth: asset.noiY2Growth ?? .03,
+    capexItems: items.map(c=>({
+      ...c,
+      roiPct: c.roiPct!=null ? c.roiPct :
+        (c.label?.toLowerCase().includes('hotel')||c.label?.toLowerCase().includes('cabin') ? .131 : 0)
+    })),
+  };
+}
+function migrateAssets(assets){ return (assets||[]).map(migrateAsset); }
 
 const DEFAULT = {
   fundTerm:6, debtPct:.50, interestRate:.07, amortYears:25,
@@ -225,13 +251,15 @@ function run(a){
 
     // CapEx ROI — each capex item with roiPct adds annual income starting year after completion
     // Day-0 (year:0) → income from Year 1; Year N capex → income from Year N+1
+    // capexROIByYear[y] = NEW income sources that come online in year y.
+    // Existing income compounds forward via capexAcc*(1+g2), so we only
+    // add each capex item's income in its FIRST year of operation (startYr),
+    // not every subsequent year (that would double-count it).
     const capexROIByYear = {};
     capexItems.forEach(c=>{
       if(!c.roiPct || c.roiPct<=0) return;
       const startYr = c.year+1;
-      for(let y=startYr; y<=holdYrs; y++){
-        capexROIByYear[y] = (capexROIByYear[y]||0) + c.amount*c.roiPct;
-      }
+      capexROIByYear[startYr] = (capexROIByYear[startYr]||0) + c.amount*c.roiPct;
     });
     // NOI schedule — split growth: base (slip/marina) grows at slipGrowth,
     // CapEx ROI income grows at noiY2Growth (hotel/cabin rates)
@@ -1706,7 +1734,8 @@ export default function Portal(){
       if(r.ok){
         const row=await r.json();
         const {_savedAt,...rest}=row.data||{};
-        setA(()=>({...DEFAULT,...rest}));
+        const migrated={...rest, assets:migrateAssets(rest.assets)};
+        setA(()=>({...DEFAULT,...migrated}));
         setScenarios(prev=>({...prev,[name]:{...row.data,_savedAt:row.updated_at}}));
         setScenName(name); setShowScen(false);
       }
@@ -1743,7 +1772,7 @@ export default function Portal(){
     ...DEF_ASSET_BASE, name:"New Site "+(p.assets.length+1), cohort:"Custom",
     slips:[{type:"Marina Slips",count:50,rate:417,occ:1.0,period:"y2"}],
     lodging:[{type:"Hotel Units",units:15,adr:325,occ:.247,period:"y1"},{type:"Hotel Units",units:30,adr:325,occ:.411,period:"y2"}],
-    upland:[], capexItems:[{label:"Deferred Maintenance",amount:700000,year:0,roiPct:0},{label:"Hotel Ph1",amount:2600000,year:0,roiPct:0.0844},{label:"Hotel Ph2",amount:2600000,year:1,roiPct:0.0844}],
+    upland:[], capexItems:[{label:"Deferred Maintenance",amount:700000,year:0,roiPct:0},{label:"Hotel Ph1",amount:2600000,year:0,roiPct:0.131},{label:"Hotel Ph2",amount:2600000,year:1,roiPct:0.131}],
     opex:[{label:"Hotel OpEx",amount:219375,growth:.03},{label:"Marina OpEx",amount:81250,growth:.05}],
     startMonth:Math.min(72,(p.assets.length+1)*2+1)}]})),[]);
   const removeAsset=useCallback((i)=>setA(p=>({...p,assets:p.assets.filter((_,j)=>j!==i)})),[]);
