@@ -29,7 +29,8 @@ const DEF_ASSET_BASE = {
   price:4500000, cap:.075, growth:.034,
   slips:[],lodging:[],fuelGallons:0,fuelMargin:0,upland:[],otherIncome:0,
   opex:[],capexItems:[],
-  noiY2Growth:.03,
+  slipGrowth:.05,   // annual growth on base slip/marina NOI (price×cap component)
+  noiY2Growth:.03,  // annual growth on CapEx ROI income after it comes online
   noiPlug:0,        // Y1 NOI override — leave 0 to use price×cap as base
   txCosts:0,
   ioPeriod:12,    // months of interest-only before amortizing (per deal)
@@ -232,15 +233,18 @@ function run(a){
         capexROIByYear[y] = (capexROIByYear[y]||0) + c.amount*c.roiPct;
       }
     });
-    // NOI schedule — iterative: Year 1 = base + day-0 capex ROI
-    // Each subsequent year: prior year × (1+g) + any new capex ROI completions
-    const g2 = asset.noiY2Growth!=null ? asset.noiY2Growth : (asset.growth||.03);
+    // NOI schedule — split growth: base (slip/marina) grows at slipGrowth,
+    // CapEx ROI income grows at noiY2Growth (hotel/cabin rates)
+    const sg = asset.slipGrowth!=null ? asset.slipGrowth : .05;
+    const g2 = asset.noiY2Growth!=null ? asset.noiY2Growth : .03;
     const noi=[0];
-    let runNOI = baseNOI + (capexROIByYear[1]||0);
-    noi.push(runNOI);
+    let slipBase = baseNOI;                     // slip/marina base growing at sg
+    let capexAcc = capexROIByYear[1]||0;        // cumulative CapEx ROI growing at g2
+    noi.push(slipBase + capexAcc);              // Y1
     for(let y=2; y<=holdYrs; y++){
-      runNOI = runNOI*(1+g2) + (capexROIByYear[y]||0);
-      noi.push(runNOI);
+      slipBase = slipBase*(1+sg);
+      capexAcc = capexAcc*(1+g2) + (capexROIByYear[y]||0);
+      noi.push(slipBase + capexAcc);
     }
 
     // BW fees — Y1 = $125K fixed, Y2+ = 6% of REVENUE (NOI + OpEx = gross revenue)
@@ -2691,7 +2695,7 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                 </div>
 
                 {/* Y1 NOI Adjustment */}
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"16px 28px",marginBottom:18}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:"16px 20px",marginBottom:18}}>
                   <div>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
                       <span style={{fontSize:10,color:C.textDim,fontWeight:600}}>Y1 NOI (Plug Override)</span>
@@ -2719,7 +2723,9 @@ function TabAssets({m,a,setAsset,addAsset,removeAsset}){
                       ))}
                     </div>
                   </div>
-                  <DealSlider label="Y2+ Annual Growth" k="noiY2Growth" min={.01} max={.12} step={.005}
+                  <DealSlider label="Slip Revenue Growth" k="slipGrowth" min={.01} max={.15} step={.005}
+                    disp={v=>`${(v*100).toFixed(1)}%`} color={C.cyan}/>
+                  <DealSlider label="CapEx ROI Growth" k="noiY2Growth" min={.00} max={.10} step={.005}
                     disp={v=>`${(v*100).toFixed(1)}%`} color={C.green}/>
                 </div>
 
