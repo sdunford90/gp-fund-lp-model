@@ -37,31 +37,42 @@ const DEF_ASSET_BASE = {
   startMonth:1,
 };
 
-// Generate 30 marina deals: 3 at closing, then 1 every 2 months
-const DEF_ASSETS = Array.from({length:30},(_,i)=>{
-  const startMonth = i<3 ? 1 : 1+(i-2)*2; // deals 1-3 at M1, deal 4 at M3, deal 5 at M5...
-  return {
-    ...DEF_ASSET_BASE,
-    name:`Marina ${i+1}`,
-    startMonth,
-    slips:[
-      {type:"Marina Slips (Y1)",count:65,rate:417,occ:1.0,period:"y1"},
-      {type:"Marina Slips (Y2+)",count:50,rate:438,occ:1.0,period:"y2"},
-    ],
-    lodging:[
-      {type:"Hotel Units",units:15,adr:325,occ:.247,period:"y1"},   // 90 nights / 365 = .247
-      {type:"Hotel Units",units:30,adr:325,occ:.411,period:"y2"},   // 150 nights / 365 = .411
-    ],
-    opex:[
-      {label:"Hotel Operating Costs (50% margin)",amount:219375,growth:.03},
-      {label:"Marina Operating Costs (25% margin)",amount:81250,growth:.05},
-    ],
-    capexItems:[
-      {label:"Deferred Maintenance & R&M",amount:700000,year:0},
-      {label:"Hotel Conversion Phase 1 (15 units @ $175K)",amount:2600000,year:0},
-      {label:"Hotel Conversion Phase 2 (15 units @ $175K)",amount:2600000,year:1},
-    ],
-  };
+// Vintage cohort schedule: Seed=3 at close, then Y1-Y4 spread evenly within each 12-month window
+const COHORT_DEFS = [
+  {name:"Seed",   count:3, startMonth:1,  spread:0},   // all 3 at M1
+  {name:"Year 1", count:8, startMonth:7,  spread:12},  // 8 deals over 12mo from M7 = every 1.5mo
+  {name:"Year 2", count:8, startMonth:19, spread:12},  // 8 deals over 12mo from M19
+  {name:"Year 3", count:6, startMonth:31, spread:12},  // 6 deals over 12mo from M31 = every 2mo
+  {name:"Year 4", count:5, startMonth:43, spread:12},  // 5 deals over 12mo from M43 = every 2.4mo
+];
+const DEF_ASSETS = [];
+COHORT_DEFS.forEach(cohort=>{
+  for(let s=0;s<cohort.count;s++){
+    const sm = cohort.spread>0 ? Math.round(cohort.startMonth + s*(cohort.spread/cohort.count)) : cohort.startMonth;
+    DEF_ASSETS.push({
+      ...DEF_ASSET_BASE,
+      name:`${cohort.name} Site ${s+1}`,
+      cohort:cohort.name,
+      startMonth:sm,
+      slips:[
+        {type:"Marina Slips (Y1)",count:65,rate:417,occ:1.0,period:"y1"},
+        {type:"Marina Slips (Y2+)",count:50,rate:438,occ:1.0,period:"y2"},
+      ],
+      lodging:[
+        {type:"Hotel Units",units:15,adr:325,occ:.247,period:"y1"},   // 90 nights / 365 = .247
+        {type:"Hotel Units",units:30,adr:325,occ:.411,period:"y2"},   // 150 nights / 365 = .411
+      ],
+      opex:[
+        {label:"Hotel Operating Costs (50% margin)",amount:219375,growth:.03},
+        {label:"Marina Operating Costs (25% margin)",amount:81250,growth:.05},
+      ],
+      capexItems:[
+        {label:"Deferred Maintenance & R&M",amount:700000,year:0},
+        {label:"Hotel Conversion Phase 1 (15 units @ $175K)",amount:2600000,year:0},
+        {label:"Hotel Conversion Phase 2 (15 units @ $175K)",amount:2600000,year:1},
+      ],
+    });
+  }
 });
 
 const DEF_HIRES = [];
@@ -1339,6 +1350,175 @@ function exportToExcel(m,a){
 
   XLSX.utils.book_append_sheet(wb,pl,"Annual P&L");
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // SHEET: VINTAGE SCHEDULE — Per-cohort breakdown by fund year
+  // ═══════════════════════════════════════════════════════════════════════
+  const vs={"!ref":"A1","!cols":[{wch:44},...Array(ft+3).fill({wch:14})]};
+  W(vs,0,0,"Vintage Schedule — Calculation Engine  |  Each cohort tracked separately");
+  yrLabels.forEach((l,i)=>W(vs,1,1+i,l)); W(vs,1,ft+3,"Check");
+
+  // Group deals by cohort
+  const cohorts={};
+  a.assets.forEach((d,i)=>{
+    const c=d.cohort||"Other";
+    if(!cohorts[c])cohorts[c]={deals:[],indices:[]};
+    cohorts[c].deals.push(d);
+    cohorts[c].indices.push(i);
+  });
+
+  let vr=3;
+  Object.entries(cohorts).forEach(([cName,cData])=>{
+    W(vs,vr,0,`COHORT: Acquired in ${cName}`);vr++;
+    const cSites=cData.deals.length;
+
+    // Per fund year, compute this cohort's metrics
+    const cYrData=Array.from({length:ft+2},(_,fy)=>{
+      const fyS=fy*12+1,fyE=(fy+1)*12;
+      let sites=0,hotels=0,slips=0,hRev=0,sRev=0;
+      let ph1Capex=0,ph2Capex=0,ph1Debt=0,ph2Debt=0,ph1Eq=0,ph2Eq=0;
+
+      cData.indices.forEach(ai=>{
+        const ar=m.assetR[ai],x=a.assets[ai];
+        if(fy>ft){
+          // Forward year
+          sites++;
+          hotels+=(x.lodging||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.units,0);
+          slips+=(x.slips||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.count,0);
+          const hYrs=Math.max(0,ar.holdYrs-1);
+          hRev+=(x.lodging||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.units,0)*49000*Math.pow(1.03,hYrs)*1.03;
+          sRev+=(x.slips||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.count,0)*5000*Math.pow(1.05,ar.holdYrs)*1.05;
+          return;
+        }
+        if(x.startMonth>fyE) return;
+        const opS=Math.max(x.startMonth,fyS),opE=Math.min(x.startMonth+ar.holdMonths-1,fyE);
+        const opMo=Math.max(0,opE-opS+1);
+        if(opMo<=0) return;
+        sites++;
+        const frac=opMo/12;
+        const midMo=Math.floor((opS+opE)/2);
+        const dealYr=Math.max(1,Math.floor((midMo-x.startMonth)/12)+1);
+
+        if(dealYr<=1){
+          hotels+=(x.lodging||[]).filter(l=>l.period==="y1").reduce((t,l)=>t+l.units,0);
+          slips+=(x.slips||[]).filter(l=>l.period==="y1").reduce((t,l)=>t+l.count,0);
+          const y1L=(x.lodging||[]).filter(l=>l.period==="y1");
+          hRev+=y1L.reduce((s,l)=>s+l.units*l.adr*365*l.occ,0)*frac;
+          sRev+=(x.slips||[]).filter(l=>l.period==="y1").reduce((s,l)=>s+l.count*l.rate*12*l.occ,0)*frac;
+        } else {
+          hotels+=(x.lodging||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.units,0);
+          slips+=(x.slips||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.count,0);
+          const gYrs=dealYr-2;
+          hRev+=(x.lodging||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.units,0)*49000*Math.pow(1.03,gYrs)*frac;
+          sRev+=(x.slips||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.count,0)*5000*Math.pow(1.05,dealYr-1)*frac;
+        }
+
+        // CapEx: Phase 1 (year 0 items) and Phase 2 (year 1 items)
+        (x.capexItems||[]).forEach(cx=>{
+          const deployMo=x.startMonth+cx.year*12;
+          if(deployMo>=fyS&&deployMo<=fyE){
+            if(cx.year===0){ph1Capex+=cx.amount;ph1Debt+=cx.amount*a.debtPct;ph1Eq+=cx.amount*(1-a.debtPct);}
+            else{ph2Capex+=cx.amount;ph2Debt+=cx.amount*a.debtPct;ph2Eq+=cx.amount*(1-a.debtPct);}
+          }
+        });
+      });
+
+      const hOpex=-hRev*0.45,sOpex=-sRev*0.25;
+      return{sites,hotels,slips,hRev,sRev,hOpex,sOpex,hGOP:hRev*0.55,sGOP:sRev*0.75,
+        ph1Capex,ph2Capex,ph1Debt,ph2Debt,ph1Eq,ph2Eq};
+    });
+
+    const VR=(label,vals,fmt)=>{W(vs,vr,0,label);vals.forEach((v,i)=>W(vs,vr,1+i,v,fmt||"$#,##0"));
+      const chk=vals.reduce((s,v)=>s+(typeof v==="number"?v:0),0);W(vs,vr,ft+3,chk,fmt||"$#,##0");vr++;};
+
+    VR("    Sites operating (this cohort)",cYrData.map(d=>d.sites),null);
+    VR("    Hotel units operating",cYrData.map(d=>d.hotels),null);
+    VR("    Slips operating",cYrData.map(d=>d.slips),null);
+    VR("    Hotel revenue ($000s)",cYrData.map(d=>K(d.hRev)));
+    VR("    Slip revenue ($000s)",cYrData.map(d=>K(d.sRev)));
+    VR("    Hotel property opex ($000s)",cYrData.map(d=>K(d.hOpex)));
+    VR("    Slip property opex ($000s)",cYrData.map(d=>K(d.sOpex)));
+    VR("    Hotel GOP ($000s)",cYrData.map(d=>K(d.hGOP)));
+    VR("    Slip/marina GOP ($000s)",cYrData.map(d=>K(d.sGOP)));
+    VR("    Phase 1 capex ($000s)",cYrData.map(d=>K(d.ph1Capex)));
+    VR("    Phase 2 capex ($000s)",cYrData.map(d=>K(d.ph2Capex)));
+    VR("    Debt drawn — Phase 1 ($000s)",cYrData.map(d=>K(d.ph1Debt)));
+    VR("    Debt drawn — Phase 2 ($000s)",cYrData.map(d=>K(d.ph2Debt)));
+    VR("    Equity called — Phase 1 ($000s)",cYrData.map(d=>K(d.ph1Eq)));
+    VR("    Equity called — Phase 2 ($000s)",cYrData.map(d=>K(d.ph2Eq)));
+    vr++; // blank row between cohorts
+  });
+  XLSX.utils.book_append_sheet(wb,vs,"Vintage Schedule");
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // SHEET: CAPITAL DEPLOYMENT — Portfolio build summary
+  // ═══════════════════════════════════════════════════════════════════════
+  const cd={"!ref":"A1","!cols":[{wch:44},...Array(ft+3).fill({wch:14})]};
+  W(cd,0,0,"Capital Deployment & Acquisition Schedule ($000s)  |  Formula-driven from Assumptions");
+  yrLabels.forEach((l,i)=>W(cd,1,1+i,l)); W(cd,1,ft+3,"Total");
+
+  // Compute deployment by fund year
+  const depData=Array.from({length:ft+2},(_,fy)=>{
+    const fyS=fy*12+1,fyE=(fy+1)*12;
+    let newSites=0,ph1=0,ph2=0,debt1=0,debt2=0,eq1=0,eq2=0;
+    let cumSites=0,cumHotels=0,cumSlips=0;
+    a.assets.forEach((d,ai)=>{
+      const ar=m.assetR[ai];
+      if(d.startMonth>=fyS&&d.startMonth<=fyE) newSites++;
+      // Phase 1/Phase 2 capex timing
+      (d.capexItems||[]).forEach(cx=>{
+        const dm=d.startMonth+cx.year*12;
+        if(dm>=fyS&&dm<=fyE){
+          if(cx.year===0){ph1+=cx.amount;debt1+=cx.amount*a.debtPct;eq1+=cx.amount*(1-a.debtPct);}
+          else{ph2+=cx.amount;debt2+=cx.amount*a.debtPct;eq2+=cx.amount*(1-a.debtPct);}
+        }
+      });
+      // Cumulative: count deals operating at end of this fund year
+      if(d.startMonth<=fyE){
+        cumSites++;
+        const midMo=Math.min(fyE,d.startMonth+((ar?.holdMonths||72)-1));
+        const dealYr=Math.max(1,Math.floor((midMo-d.startMonth)/12)+1);
+        if(dealYr<=1){
+          cumHotels+=(d.lodging||[]).filter(l=>l.period==="y1").reduce((t,l)=>t+l.units,0);
+          cumSlips+=(d.slips||[]).filter(l=>l.period==="y1").reduce((t,l)=>t+l.count,0);
+        } else {
+          cumHotels+=(d.lodging||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.units,0);
+          cumSlips+=(d.slips||[]).filter(l=>l.period!=="y1").reduce((t,l)=>t+l.count,0);
+        }
+      }
+    });
+    return{newSites,cumSites,cumHotels,cumSlips,ph1,ph2,debt1,debt2,eq1,eq2};
+  });
+
+  const CDR=(label,vals,fmt)=>{W(cd,cdr,0,label);vals.forEach((v,i)=>W(cd,cdr,1+i,v,fmt||"$#,##0"));
+    const tot=vals.slice(0,ft+1).reduce((s,v)=>s+(typeof v==="number"?v:0),0);W(cd,cdr,ft+3,tot,fmt||"$#,##0");cdr++;};
+  let cdr=3;
+  W(cd,cdr,0,"PORTFOLIO BUILD — SITES, UNITS & SLIPS");cdr++;
+  CDR("    New site acquisitions",depData.map(d=>d.newSites),null);
+  CDR("    Cumulative sites operating",depData.map(d=>d.cumSites),null);
+  CDR("    Hotel units operating",depData.map(d=>d.cumHotels),null);
+  CDR("    Slips operating",depData.map(d=>d.cumSlips),null);
+  cdr++;
+  W(cd,cdr,0,"GROSS CAPEX ($000s)");cdr++;
+  CDR("    Phase 1 capex (acq + DM + P1 cabins)",depData.map(d=>K(d.ph1)));
+  CDR("    Phase 2 capex (P2 cabins, ~12mo lag)",depData.map(d=>K(d.ph2)));
+  CDR("Total gross capex",depData.map(d=>K(d.ph1+d.ph2)));
+  cdr++;
+  W(cd,cdr,0,"DEBT FUNDING — 50% LTV (called with each capex tranche)");cdr++;
+  CDR("    Debt drawn — Phase 1",depData.map(d=>K(d.debt1)));
+  CDR("    Debt drawn — Phase 2",depData.map(d=>K(d.debt2)));
+  CDR("Total debt drawn per year",depData.map(d=>K(d.debt1+d.debt2)));
+  let cumDebt=0;
+  CDR("    Cumulative debt outstanding",depData.map(d=>{cumDebt+=K(d.debt1+d.debt2);return cumDebt;}));
+  cdr++;
+  W(cd,cdr,0,"EQUITY CAPITAL CALLS — COMMITTED FUND");cdr++;
+  CDR("    Equity called — Phase 1",depData.map(d=>K(d.eq1)));
+  CDR("    Equity called — Phase 2",depData.map(d=>K(d.eq2)));
+  CDR("Total equity called per year",depData.map(d=>K(d.eq1+d.eq2)));
+  let cumEq=0;
+  CDR("    Cumulative equity invested",depData.map(d=>{cumEq+=K(d.eq1+d.eq2);return cumEq;}));
+
+  XLSX.utils.book_append_sheet(wb,cd,"Capital Deployment");
+
   // Force Excel to recalculate on open
   wb.Workbook={CalcPr:{fullCalcOnLoad:true}};
   const wbout=XLSX.write(wb,{bookType:"xlsx",type:"array"});
@@ -1545,10 +1725,12 @@ export default function Portal(){
 
   const setAsset=useCallback((i,k,v)=>setA(p=>({...p,assets:p.assets.map((x,j)=>j===i?{...x,[k]:v}:x)})),[]);
   const addAsset=useCallback(()=>setA(p=>({...p,assets:[...p.assets,{
-    ...DEF_ASSET_BASE, name:"Deal "+(p.assets.length+1),
-    slips:[{type:"Wet Slip",count:50,rate:500,occ:.85}],
-    lodging:[], upland:[], capexItems:[],
-    startMonth:Math.min(36,(p.assets.length+1)*3+3)}]})),[]);
+    ...DEF_ASSET_BASE, name:"New Site "+(p.assets.length+1), cohort:"Custom",
+    slips:[{type:"Marina Slips",count:50,rate:417,occ:1.0,period:"y2"}],
+    lodging:[{type:"Hotel Units",units:15,adr:325,occ:.247,period:"y1"},{type:"Hotel Units",units:30,adr:325,occ:.411,period:"y2"}],
+    upland:[], capexItems:[{label:"Deferred Maintenance",amount:700000,year:0},{label:"Hotel Ph1",amount:2600000,year:0},{label:"Hotel Ph2",amount:2600000,year:1}],
+    opex:[{label:"Hotel OpEx",amount:219375,growth:.03},{label:"Marina OpEx",amount:81250,growth:.05}],
+    startMonth:Math.min(72,(p.assets.length+1)*2+1)}]})),[]);
   const removeAsset=useCallback((i)=>setA(p=>({...p,assets:p.assets.filter((_,j)=>j!==i)})),[]);
 
   const setHire=useCallback((i,k,v)=>setA(p=>({...p,hires:p.hires.map((x,j)=>j===i?{...x,[k]:v}:x)})),[]);
