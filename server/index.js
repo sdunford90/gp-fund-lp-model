@@ -375,6 +375,103 @@ app.delete("/api/marina-outreach/:id/:entry_id", async (req, res) => {
   }
 });
 
+// ── AirROI short-term rental market data ──────────────────────────────────────
+// Wraps the AirROI API. Set AIRROI_API_KEY in environment to enable live data.
+// Endpoint shape based on https://airroi.com — adjust AIRROI_BASE / fields if
+// your account uses a different version of the API.
+
+const AIRROI_BASE = process.env.AIRROI_BASE || "https://api.airroi.com/v1";
+const AIRROI_KEY = process.env.AIRROI_API_KEY || "";
+const _airroiCache = new Map(); // key: lat,lon  → {data, ts}
+const AIRROI_TTL_MS = 1000 * 60 * 60 * 12; // 12h cache
+
+function mockAirroi(lat, lon) {
+  // Deterministic pseudo-random so the same coords show the same mock values.
+  const seed = Math.abs(Math.round((lat || 0) * 1000) + Math.round((lon || 0) * 1000));
+  const rand = (min, max) => min + ((seed * 9301 + 49297) % 233280) / 233280 * (max - min);
+  return {
+    _source: "mock",
+    market_name: "Sample Market",
+    active_listings: Math.round(rand(120, 1800)),
+    occupancy: +rand(0.45, 0.78).toFixed(3),
+    adr: Math.round(rand(180, 460)),
+    revpar: Math.round(rand(95, 320)),
+    annual_revenue: Math.round(rand(28000, 92000)),
+    avg_daily_rate_yoy: +rand(-0.05, 0.18).toFixed(3),
+    occupancy_yoy: +rand(-0.08, 0.12).toFixed(3),
+    revenue_yoy: +rand(-0.06, 0.22).toFixed(3),
+    median_property_value: Math.round(rand(380000, 1450000)),
+    rev_per_property: Math.round(rand(22000, 88000)),
+    top_bedrooms: [
+      { bedrooms: 1, share: +rand(0.05, 0.25).toFixed(2), adr: Math.round(rand(140, 250)) },
+      { bedrooms: 2, share: +rand(0.20, 0.45).toFixed(2), adr: Math.round(rand(180, 320)) },
+      { bedrooms: 3, share: +rand(0.20, 0.40).toFixed(2), adr: Math.round(rand(250, 460)) },
+      { bedrooms: 4, share: +rand(0.05, 0.20).toFixed(2), adr: Math.round(rand(320, 620)) },
+    ],
+    seasonality: [
+      { month: "Jan", occupancy: +rand(0.30, 0.55).toFixed(2), adr: Math.round(rand(150, 280)) },
+      { month: "Feb", occupancy: +rand(0.35, 0.58).toFixed(2), adr: Math.round(rand(160, 290)) },
+      { month: "Mar", occupancy: +rand(0.42, 0.65).toFixed(2), adr: Math.round(rand(180, 320)) },
+      { month: "Apr", occupancy: +rand(0.48, 0.70).toFixed(2), adr: Math.round(rand(190, 340)) },
+      { month: "May", occupancy: +rand(0.55, 0.78).toFixed(2), adr: Math.round(rand(210, 380)) },
+      { month: "Jun", occupancy: +rand(0.65, 0.88).toFixed(2), adr: Math.round(rand(240, 440)) },
+      { month: "Jul", occupancy: +rand(0.72, 0.92).toFixed(2), adr: Math.round(rand(280, 520)) },
+      { month: "Aug", occupancy: +rand(0.70, 0.90).toFixed(2), adr: Math.round(rand(280, 510)) },
+      { month: "Sep", occupancy: +rand(0.58, 0.78).toFixed(2), adr: Math.round(rand(230, 400)) },
+      { month: "Oct", occupancy: +rand(0.50, 0.72).toFixed(2), adr: Math.round(rand(200, 360)) },
+      { month: "Nov", occupancy: +rand(0.40, 0.62).toFixed(2), adr: Math.round(rand(170, 310)) },
+      { month: "Dec", occupancy: +rand(0.42, 0.65).toFixed(2), adr: Math.round(rand(180, 330)) },
+    ],
+    updated_at: new Date().toISOString(),
+  };
+}
+
+app.get("/api/airroi", async (req, res) => {
+  const lat = parseFloat(req.query.lat);
+  const lon = parseFloat(req.query.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return res.status(400).json({ error: "lat & lon required" });
+  }
+  const cacheKey = `${lat.toFixed(4)},${lon.toFixed(4)}`;
+  const cached = _airroiCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < AIRROI_TTL_MS) {
+    return res.json(cached.data);
+  }
+
+  // No key configured → return deterministic mock so the UI still renders.
+  if (!AIRROI_KEY) {
+    const data = mockAirroi(lat, lon);
+    _airroiCache.set(cacheKey, { data, ts: Date.now() });
+    return res.json(data);
+  }
+
+  try {
+    const url = `${AIRROI_BASE}/markets/metrics?lat=${lat}&lon=${lon}`;
+    const r = await fetch(url, {
+      headers: {
+        "Authorization": `Bearer ${AIRROI_KEY}`,
+        "Accept": "application/json",
+      },
+    });
+    if (!r.ok) {
+      const body = await r.text().catch(() => "");
+      console.warn(`AirROI ${r.status}: ${body.slice(0, 200)}`);
+      const data = { ...mockAirroi(lat, lon), _source: "mock_fallback", _error: `AirROI ${r.status}` };
+      _airroiCache.set(cacheKey, { data, ts: Date.now() });
+      return res.json(data);
+    }
+    const json = await r.json();
+    const data = { ...json, _source: "airroi", updated_at: new Date().toISOString() };
+    _airroiCache.set(cacheKey, { data, ts: Date.now() });
+    res.json(data);
+  } catch (e) {
+    console.error("AirROI fetch failed:", e.message);
+    const data = { ...mockAirroi(lat, lon), _source: "mock_fallback", _error: e.message };
+    _airroiCache.set(cacheKey, { data, ts: Date.now() });
+    res.json(data);
+  }
+});
+
 // ── Marina activity timeline ──────────────────────────────────────────────────
 
 app.get("/api/marina-activity/:id", async (req, res) => {

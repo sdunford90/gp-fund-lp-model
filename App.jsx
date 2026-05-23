@@ -1722,6 +1722,16 @@ export default function Portal(){
   const [editingName,setEditingName]=useState(false);
   const [scenLoading,setScenLoading]=useState(false);
 
+  // Sidebar layout: collapse + dock left/right, persisted per-browser.
+  const [sideCollapsed,setSideCollapsed]=useState(()=>{
+    try{return localStorage.getItem("fund_side_collapsed")==="1";}catch{return false;}
+  });
+  const [sideDock,setSideDock]=useState(()=>{
+    try{return localStorage.getItem("fund_side_dock")||"left";}catch{return "left";}
+  });
+  useEffect(()=>{try{localStorage.setItem("fund_side_collapsed",sideCollapsed?"1":"0");}catch{}},[sideCollapsed]);
+  useEffect(()=>{try{localStorage.setItem("fund_side_dock",sideDock);}catch{}},[sideDock]);
+
   // Load all scenarios from the backend on mount
   useEffect(()=>{
     apiFetchAll().then(s=>setScenarios(s));
@@ -1940,12 +1950,53 @@ export default function Portal(){
         )}
       </div>
 
-      <div style={{display:"flex"}}>
+      <div style={{display:"flex",flexDirection:sideDock==="right"?"row-reverse":"row"}}>
         {/* SIDEBAR */}
-        <div style={{width:262,flexShrink:0,background:C.surfaceAlt,
-          borderRight:`1px solid ${C.border}`,padding:"18px 14px",
-          height:"calc(100vh - 52px)",overflowY:"auto",position:"sticky",top:52}}>
+        <div style={{
+          width:sideCollapsed?44:262,flexShrink:0,
+          background:sideCollapsed?C.surface:C.surfaceAlt,
+          borderRight:sideDock==="left"?`1px solid ${C.border}`:"none",
+          borderLeft:sideDock==="right"?`1px solid ${C.border}`:"none",
+          padding:sideCollapsed?"12px 6px":"18px 14px",
+          height:"calc(100vh - 94px)",overflowY:"auto",
+          position:"sticky",top:94,
+          transition:"width .22s ease, background .22s ease, padding .22s ease",
+          boxShadow:sideCollapsed?"none":(sideDock==="left"?"1px 0 0 rgba(10,35,66,0.02)":"-1px 0 0 rgba(10,35,66,0.02)"),
+          scrollbarWidth:"thin"}}>
 
+          {/* Sidebar controls */}
+          <div style={{display:"flex",alignItems:"center",justifyContent:sideCollapsed?"center":"space-between",gap:6,marginBottom:sideCollapsed?12:10}}>
+            {!sideCollapsed && (
+              <span style={{fontSize:9,fontWeight:700,color:C.textFaint,letterSpacing:".12em",textTransform:"uppercase"}}>Fund Inputs</span>
+            )}
+            <div style={{display:"flex",gap:4}}>
+              {!sideCollapsed && (
+                <button title={`Dock ${sideDock==="left"?"right":"left"}`}
+                  onClick={()=>setSideDock(d=>d==="left"?"right":"left")}
+                  style={{width:22,height:22,border:`1px solid ${C.border}`,background:C.surface,borderRadius:6,
+                    cursor:"pointer",fontSize:11,color:C.textDim,padding:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  {sideDock==="left"?"⇥":"⇤"}
+                </button>
+              )}
+              <button title={sideCollapsed?"Expand panel":"Collapse panel"}
+                onClick={()=>setSideCollapsed(v=>!v)}
+                style={{width:22,height:22,border:`1px solid ${C.border}`,background:C.surface,borderRadius:6,
+                  cursor:"pointer",fontSize:11,color:C.textDim,padding:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                {sideCollapsed?(sideDock==="left"?"›":"‹"):(sideDock==="left"?"‹":"›")}
+              </button>
+            </div>
+          </div>
+
+          {sideCollapsed ? (
+            // Collapsed rail: show vertical "Fund Inputs" label so user knows what it is
+            <div onClick={()=>setSideCollapsed(false)}
+              style={{writingMode:"vertical-rl",transform:"rotate(180deg)",
+                fontSize:10,fontWeight:700,letterSpacing:".22em",color:C.textDim,
+                textTransform:"uppercase",cursor:"pointer",marginTop:8,
+                padding:"6px 0",textAlign:"center"}}>
+              Fund Inputs · Click to Expand
+            </div>
+          ) : (<>
           <SHdr t="Fund Structure"/>
           <Sli label="Exit Cap Rate"  value={a.exitCapRate}  min={.055} max={.12}  step={.005} disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("exitCapRate",v)}  sub="All exits"/>
           <Sli label="Interest Rate"  value={a.interestRate} min={.04}  max={.10}  step={.005} disp={v=>`${(v*100).toFixed(1)}%`} onChange={v=>set("interestRate",v)}/>
@@ -2011,6 +2062,7 @@ export default function Portal(){
               </div>
             </div>
           )}
+          </>)}
         </div>
 
         {/* MAIN CONTENT */}
@@ -4762,9 +4814,12 @@ function TabTargets({a,setA}){
   const [showUpload,setShowUpload]=useState(false);
   const [showAnalytics,setShowAnalytics]=useState(false);
   const [showComps,setShowComps]=useState(false);
-  const [popupTab,setPopupTab]=useState("details"); // details|outreach|activity
+  const [popupTab,setPopupTab]=useState("details"); // details|str|outreach|activity
   const [outreachLog,setOutreachLog]=useState([]);
   const [activityLog,setActivityLog]=useState([]);
+  const [airroi,setAirroi]=useState(null); // STR market data from AirROI for selected marina
+  const [airroiLoading,setAirroiLoading]=useState(false);
+  const [airroiError,setAirroiError]=useState("");
   const [outreachForm,setOutreachForm]=useState({contact_date:new Date().toISOString().split("T")[0],method:"call",contact_name:"",response_status:"no_response",notes:""});
   const [savingOutreach,setSavingOutreach]=useState(false);
   const PG=60;
@@ -4787,9 +4842,18 @@ function TabTargets({a,setA}){
       setPopupNotes(interestMap[selected.id]?.notes||"");
       setPopupTab("details");setShowComps(false);
       setOutreachLog([]);setActivityLog([]);
+      setAirroi(null);setAirroiError("");
       setOutreachForm({contact_date:new Date().toISOString().split("T")[0],method:"call",contact_name:"",response_status:"no_response",notes:""});
       fetch(`/api/marina-outreach/${selected.id}`).then(r=>r.ok?r.json():[]).then(setOutreachLog).catch(()=>{});
       fetch(`/api/marina-activity/${selected.id}`).then(r=>r.ok?r.json():[]).then(setActivityLog).catch(()=>{});
+      // AirROI STR market data (lat/lon required)
+      if(selected.lat&&selected.lon){
+        setAirroiLoading(true);
+        fetch(`/api/airroi?lat=${selected.lat}&lon=${selected.lon}`)
+          .then(r=>r.ok?r.json():Promise.reject(`HTTP ${r.status}`))
+          .then(d=>{setAirroi(d);setAirroiLoading(false);})
+          .catch(e=>{setAirroiError(String(e));setAirroiLoading(false);});
+      }
     }
   },[selected]);
 
@@ -5464,7 +5528,7 @@ function TabTargets({a,setA}){
 
           {/* Popup tabs */}
           <div style={{display:"flex",gap:0,borderBottom:`1px solid ${C.border}`,marginBottom:14}}>
-            {[{k:"details",label:"Details"},{k:"outreach",label:`Outreach${outreachLog.length>0?` (${outreachLog.length})`:""}`},{k:"activity",label:`Activity${activityLog.length>0?` (${activityLog.length})`:""}`}].map(({k,label})=>(
+            {[{k:"details",label:"Details"},{k:"str",label:`STR Market${airroi?` · AirROI`:""}`},{k:"outreach",label:`Outreach${outreachLog.length>0?` (${outreachLog.length})`:""}`},{k:"activity",label:`Activity${activityLog.length>0?` (${activityLog.length})`:""}`}].map(({k,label})=>(
               <button key={k} onClick={()=>setPopupTab(k)}
                 style={{padding:"7px 14px",fontSize:11,fontWeight:600,cursor:"pointer",background:"transparent",
                   color:popupTab===k?C.navy:C.textDim,border:"none",
@@ -5678,6 +5742,115 @@ function TabTargets({a,setA}){
               style={{padding:"10px 16px",background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:8,
                 fontSize:10,fontWeight:600,color:C.textDim,textDecoration:"none",whiteSpace:"nowrap"}}>Marinas.com ↗</a>}
           </div>
+          </>)}
+
+          {/* STR MARKET TAB — AirROI short-term rental data */}
+          {popupTab==="str"&&(<>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:12}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:700,color:C.text,lineHeight:1.2}}>Short-Term Rental Market</div>
+                <div style={{fontSize:10,color:C.textFaint,marginTop:2}}>AirROI · Airbnb market analytics for this location</div>
+              </div>
+              {airroi&&(
+                <span style={{fontSize:9,fontWeight:700,padding:"3px 9px",borderRadius:12,
+                  background:airroi._source==="airroi"?"rgba(5,150,105,.1)":"rgba(180,83,9,.1)",
+                  color:airroi._source==="airroi"?C.green:"#b45309"}}>
+                  {airroi._source==="airroi"?"LIVE":airroi._source==="mock_fallback"?"FALLBACK":"DEMO DATA"}
+                </span>
+              )}
+            </div>
+
+            {!selected.lat||!selected.lon ? (
+              <div style={{padding:"40px 20px",background:C.surfaceAlt,borderRadius:12,textAlign:"center",color:C.textDim,fontSize:11}}>
+                No coordinates on this marina — AirROI lookup requires lat/lon.
+              </div>
+            ) : airroiLoading ? (
+              <div style={{padding:"40px 20px",background:C.surfaceAlt,borderRadius:12,textAlign:"center",color:C.textDim,fontSize:11}}>
+                Loading AirROI market data…
+              </div>
+            ) : airroiError && !airroi ? (
+              <div style={{padding:"16px 18px",background:"rgba(220,38,38,.05)",border:`1px solid ${C.redL}`,borderRadius:12,color:C.red,fontSize:11}}>
+                Could not load AirROI data: {airroiError}
+              </div>
+            ) : airroi ? (<>
+              {/* Headline metrics */}
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:12}}>
+                {[
+                  {l:"ADR",        v:airroi.adr?`$${airroi.adr.toLocaleString()}`:"—",       yoy:airroi.avg_daily_rate_yoy},
+                  {l:"Occupancy",  v:airroi.occupancy?`${(airroi.occupancy*100).toFixed(0)}%`:"—", yoy:airroi.occupancy_yoy},
+                  {l:"RevPAR",     v:airroi.revpar?`$${airroi.revpar.toLocaleString()}`:"—", yoy:null},
+                  {l:"Annual Rev / Listing", v:airroi.rev_per_property?`$${(airroi.rev_per_property/1000).toFixed(0)}K`:"—", yoy:airroi.revenue_yoy},
+                ].map(({l,v,yoy})=>(
+                  <div key={l} style={{background:`linear-gradient(180deg,${C.surface} 0%,${C.surfaceAlt} 100%)`,
+                    border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 14px"}}>
+                    <div style={{fontSize:8,color:C.textFaint,textTransform:"uppercase",letterSpacing:".08em",fontWeight:700,marginBottom:4}}>{l}</div>
+                    <div style={{fontSize:18,fontWeight:800,color:C.navy,fontFamily:"'JetBrains Mono',monospace",lineHeight:1.1}}>{v}</div>
+                    {yoy!=null&&(
+                      <div style={{fontSize:9,fontWeight:700,marginTop:3,color:yoy>=0?C.green:C.red}}>
+                        {yoy>=0?"▲":"▼"} {(yoy*100).toFixed(1)}% YoY
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Secondary metrics */}
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:14}}>
+                {[
+                  {l:"Active Listings",  v:airroi.active_listings?.toLocaleString()||"—"},
+                  {l:"Median Property Value", v:airroi.median_property_value?`$${(airroi.median_property_value/1000).toFixed(0)}K`:"—"},
+                  {l:"Annual Revenue",   v:airroi.annual_revenue?`$${(airroi.annual_revenue/1000).toFixed(0)}K`:"—"},
+                ].map(({l,v})=>(
+                  <div key={l} style={{background:C.surfaceAlt,borderRadius:10,padding:"10px 12px"}}>
+                    <div style={{fontSize:8,color:C.textFaint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,marginBottom:3}}>{l}</div>
+                    <div style={{fontSize:14,fontWeight:700,color:C.text,fontFamily:"'JetBrains Mono',monospace"}}>{v}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Seasonality */}
+              {Array.isArray(airroi.seasonality)&&airroi.seasonality.length>0&&(
+                <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",marginBottom:12}}>
+                  <div style={{fontSize:10,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:".08em",marginBottom:10}}>Monthly Seasonality — Occupancy</div>
+                  <div style={{display:"flex",alignItems:"flex-end",gap:4,height:80}}>
+                    {airroi.seasonality.map((s,i)=>{
+                      const h=Math.max(8,(s.occupancy||0)*100*0.7);
+                      const peak=Math.max(...airroi.seasonality.map(x=>x.occupancy||0));
+                      const isPeak=s.occupancy===peak;
+                      return(
+                        <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+                          <div title={`${s.month}: ${(s.occupancy*100).toFixed(0)}% occ · $${s.adr} ADR`}
+                            style={{width:"100%",height:`${h}%`,minHeight:8,
+                              background:isPeak?`linear-gradient(180deg,${C.accent} 0%,${C.navy} 100%)`:`linear-gradient(180deg,rgba(10,35,66,.4) 0%,rgba(10,35,66,.7) 100%)`,
+                              borderRadius:"4px 4px 2px 2px",transition:"all .2s"}}/>
+                          <div style={{fontSize:8,color:isPeak?C.navy:C.textFaint,fontWeight:isPeak?700:500}}>{s.month}</div>
+                        </div>);
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Bedroom mix */}
+              {Array.isArray(airroi.top_bedrooms)&&airroi.top_bedrooms.length>0&&(
+                <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",marginBottom:12}}>
+                  <div style={{fontSize:10,fontWeight:700,color:C.textDim,textTransform:"uppercase",letterSpacing:".08em",marginBottom:10}}>Listings by Bedroom Count</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+                    {airroi.top_bedrooms.map((b,i)=>(
+                      <div key={i} style={{background:C.surfaceAlt,borderRadius:10,padding:"10px 8px",textAlign:"center"}}>
+                        <div style={{fontSize:8,color:C.textFaint,textTransform:"uppercase",fontWeight:700,marginBottom:3}}>{b.bedrooms}BR</div>
+                        <div style={{fontSize:14,fontWeight:800,color:C.accent,lineHeight:1.1,fontFamily:"'JetBrains Mono',monospace"}}>{(b.share*100).toFixed(0)}%</div>
+                        <div style={{fontSize:9,color:C.textDim,marginTop:3}}>${b.adr} ADR</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div style={{fontSize:9,color:C.textFaint,textAlign:"right",marginTop:6}}>
+                {airroi._source==="mock"&&"Using demo data — add AIRROI_API_KEY to enable live data · "}
+                Updated {airroi.updated_at?new Date(airroi.updated_at).toLocaleDateString():"—"}
+              </div>
+            </>) : null}
           </>)}
 
           {/* OUTREACH TAB */}
